@@ -1,0 +1,5 @@
+name = "cmake"
+
+relocate = true
+destination = "{SM_ROOT}/cmake"
+modules = "{SM_ROOT}/modules"

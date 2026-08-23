@@ -1,0 +1,31 @@
+[env]
+SOURCE_NAME     = "llvm-project"
+SOURCE_PREFIX   = "https://github.com/llvm/llvm-project/releases/download"
+INSTALL_VERSION = "{INSTALL_VERSION}"
+INSTALL_PREFIX  = "{SITE_DESTINATION}/{INSTALL_VERSION_VARIANT}"
+
+# Compile width. Kept below the core count on purpose: LLVM's C++ translation
+# units are individually large, and 14 of them in flight is how you swap.
+NPROCS          = 8
+# Link width. Linking LLVM's static archives costs several GB per link step,
+# so these are serialised independently of NPROCS.
+NLINK           = 1
+
+[install]
+versions = ["21.1.8"]
+prefix = "{SITE_DESTINATION}"
+format = "{INSTALL_VERSION_VARIANT}$"
+# (optional) relocate after install
+destination = "{SITE_DESTINATION}/{INSTALL_VERSION_VARIANT}"
+stage = true
+
+[module]
+LLVM_PATH = "{INSTALL_DIR}"
+INSTALL_VERSION = "{INSTALL_VERSION}"
+
+[post]
+# toggles mandatory relocate if `stage` and `clean` are true. If the install
+# script already relocates the package, then we can set `safe = false`
+safe = false
+# delete staging aread after successful install
+clean = true

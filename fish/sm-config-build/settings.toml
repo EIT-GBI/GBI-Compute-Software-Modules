@@ -1,0 +1,28 @@
+[env]
+SOURCE_NAME   = "fish-{INSTALL_VERSION}.tar.xz"
+SOURCE_PREFIX = "https://github.com/fish-shell/fish-shell/releases/download/{INSTALL_VERSION}"
+VERSION       = "{INSTALL_VERSION}"
+INSTALL_DIR   = "{SITE_DESTINATION}"
+INSTALL_VERSION_VARIANT = "{INSTALL_VERSION_VARIANT}"
+
+N_PROCS = 8
+
+[install]
+versions = ["4.8.1"]
+prefix = "{SITE_DESTINATION}"
+# note: this is Lua regex: you will need to escape - and + (using %)
+format = "^{INSTALL_VERSION_VARIANT}$"
+# (optional) relocate after install
+destination = "{SITE_DESTINATION}/{INSTALL_VERSION_VARIANT}"
+stage = true
+
+[module]
+PATH = "{INSTALL_DIR}"
+LD_LIBRARY_PATH = "{INSTALL_DIR}"
+
+[post]
+# toggles mandatory relocate if `stage` and `clean` are true. If the install
+# script already relocates the package, then we can set `safe = false`
+safe = true
+# delete staging aread after successful install
+clean = true

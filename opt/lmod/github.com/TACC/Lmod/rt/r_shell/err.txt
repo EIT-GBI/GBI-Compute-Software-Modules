@@ -1,0 +1,24 @@
+===========================
+step 1
+lua ProjectDIR/src/lmod.in.lua shell --regression_testing --version
+===========================
+Modules based on Lua: Version 8.6.12  2022-02-09 16:10 -06:00
+    https://lmod.readthedocs.io
+===========================
+step 2
+lua ProjectDIR/src/lmod.in.lua R --regression_testing load a
+===========================
+===========================
+step 3
+lua ProjectDIR/src/lmod.in.lua R --regression_testing load b
+===========================
+===========================
+step 4
+lua ProjectDIR/src/lmod.in.lua R --regression_testing load bad
+===========================
+Lmod has detected the following error: Unable to load module because of error when evaluating modulefile:
+     ProjectDIR/rt/r_shell/mf/Core/bad/1.0.lua: [string "WTF("foo")..."]:1:
+     Please check the modulefile and especially if there is a line number specified in the above message
+While processing the following module(s):
+    Module fullname  Module Filename
+    bad/1.0          ProjectDIR/rt/r_shell/mf/Core/bad/1.0.lua

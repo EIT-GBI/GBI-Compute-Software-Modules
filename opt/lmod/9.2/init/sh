@@ -1,0 +1,39 @@
+#!/bin/sh
+
+LMOD_ROOT="/Users/johannes.blaschke/Developer/cli-util-mods/opt/lmod"
+LMOD_PKG="/Users/johannes.blaschke/Developer/cli-util-mods/opt/lmod/lmod"
+LMOD_DIR="/Users/johannes.blaschke/Developer/cli-util-mods/opt/lmod/lmod/libexec"
+LMOD_CMD="/Users/johannes.blaschke/Developer/cli-util-mods/opt/lmod/lmod/libexec/lmod"
+MODULESHOME="/Users/johannes.blaschke/Developer/cli-util-mods/opt/lmod/lmod"
+
+export LMOD_CMD
+export LMOD_PKG
+export LMOD_DIR
+export MODULESHOME
+
+module()
+{
+  eval "`$LMOD_CMD sh "$@"`"
+}
+
+clearMT()
+{
+  eval $($LMOD_DIR/clearLMOD_cmd --shell bash --simple)
+}
+
+########################################################################
+#  ml is a shorthand tool for people who can't type moduel, err, module
+#  It is also a combination command:
+#     ml            -> module list
+#     ml gcc        -> module load gcc
+#     ml -gcc intel -> module unload gcc; module load intel
+#  It does much more do: "ml --help" for more information.
+ml()
+{
+  eval "$($LMOD_DIR/ml_cmd "$@")"
+}
+
+# Local Variables:
+# mode: shell-script
+# indent-tabs-mode: nil
+# End:

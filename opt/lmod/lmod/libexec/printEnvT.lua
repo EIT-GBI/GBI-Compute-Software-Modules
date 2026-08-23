@@ -1,0 +1,83 @@
+local sys_lua_path = "/Users/johannes.blaschke/Developer/cli-util-mods/opt/share/lua/5.5/?.lua;/Users/johannes.blaschke/Developer/cli-util-mods/opt/share/lua/5.5/?/init.lua;/Users/johannes.blaschke/Developer/cli-util-mods/opt/lib/lua/5.5/?.lua;/Users/johannes.blaschke/Developer/cli-util-mods/opt/lib/lua/5.5/?/init.lua"
+if (sys_lua_path:sub(1,1) == "@") then
+   sys_lua_path = package.path
+end
+
+local sys_lua_cpath = "/Users/johannes.blaschke/Developer/cli-util-mods/opt/lib/lua/5.5/?.so;/Users/johannes.blaschke/Developer/cli-util-mods/opt/lib/lua/5.5/loadall.so;"
+if (sys_lua_cpath:sub(1,1) == "@") then
+   sys_lua_cpath = package.cpath
+end
+
+package.path   = sys_lua_path
+package.cpath  = sys_lua_cpath
+
+local arg_0    = arg[0]
+_G._DEBUG      = false
+local posix    = require("posix")
+local readlink = posix.readlink
+local stat     = posix.stat
+
+local st       = stat(arg_0)
+while (st.type == "link") do
+   local lnk = readlink(arg_0)
+   if (arg_0:find("/") and (lnk:find("^/") == nil)) then
+      local dir = arg_0:gsub("/[^/]*$","")
+      lnk       = dir .. "/" .. lnk
+   end
+   arg_0 = lnk
+   st    = stat(arg_0)
+end
+
+local ia,ja = arg_0:find(".*/")
+local cmd_dir = "./"
+if (ia) then
+   cmd_dir  = arg_0:sub(1,ja)
+end
+
+package.path  = cmd_dir .. "../tools/?.lua;"      ..
+                cmd_dir .. "../tools/?/init.lua;" ..
+                cmd_dir .. "?.lua;"               ..
+                sys_lua_path
+package.cpath = cmd_dir .. "../lib/?.so;"..
+                sys_lua_cpath
+
+require("strict")
+
+function cmdDir()
+   return cmd_dir
+end
+
+function programName()
+   return arg_0
+end
+
+require("string_utils")
+require("serializeTbl")
+require("utils")
+
+local getenv       = os.getenv
+local getenv_posix = posix.getenv
+local setenv_posix = posix.setenv
+
+function main()
+   local envT = getenv_posix()
+   local kind = arg[2] or "normal"
+   if (kind == "normal") then
+      for k,v in pairs(envT) do
+         if (k:find("^BASH_FUNC_.*%%")) then
+            envT[k] = nil
+         end
+      end
+   elseif (kind == "exportFuncs") then
+      for k,v in pairs(envT) do
+         if (not k:find("^BASH_FUNC_.*%%")) then
+            envT[k] = nil
+         end
+      end
+   end
+   local name = arg[1] or "envT"
+   local s    = serializeTbl{name=name, value = envT, indent = true, keep_double_underscore = true}
+   io.stdout:write(s)
+end
+
+main()

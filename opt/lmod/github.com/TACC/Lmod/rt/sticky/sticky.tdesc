@@ -1,0 +1,120 @@
+-- -*- lua -*-
+local testName="sticky"
+testdescript = {
+   owner   = "rtm",
+   product = "modules",
+   description = [[
+	 Test initial module load
+   ]],
+   keywords = {testName },
+
+   active = 1,
+   testName = testName,
+   job_submit_method = "INTERACTIVE",
+
+   runScript = [[
+
+     . $(projectDir)/rt/common_funcs.sh
+
+     unsetMT
+     initStdEnvVars
+     MODULEPATH=$(testDir)/mf/Core;     export MODULEPATH
+     MODULEPATH_ROOT=$(testDir)/mf;     export MODULEPATH_ROOT
+
+     RTM_SETTARG_CMD=":";               export RTM_SETTARG_CMD
+
+     remove_generated_lmod_files
+
+     cp $(projectDir)/init/lmodrc.lua .lmodrc.lua
+
+     runLmod --version          # 1
+     runLmod load std           # 2
+     runLmod list               # 3
+     runLmod unload std         # 4
+     runLmod list               # 5
+     runLmod load gcc boost     # 6
+     runLmod list               # 7
+     runLmod purge              # 8
+     runLmod --force purge      # 9
+     runLmod list               #10
+     runLmod load std           #11
+     runLmod rm std             #12
+     runLmod list               #13
+     runLmod purge foo          #14
+     runLmod list               #15
+     runLmod --force rm std     #16
+     runLmod list               #17
+     runLmod load StdEnv        #18
+     runLmod list               #19
+     runLmod load StdEnv        #20
+     runLmod list               #21
+     runLmod unload a b         #22
+     runLmod list               #23
+     runLmod purge              #24
+     runLmod list               #25
+     runLmod save               #26
+     runLmod --force purge      #27
+     runLmod restore            #28
+     runLmod list               #29
+     runLmod restore            #30
+     runLmod list               #31
+     runLmod --force purge      #32
+     runLmod load M1            #33
+     runLmod list               #34
+     runLmod save               #35
+     runLmod restore            #36
+     runLmod list               #37
+     runLmod --force purge      #38
+     runLmod load c d M1        #39
+     runLmod list               #40
+     runLmod save               #41
+     runLmod restore            #42
+     runLmod list               #43
+     export LMOD_SYSTEM_DEFAULT_MODULES=StdEnv
+     runLmod --force purge      #44
+     runLmod reset              #45
+     runLmod reset              #46
+     
+     runLmod load old           #47
+     runLmod swap old new       #48
+     runLmod list               #49
+     export LMOD_AUTO_SWAP=true
+     runLmod load old           #50
+     runLmod list               #51
+     runLmod avail              #52
+
+     unsetMT
+     export MODULEPATH=$(testDir)/mf2/Core
+     runLmod load top second    #53
+     runLmod list               #54
+     runLmod purge              #55
+     runLmod list               #56
+      
+
+
+
+     HOME=$ORIG_HOME
+
+     cat _stdout.[0-9][0-9][0-9] > _stdout.orig
+     joinBase64Results -bash _stdout.orig _stdout.new
+     cleanUp _stdout.new out.txt
+
+     cat _stderr.[0-9][0-9][0-9] > _stderr.orig
+     cleanUp _stderr.orig err.txt
+
+     rm -f results.csv
+     wrapperDiff --csv results.csv $(testDir)/out.txt out.txt
+     wrapperDiff --csv results.csv $(testDir)/err.txt err.txt
+     testFinish -r $(resultFn) -t $(runtimeFn) results.csv
+   ]],
+
+
+   blessScript = [[
+         # perform what is needed
+   ]],
+
+   tests = {
+      { id='t1'},
+   },
+
+}

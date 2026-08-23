@@ -1,0 +1,70 @@
+-- -*- lua -*-
+local testName = "break"
+
+testdescript = {
+   owner   = "rtm",
+   product = "modules",
+   description = [[
+	 break
+   ]],
+   keywords = {testName },
+
+   active   = true,
+   testName = testName,
+   job_submit_method = "INTERACTIVE",
+
+   runScript = [[
+
+     . $(projectDir)/rt/common_funcs.sh
+
+     unsetMT
+     initStdEnvVars
+     export MODULEPATH=$(testDir)/mf
+
+     remove_generated_lmod_files
+
+     runLmod --version                         # 1
+     runLmod show   BRK                        # 2
+     runLmod load   StdEnv                     # 3
+     runLmod list                              # 4
+     runLmod unload StdEnv                     # 5
+     runLmod list                              # 6
+     runLmod -T   load StdEnv                  # 7
+     runLmod -T unload StdEnv                  # 8
+     runLmod list                              # 9
+     runLmod load   BRK                        #10
+     runLmod load   bad                        #11
+     runLmod unload bad                        #12
+     runLmod list                              #13
+     runLmod load X other                      #14
+     runLmod list                              #15
+     runLmod unload other                      #16
+     runLmod list                              #17
+     runLmod load X/X other                    #18
+     runLmod list                              #19
+
+
+     HOME=$ORIG_HOME
+     cat _stdout.[0-9][0-9][0-9] > _stdout.orig
+     joinBase64Results  -bash  _stdout.orig _stdout.new
+     cleanUp _stdout.new out.txt
+
+     cat _stderr.[0-9][0-9][0-9] > _stderr.orig
+     cleanUp _stderr.orig err.txt
+
+     rm -f results.csv
+     wrapperDiff --csv results.csv $(testDir)/out.txt out.txt
+     wrapperDiff --csv results.csv $(testDir)/err.txt err.txt
+     testFinish -r $(resultFn) -t $(runtimeFn) results.csv
+   ]],
+
+
+   blessScript = [[
+         # perform what is needed
+   ]],
+
+   tests = {
+      { id='t1'},
+   },
+
+}

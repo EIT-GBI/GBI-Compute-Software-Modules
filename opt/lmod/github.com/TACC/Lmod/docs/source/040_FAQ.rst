@@ -1,0 +1,466 @@
+.. _faq-label:
+
+Frequently Asked Questions
+==========================
+
+How does the module command work?
+
+   We know that the child program inherits the  parents' environment
+   but not the other way around. So it is very surprising that a
+   command can change the current shell's environment. The trick here
+   is that the module command is a two part process.  The module shell
+   function in bash is::
+
+        $ type module
+        module() { eval $($LMOD_CMD bash "$@") }
+
+   Where $LMOD_CMD points to your lmod command (say
+   /apps/lmod/lmod/libexec/lmod).  So if you have a module file
+   (foo/1.0) that contains::
+
+       setenv("FOO", "BAR")
+
+   then "$LMOD_CMD bash load foo/1.0" the following string written to stdout::
+
+       export FOO=BAR
+       ...
+
+   The eval command read that output from stdout and changes the
+   current shell's environment. Any text written to stderr bypasses
+   the eval and written to the terminal.
+
+What are the environment variables _ModuleTable001_, _ModuleTable002_,
+etc doing it in the environment?
+
+    The module command remembers its state in the environment through
+    these variables.  The way Lmod does it is through a Lua table called
+    ModuleTable::
+
+       ModuleTable = {
+          mT = {
+            git = { ... }
+          }
+       }
+
+    This table contains quotes and commas and must be store in
+    environment.  To prevent problems the various shells, the table is
+    encoded into base64 and split into blocks of 256 characters.
+    These variables are decoded at the start of Lmod.  You can see what
+    the module table contains with::
+
+        $ module --mt
+
+How does one debug a modulefile?
+
+    There are two methods.  Method 1: If you are writing a Lua modulefile then
+    you can write messages to stderr with and run the module command normally::
+
+        local a = "text"
+        io.stderr:write("Message ",a,"\n")
+
+    Method 2: Take the output directly from Lmod.  You can put print()
+    statements in your modulefile and do::
+
+        $ $LMOD_CMD bash load *modulefile*
+
+Why doesn't  % ``module avail |& grep ucc``  work under tcsh and works under bash?
+
+    It is a bug in the way tcsh handles evals. This works::
+
+       % (module avail) |& grep ucc
+
+    However, in all shells it is better to use::
+
+       % module avail ucc
+
+    instead as this will only output modules that have "ucc" in
+    their name.
+
+
+Why does Lmod require a static location of lua? Why shouldn't a site
+allow Lmod to use the lua found in the path?
+
+    The short answer is that it is possible but for general use it is
+    not a good idea. If you change the first line of the lmod script
+    to be::
+
+       "#!/usr/bin/env lua"
+
+    and all the other Lmod executable scripts to do the same then all
+    the scripts would use the lua found in the user's $PATH. There
+    are other things that would have to change as well. Lmod
+    carefully sets two env. vars: LUA_PATH and LUA_CPATH to be
+    compatible with the Lua that was used to install lmod.
+
+    So why does Lmod go to this much trouble? Why doesn't Lmod just
+    use the lua found in the path and not set LUA_PATH and LUA_CPATH.
+    Earlier version of Lmod did not. The answer is users.
+    Lmod has to protect itself from every user out there. What if a user
+    installs their own Lua? What if your system install of Lua is
+    version 5.1 but your user wants to install the latest version of Lua.
+    The libraries that Lmod depends on change with version. What if a
+    user installs their own version lua but doesn't install the
+    required libraries for Lmod to work (lua-posix, lfs) or they
+    install their own library called lfs but it does something
+    completely different. Lmod would fail with very strange errors.
+
+    To sum up. Lmod is very careful to use the Lua that was used to
+    install it and the necessary libraries. Lmod is also very careful
+    to set LUA_PATH and LUA_CPATH internally so that user changes to
+    those env. variables don't affect how Lmod runs.
+
+Can I disable the pager output?
+
+   Yes, you can.  Just set the environment variable ``LMOD_PAGER`` to
+   **none**.
+
+Why are messages printed to standard error and not standard out?
+
+    The module command is an alias under tcsh and a shell routine under
+    all other shells. There is an lmod command which writes out commands
+    such as export FOO="bar and baz" and messages are written to standard
+    error. The text written to standard out is evaluated so that the text
+    strings make changes to the current environment. See next question
+    for a different way to handle Lmod messages.
+
+
+Can I force the output of list, avail and spider to go to stdout
+instead of stderr?
+
+   Bash and Zsh user can set the environment variable
+   ``LMOD_REDIRECT`` to **yes**.  Sites can configure Lmod to work
+   this way by default.  However, no matter how Lmod is set-up,
+   this will not work with tcsh/csh due to limitations of
+   this shell.
+
+How can I use grep easily with the module command?
+
+   If your site doesn't send the output of stdout, you can still use
+   this trick when you need to grep the output of module command.
+   Here are some examples::
+
+      $ module -t --redirect avail       | grep foo
+      $ module --raw --redirect show foo | grep bar
+      $ module -t --redirect spider      | grep baz
+
+Can I ignore the spider cache files when doing ``module avail``?
+
+   Yes you can::
+
+      $ module --ignore_cache avail
+
+   or you can set::
+
+      $ export LMOD_IGNORE_CACHE=1
+
+   to make Lmod ignore caches as long as the variable is set.
+
+I have created a module and "module avail" can't find it. What do I
+do?
+
+   Assuming that the modulefile is in MODULEPATH then you have an
+   out-of-date cache.  Try running::
+
+      $ module --ignore_cache avail
+
+   If this does find it then you might have an old personal spider cache.
+   To clear it do::
+
+      $ rm -rf ~/.cache/lmod
+
+   If "module avail" doesn't find it now, then the system spider cache
+   is out-of-date.  Please ask your system administrator to update the
+   cache.  If you are the system administrator then please read
+   :ref:`system-spider-cache-label` and :ref:`user-spider-cache-label`
+
+Why doesn't the module command work in shell scripts?
+
+ It will if the following steps are taken. First the script must be a
+ bash script and not a shell script, so start the script with
+ ``#!/bin/bash``. The second is that the environment variable BASH_ENV
+ must point to a file which defines the module command. The simplest
+ way is having ``BASH_ENV`` point to ``/opt/apps/lmod/lmod/init/bash`` or
+ wherever this file is located on your system. This is done by the
+ standard install.  Finally Lmod exports the module command for Bash
+ shell users.
+
+How do I use the initializing shell script that comes with this application with Lmod?
+
+  New in Lmod 8.6+, a modulefile can contain **source_sh** ("shell",
+  "shell_script arg1 arg2 ...") to source a shell script by
+  automatically converting it into module commands. Sites can use
+  $LMOD_DIR/sh_to_modulefile to convert the script once.  See
+  :ref:`sh_to_modulefile-label` for details.
+
+Why is the output of ``module avail`` not filling the width of the terminal?
+
+  If the output of ``module avail`` is 80 characters wide, then Lmod
+  can't find the width of the terminal and instead uses the default
+  size (80). If you do ``module --config``, you'll see a line:
+
+      Active lua-term                true
+
+  If it says **false** instead then lua-term is not installed.  One
+  way this happens is to build Lmod on one computer system that has a
+  system lua-term installed and the package on another where lua-term
+  isn't installed on the system.
+
+
+Why isn't the module defined when using the **screen** program?
+
+  The screen program starts a non-login interactive shell.  The Bash
+  shell startup doesn't start sourcing /etc/profile and therefore the
+  ``/etc/profile.d/*.sh`` scripts for non-login interactive shells.  You
+  can patch bash and fix ``/etc/bashrc`` (see :ref:`issues-with-bash`
+  for a solution) or  you can fix your ``~/.bashrc`` to source
+  ``/etc/profile.d/*.sh``
+
+  You may be better off using **tmux** instead. It starts a login shell.
+
+Why does ``LD_LIBRARY_PATH`` get cleared when using the **screen** program?
+
+  The screen program is a guid program.  That means it runs as the group
+  of the program and not the group associated with the user.  For
+  security reason all of these kinds of program clear
+  ``LD_LIBRARY_PATH``.  This unsetting of ``LD_LIBRARY_PATH`` is done
+  by the Unix operating system and not Lmod.
+
+  You may be better off using **tmux** instead. It is a regular
+  program.
+
+How can you write TCL files that can be safely used with both Lmod
+and Tmod?
+
+  For example the hide-version command only works Lmod and could be
+  found in ~/.modulerc.  This could be read by both Tmod and Lmod.
+  You can prevent Tmod from executing Lmod only code in the following way::
+
+    #%Module
+    if { [info exists ::env(LMOD_VERSION_MAJOR)] } {
+       hide-version CUDA/8.8.8
+    }
+
+  Lmod defines the environment variable LMOD_VERSION_MAJOR during its
+  execution.  This trick can also be used in a TCL modulefile to set
+  the family function::
+
+    #%Module
+    ...
+    if { [info exists ::env(LMOD_VERSION_MAJOR)] } {
+       family compiler
+    }
+
+  As of Lmod 8.4.8+ you can also use the TCL global variable ModuleTool::
+
+    #%Module
+    ...
+    if ( [ info exists ::ModuleTool ] && $::ModuleTool == "Lmod" } {
+       family compiler
+    }
+
+How can I get the shell functions created by modules in bash shell
+scripts such as job submission scripts?
+
+   First, please make sure that shell functions and alias works
+   correctly in bash interactive sub-shells.  If they don't then your
+   site is not set up correctly.
+
+   Once that works then change the first line of the shell script to
+   be:
+
+       #!/bin/bash -l
+
+   Note that is a minus ell not minus one. This will cause the startup
+   scripts to be sourced before the first executable statement in the
+   script.
+
+Why do modules sometimes get loaded when I execute ``module use <path>``?
+
+   A main principal is that when $MODULEPATH changes, Lmod checks all
+   the currently loaded modules. If any of those modules would not
+   have been chosen then each is swapped for the new choice.
+
+How to use module commands inside a Makefile?
+
+   A user might wish to use module commands inside a Makefile.  Here is a
+   generic way that would work with both Tmod and Lmod.  Both Lmod and
+   Tmod define MODULESHOME to point to the top of the module install
+   directory and both tools use the same initialization method to
+   define the module command.
+
+   Here is an example Makefile that shows a user listing their currently
+   loaded modules::
+
+
+      module_list:
+             source $$MODULESHOME/init/bash; module list
+
+What to do if new modules are missing when doing ``module avail``?
+
+   If your site adds a new modulefile to the site's $MODULEPATH but
+   are unable to see it with ``module avail``?
+
+   It is likely that your site is having an spider cache issue.  If
+   you see different results from the following commands then that is
+   the problem::
+
+      $ module --ignore_cache avail
+      $ module                avail
+
+   If you see a difference between the above two commands, delete (if
+   it exists) the user's spider cache::
+
+      $ rm -rf ~/.cache/lmod ~/.lmod.d/__cache__
+
+   and try again.  If that still leads to a difference then there is a
+   out-of-date system spider cache.  Please see
+   :ref:`system-spider-cache-label` on how to set up and update a
+   system spider cache.  This issue can happen with a user's personal
+   spider cache.  Please see :ref:`user-spider-cache-label` for more
+   details.
+
+How to edit a modulefile?
+
+   Lmod does not provide a way to directly edit modulefiles.
+   Typically modulefiles are owned by the system so cannot be edited
+   by users.  However, Lmod does provide a convenient way to locate
+   modules which could be used for a bash/zsh shell function::
+
+       function edit_modulefile () {
+          $EDITOR $(module --redirect --location $1)
+       }
+
+
+If my startup shell is bash or tcsh and I start zsh, why do I get a
+message that is like: "/etc/zsh/zshrc:48: compinit: function definition file not found"
+
+   Lmod supports both zsh and ksh. Both these shells use shell
+   variable FPATH but in very different ways.  The issue is that some
+   bash or tcsh users run ksh scripts and need access to the module
+   command. In the K-shell, the environment variable FPATH is exported
+   and is the path to where the module shell function is found.
+   Z-shell also uses FPATH to point to tool like compinit and others.
+   By exporting FPATH, Z-shell does not change the value of FPATH
+   which means that the zsh user can not find all the functions that
+   make it work.
+
+   The solution is to add "unset FPATH" in your startup files before
+   "exec zsh".
+
+Why doesn't setting CC in compiler and mpi modulefiles always work
+reliably in a software hierarchy?
+
+   When Lmod sees changes to $MODULEPATH it immediately checks to
+   see whether all the currently loaded modules should still be
+   loaded.  This means that setting CC with a pushenv() before
+   modifying $MODULEPATH is unsafe.  The correct way to modify
+   $MODULEPATH is in the beginning of the modulefile.  So for the gcc
+   modulefile you might have::
+
+       prepend_path("MODULEPATH","...")
+       pushenv("CC","gcc")
+
+   and not the other way around.
+
+How does one handle backslashed characters (aka escaped characters) in an environment variable?
+
+   Lua not Lmod is particular about \\<char>.  In other words, you
+   can't backslash any character you want.  Just combinations like \\t
+   and \\n.  To put in a backslash, you have to quote it with another
+   backslash::
+
+       % cat setPrompt/1.0.lua
+
+       setenv("MY_PS1", "[\\u@\\h \\W]\\$ ")
+
+       % module load setPrompt; echo "MY_PS1: \"$MY_PS1\""
+       MY_PS1: "[\u@\h \W]\$ "
+
+Why is using os.getenv() directly in the functions setenv(),
+prepend_path() or append_path() a bad idea?
+
+   The following modulefile works correctly on load and will produce a
+   warning when unloaded::
+
+        setenv("TESTDIR", os.getenv("HOME") .. "/test")
+        prepend_path("TESTPATH", os.getenv("TESTDIR"))
+
+   Why?
+
+   Whenever Lmod evaluates a modulefile, this includes both loads and unloads, it
+   evaluates all the commands in a subshell.  The **setenv()**
+   statement on unload is unsetting the env. var.  **TESTDIR** in the
+   subshell. Therefore the **prepend_path()** will fail because
+   **prepend_path("TESTPATH", nil)** is an illegal command.
+
+   The modulefile can be written safely like this::
+
+        local testdir = os.getenv("HOME") .. "/test"
+        setenv("TESTDIR", testdir)
+        prepend_path("TESTPATH", testdir)
+
+Why don't collections work on HPE/Cray systems?
+
+   Currently, program environments on login nodes are different from
+   the ones on compute nodes.  Collections require that the
+   modulefiles have the same name (versions could be different but not
+   the name).  When a collection is *restored*, it purges **ALL**
+   modules and loads all the modules listed in the collection.  Note
+   that the module load() inside a modulefile are ignored for very
+   complicated reasons.  Instead Lmod loads all modules listed in the
+   collection.   This works well except when the list of modules is
+   different on different nodes.
+
+   The reason why Lmod loads the list of modules in the collections
+   and ignores load() type functions in the modulefiles is complex.
+   The problem is when two or more modulefiles share the same
+   environment variable. Suppose that your site sets the variable 
+   **MPI_HOME** (using *setenv()*) in each mpi modulefile.  If Lmod
+   obeyed the load() function in each modulefile, then it would have
+   to delete the extra modules not in the collection.  In the case
+   where the user switched mpi modules, Lmod would load both mpi
+   modules then delete one to match the list of names in the
+   collection.  Unloading the second module would unset **MPI_HOME**
+   and leave this variable with no value. If a site depended on
+   **MPI_HOME** as part of mpi program startup script, then those
+   users would not be able to submit mpi programs.
+
+How to compare Lmod versions inside a module file?
+
+   Sites can use **convertToCanonical("string")** to test the Lmod version::
+
+      if(convertToCanonical(LmodVersion()) < convertToCanonical("8.6")) then
+        LmodMessage("source_sh() is not supported with this version of Lmod")
+      end
+
+Why can't Lmod find this module in $MODULEPATH?
+
+   A modulefile written in Lua requires a .lua extension.  A
+   modulefile without the .lua extension is assumed to be written in
+   TCL. However all TCL modulefiles must start with **#%Module** at
+   the at the very top of the file. Otherwise they are silently ignored.
+
+Why should you use Lua variables instead of environment variables to build other variables?
+
+   Building new environment variable based on other environment
+   variables defined in the current module (or other modules) will
+   cause problems when unloading::
+
+      setenv("ACME_DIR", "/path/to/acme")
+      setenv("ACME_BIN", pathJoin(os.getenv("ACME_DIR"),"bin"))
+
+   The above module code works correctly when loading but will fail
+   when unloading because "ACME_DIR" is nolonger defined when the
+   second setenv statement is evaluated.
+
+   You should instead use Lua variables::
+   
+      local acme_dir = "/path/to/acme"
+      setenv("ACME_DIR", acme_dir)
+      setenv("ACME_BIN", pathJoin(acme_dir,"bin"))
+
+   You can use an environment variable to set other environment
+   variables.  You just have to be sure that variable is defined when
+   the current module is being unloaded.
+   
+            

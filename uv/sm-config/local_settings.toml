@@ -1,0 +1,5 @@
+name = "uv"
+
+relocate = true
+destination = "{SM_ROOT}/uv"
+modules = "{SM_ROOT}/modules"

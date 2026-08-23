@@ -1,0 +1,6 @@
+name = "eza"
+variant = "compiled"
+
+relocate = true
+destination = "{SM_ROOT}/eza"
+modules = "{SM_ROOT}/modules"

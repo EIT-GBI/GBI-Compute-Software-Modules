@@ -1,0 +1,214 @@
+#!/bin/bash
+# -*- shell-script -*-
+PKG_VERSION=`(lua -e "V=require('src/Version'); print(V.tag())")`
+echo Making Version: $PKG_VERSION
+
+parallel_make_install()
+{
+  unset LD_LIBRARY_PATH
+  PARALLEL_BUILD="-j"
+  if [ -n ${LMOD_SIMPLE_BUILD:-} ]; then
+     PARALLEL_BUILD=""
+  fi
+
+  if [ -e .git ]; then
+    GIT_VERSION=`git describe --always`
+  else
+    GIT_VERSION=$(LUA_PATH="./src/?.lua;" lua -e "V=require('Version'); print(V.tag())")
+  fi
+
+  if [ "$BUILD_TYPE" != "EXPERIMENTAL" ]; then
+    echo "$SUDO $MAKE $PARALLEL_BUILD GIT_VERSION=$GIT_VERSION install     $MAKE_EXTRA"
+          $SUDO $MAKE $PARALLEL_BUILD GIT_VERSION=$GIT_VERSION install     $MAKE_EXTRA
+  else
+    echo "$SUDO $MAKE pre-install $MAKE_EXTRA"
+    $SUDO $MAKE GIT_VERSION=$GIT_VERSION $PARALLEL_BUILD pre-install $MAKE_EXTRA
+    $SUDO rm -f $BASE_DIR/lmod/EXPERIMENTAL
+    $SUDO ln -s $PKG_VERSION $BASE_DIR/lmod/EXPERIMENTAL
+  fi
+}
+
+save_old_version()
+{
+  if [ "$SITE_CONTROLLED_PREFIX" != "yes" ]; then
+    $SUDO rm -rf $BASE_DIR/$pkgName/orig
+    if [ -d $BASE_DIR/$pkgName/$PKG_VERSION ]; then
+	$SUDO cp -r $BASE_DIR/$pkgName/$PKG_VERSION $BASE_DIR/$pkgName/orig
+	$SUDO rm -f $PKG/../$pkgName
+	$SUDO ln -s orig $PKG/../$pkgName
+    fi
+  fi
+}
+make_symlink()
+{
+  if [ "$SITE_CONTROLLED_PREFIX" = "yes" ]; then
+      $SUDO rm -f $BASE_DIR/../lmod
+      $SUDO ln -s $PKG_VERSION $BASE_DIR/../lmod
+      bb=${BASE_DIR/$PKG_VERSION/lmod}
+      $SUDO find $BASE_DIR/modulefiles $BASE_DIR/init -type f -exec perl -p -i -e "s|$BASE_DIR|$bb|g" {} \;
+  fi
+}
+
+runMe()
+{
+  local cmdA=("$@")
+
+  local j
+  local jj
+  local i
+  local ignoreError
+  local j=0
+  for i in "${cmdA[@]}" ; do
+    ignoreError=
+    if [ "x${i:0:1}" = x- ]; then
+      i=${i:1}
+      ignoreError=1
+    fi
+
+    j=$((j+1))
+    jj=$(printf "%02d" $j)
+    echo
+    echo "%%---------------------------------%%"
+    echo "   " $jj: $i
+    echo "%%---------------------------------%%"
+    echo
+    eval $i
+    if [ -z "$ignoreError" -a $? != 0 ]; then
+      break
+    fi
+  done
+}
+
+BUILD_TYPE="standard"
+if [ "$1" = "-e" ]; then
+  BUILD_TYPE="EXPERIMENTAL"
+  echo BUILD_TYPE: $BUILD_TYPE
+fi
+
+pkgName=lmod
+PKG=$BASE_DIR/$pkgName/$PKG_VERSION
+
+myhost=$(hostname -f)
+myhost=${myhost%.tacc.utexas.edu}
+myhost=${myhost%.local}
+first=${myhost%%.*}
+SYSHOST=${myhost#*.}
+SUDO=""
+
+if [ -x $HOME/.up/bin/arch.py ]; then
+    MY_ARCH=$($HOME/.up/bin/arch.py)
+    MY_ARCH="$MY_ARCH/"
+fi
+
+MCLAY=~mclay
+
+cat > /tmp/TACC.build.$$ <<EOF
+$MCLAY/l/moduleData/${MY_ARCH}cacheDir:$MCLAY/l/moduleData/${MY_ARCH}system.txt
+EOF
+
+
+if [ -n "$LUA_PATH" ]; then
+   MAKE_EXTRA="LUA_PATH=$LUA_PATH LUA_CPATH=$LUA_CPATH"
+fi
+
+EXTRA_CMD="echo "
+COMMON_OPTIONS="--with-siteName=TACC  --with-silentShellDebugging=yes"
+
+
+case $SYSHOST in
+  xena | mijo | vmijo | test-vmijo )
+    SITE_CONTROLLED_PREFIX=yes
+    SUDO="sudo"
+    base="/opt/apps/lmod/$PKG_VERSION"
+    PKG=$base
+    ADMIN_DIR=/opt/moduleData
+    UPDATE_FN=$ADMIN_DIR/system.txt
+    CACHEDIRS=$ADMIN_DIR/cacheDir
+    EXTRA="--with-spiderCacheDir=$CACHEDIRS  --with-updateSystemFn=$UPDATE_FN --with-siteControlPrefix=yes --with-module-root-path=/opt/apps/modulefiles --with-silentShellDebugging=yes --with-useDotConfigDirOnly=yes"
+    SITE_PKG="contrib/Personal/*.lua"
+    
+    if [ "$SYSHOST" == "mijo" ]; then
+      EXTRA="$EXTRA --with-exportedModuleCmd=no"
+    fi
+    ;; 
+
+  rios | jedrik | vato | devo | xalt-lmod | bt | bt2)
+    SUDO="sudo"
+    base="/opt/apps"
+    PKG=$base/lmod/$PKG_VERSION
+    ADMIN_DIR=/opt/moduleData
+    UPDATE_FN=$ADMIN_DIR/system.txt
+    CACHEDIRS=$ADMIN_DIR/cacheDir
+    SITE_PKG="contrib/Personal/*.lua"
+    EXTRA="--with-spiderCacheDir=$CACHEDIRS  --with-updateSystemFn=$UPDATE_FN     --with-useDotConfigDirOnly=yes"
+    ;;
+
+  ls6 | stampede3 | vista)
+    base="$HOME/l/pkg"
+    PKG=$base/lmod/$PKG_VERSION
+    UPDATE_FN=/tmp/losf_last_update
+    CACHEDIRS=/tmp/moduleData/cacheDir
+    if [ $SYSHOST == "longhorn" ]; then
+      UPDATE_FN=/home/moduleData/spider_cache_timestamp.txt
+      CACHEDIRS=/home/moduleData/cacheDir
+    fi
+    EXTRA="--with-spiderCacheDir=$CACHEDIRS  --with-updateSystemFn=$UPDATE_FN"
+    SITE_PKG="contrib/TACC/*.lua"
+    ;;
+
+  frontera )
+    base="$HOME/l/pkg"
+    if [ -x $HOME/.up/bin/arch.py ]; then
+    	   base="$base/$($HOME/.up/bin/arch.py)"
+    else
+    	   base="$base/$(uname -m)"
+    fi
+    UPDATE_FN=/tmp/losf_last_update
+    CACHEDIRS=/tmp/moduleData/cacheDir
+    EXTRA="--with-spiderCacheDir=$CACHEDIRS  --with-updateSystemFn=$UPDATE_FN"
+    SITE_PKG="contrib/TACC/*.lua"
+    PKG=$base/lmod/$PKG_VERSION
+    ;;
+
+  *)
+    ADMIN_DIR=$HOME/w/moduleData
+    UPDATE_FN=$ADMIN_DIR/system.txt
+    CACHEDIRS=$ADMIN_DIR/cacheDir
+    EXTRA="--with-spiderCacheDir=$CACHEDIRS  --with-updateSystemFn=$UPDATE_FN "
+    base="$HOME/l/pkg"
+    PKG=$base/lmod/$PKG_VERSION
+    ;;
+esac
+BASE_DIR=$base
+
+if [ -n "$SITE_PKG" ]; then
+   EXTRA_CMD="$SUDO cp $SITE_PKG $PKG/libexec"
+fi
+
+echo EXTRA_CMD: $EXTRA_CMD
+
+
+rm -f config.status config.log
+
+MAKE=make
+command -v remake 2>&1 > /dev/null
+if [ "$?" = 0 ]; then
+  MAKE=remake
+fi
+
+cmdA=("-$MAKE distclean"
+      "LD_LIBRARY_PATH= LD_PRELOAD= ./configure --prefix=$BASE_DIR --with-settarg=yes $COMMON_OPTIONS $EXTRA"
+      "echo BASE_DIR: $BASE_DIR"
+      "save_old_version"
+      "$MAKE echo"
+      "parallel_make_install"
+      "$EXTRA_CMD"
+      "make_symlink"
+      "$SUDO  rm -rf $BASE_DIR/$pkgName/orig"
+      "$MAKE clobber"
+      )
+
+
+runMe "${cmdA[@]}"
+
+rm -rf /tmp/TACC.build.$$

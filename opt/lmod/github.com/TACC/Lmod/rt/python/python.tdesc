@@ -1,0 +1,93 @@
+-- -*- lua -*-
+
+testdescript = {
+   owner   = "rtm",
+   product = "modules",
+   description = [[
+	 Test initial module load
+   ]],
+   keywords = {"python" },
+
+   active = 1,
+   testName = "python",
+   job_submit_method = "INTERACTIVE",
+
+   runScript = [[
+
+     . $(projectDir)/rt/common_funcs.sh
+
+     unsetMT
+     initStdEnvVars
+     MODULEPATH_ROOT=$(testDir)/mf;       export MODULEPATH_ROOT
+     MODULEPATH="$MODULEPATH_ROOT/Core";  export MODULEPATH
+
+     rm -rf init .cache .config
+     mkdir init
+     sed -e "s|'@PKG@/libexec/lmod'|'lua','$(projectDir)/src/lmod.in.lua'|g" \
+         -e 's|@redirect@|no|g'                                              \
+              < $(projectDir)/init/env_modules_python.py.in > init/env_modules_python.py
+
+
+
+cat > $(testName).py << 'EOF'
+#!/bin/sh
+# -*- python -*-
+################################################################################
+# This file is python 2/3 bilingual. 
+# The line """:" starts a comment in python and is a no-op in shell.
+""":"
+# Shell code to find and run a suitable python interpreter.
+for cmd in python3 python python2; do
+   command -v > /dev/null $cmd && exec $cmd $0 "$@"
+done
+
+echo "Error: Could not find a valid python interpreter --> exiting!" >&2
+exit 2
+":""" # this line ends the python comment and is a no-op in shell.
+################################################################################
+
+from __future__ import print_function
+import os, sys
+sys.path.insert(0,"$(outputDir)/init/")
+
+from env_modules_python import module
+module("load","foobar bar")
+module("load","A","B")
+
+
+print ("os.environ['FOOBAR']: ",'"' + os.environ['FOOBAR'] + '"')
+print ("os.environ['M']: ", '"' + os.environ['M'] + '"')
+
+module("avail");
+os.environ['LMOD_REDIRECT'] = 'yes'
+module("avail");
+module("load","bad")
+EOF
+
+
+
+     remove_generated_lmod_files
+
+     chmod +x $(testName).py
+     ./$(testName).py  > _stdout.000 2> _stderr.000
+
+     HOME=$ORIG_HOME
+
+     cleanUp _stdout.000 out.txt
+     cleanUp _stderr.000 err.txt
+     rm -f results.csv
+     wrapperDiff --csv results.csv $(testDir)/out.txt out.txt
+     wrapperDiff --csv results.csv $(testDir)/err.txt err.txt
+     testFinish -r $(resultFn) -t $(runtimeFn) results.csv
+   ]],
+
+
+   blessScript = [[
+         # perform what is needed
+   ]],
+
+   tests = {
+      { id='t1'},
+   },
+
+}

@@ -1,0 +1,307 @@
+===========================
+step 1
+lua ProjectDIR/src/lmod.in.lua shell --regression_testing --version
+===========================
+Modules based on Lua: Version 8.7.64 2025-07-08 12:40 -06:00
+    https://lmod.readthedocs.io
+===========================
+step 2
+lua ProjectDIR/src/lmod.in.lua shell --regression_testing avail
+===========================
+ProjectDIR/rt/nvv/mf
+   a/sub/1.0 (D)    d/1.0       vasp/5.4/featureA/1.0 (D)
+   a/sub/2.0        vasp/1.0
+  Where:
+   D:  Default Module
+Module defaults are chosen based on Find First Rules due to Name/Version/Version modules found in the module tree.
+See https://lmod.readthedocs.io/en/latest/060_locating.html for details.
+If the avail list is too long consider trying:
+"module --default avail" or "ml -d av" to just list the default modules.
+"module overview" or "ml ov" to display the number of modules for each name.
+Use "module spider" to find all possible modules and extensions.
+Use "module keyword key1 key2 ..." to search for all possible modules matching any of the "keys".
+===========================
+step 3
+lua ProjectDIR/src/lmod.in.lua shell --regression_testing purge
+===========================
+===========================
+step 4
+lua ProjectDIR/src/lmod.in.lua shell --regression_testing load intel/17
+===========================
+===========================
+step 5
+lua ProjectDIR/src/lmod.in.lua shell --regression_testing list
+===========================
+Currently Loaded Modules:
+  1) intel/17/17.0.2
+===========================
+step 6
+lua ProjectDIR/src/lmod.in.lua shell --regression_testing purge
+===========================
+===========================
+step 7
+lua ProjectDIR/src/lmod.in.lua shell --regression_testing avail
+===========================
+ProjectDIR/rt/nvv/bc/mf
+   HPCBIOS/2015q2
+ProjectDIR/rt/nvv/bc/cm
+   icr/32/3.7    icr/64/3.7 (D)
+  Where:
+   D:  Default Module
+Module defaults are chosen based on Find First Rules due to Name/Version/Version modules found in the module tree.
+See https://lmod.readthedocs.io/en/latest/060_locating.html for details.
+If the avail list is too long consider trying:
+"module --default avail" or "ml -d av" to just list the default modules.
+"module overview" or "ml ov" to display the number of modules for each name.
+Use "module spider" to find all possible modules and extensions.
+Use "module keyword key1 key2 ..." to search for all possible modules matching any of the "keys".
+===========================
+step 8
+lua ProjectDIR/src/lmod.in.lua shell --regression_testing load HPCBIOS/2015q2
+===========================
+===========================
+step 9
+lua ProjectDIR/src/lmod.in.lua shell --regression_testing purge
+===========================
+===========================
+step 10
+lua ProjectDIR/src/lmod.in.lua shell --regression_testing avail
+===========================
+ProjectDIR/rt/nvv/mf2
+   aaa/1.0    aaa/1.1 (D)    icr/32/1.0    icr/64/1.0 (D)
+ProjectDIR/rt/nvv/mf3
+   aaa/2.0    aaa/2.1
+  Where:
+   D:  Default Module
+Module defaults are chosen based on Find First Rules due to Name/Version/Version modules found in the module tree.
+See https://lmod.readthedocs.io/en/latest/060_locating.html for details.
+If the avail list is too long consider trying:
+"module --default avail" or "ml -d av" to just list the default modules.
+"module overview" or "ml ov" to display the number of modules for each name.
+Use "module spider" to find all possible modules and extensions.
+Use "module keyword key1 key2 ..." to search for all possible modules matching any of the "keys".
+===========================
+step 11
+lua ProjectDIR/src/lmod.in.lua shell --regression_testing load aaa
+===========================
+===========================
+step 12
+lua ProjectDIR/src/lmod.in.lua shell --regression_testing list
+===========================
+Currently Loaded Modules:
+  1) aaa/1.1
+===========================
+step 13
+lua ProjectDIR/src/lmod.in.lua shell --regression_testing purge
+===========================
+===========================
+step 14
+lua ProjectDIR/src/lmod.in.lua shell --regression_testing load A/3.0
+===========================
+===========================
+step 15
+lua ProjectDIR/src/lmod.in.lua shell --regression_testing purge
+===========================
+===========================
+step 16
+lua ProjectDIR/src/lmod.in.lua shell --regression_testing avail
+===========================
+ProjectDIR/rt/nvv/mf6
+   vasp/6.4.3/normal
+Module defaults are chosen based on Find First Rules due to Name/Version/Version modules found in the module tree.
+See https://lmod.readthedocs.io/en/latest/060_locating.html for details.
+If the avail list is too long consider trying:
+"module --default avail" or "ml -d av" to just list the default modules.
+"module overview" or "ml ov" to display the number of modules for each name.
+Use "module spider" to find all possible modules and extensions.
+Use "module keyword key1 key2 ..." to search for all possible modules matching any of the "keys".
+===========================
+step 17
+lua ProjectDIR/src/lmod.in.lua shell --regression_testing load vasp/does_not_exist
+===========================
+Lmod has detected the following error: The following module(s) are unknown: "vasp/does_not_exist"
+Please check the spelling or version number. Also try "module spider ..."
+It is also possible your cache file is out-of-date; it may help to try:
+  $ module --ignore_cache load "vasp/does_not_exist"
+Also make sure that all modulefiles written in TCL start with the string #%Module
+===========================
+step 18
+lua ProjectDIR/src/lmod.in.lua shell --regression_testing purge
+===========================
+===========================
+step 19
+lua ProjectDIR/src/lmod.in.lua shell --regression_testing avail
+===========================
+ProjectDIR/rt/nvv/mf7
+   complr/gcc/arm64/1.0
+Module defaults are chosen based on Find First Rules due to Name/Version/Version modules found in the module tree.
+See https://lmod.readthedocs.io/en/latest/060_locating.html for details.
+If the avail list is too long consider trying:
+"module --default avail" or "ml -d av" to just list the default modules.
+"module overview" or "ml ov" to display the number of modules for each name.
+Use "module spider" to find all possible modules and extensions.
+Use "module keyword key1 key2 ..." to search for all possible modules matching any of the "keys".
+===========================
+step 20
+lua ProjectDIR/src/lmod.in.lua shell --regression_testing load complr/gcc
+===========================
+===========================
+step 21
+lua ProjectDIR/src/lmod.in.lua shell --regression_testing list
+===========================
+Currently Loaded Modules:
+  1) complr/gcc/arm64/1.0
+===========================
+step 22
+lua ProjectDIR/src/lmod.in.lua shell --regression_testing purge
+===========================
+===========================
+step 23
+lua ProjectDIR/src/lmod.in.lua shell --regression_testing avail
+===========================
+ProjectDIR/rt/nvv/mf7
+   complr/gcc/arm64/1.0
+Module defaults are chosen based on Find First Rules due to Name/Version/Version modules found in the module tree.
+See https://lmod.readthedocs.io/en/latest/060_locating.html for details.
+If the avail list is too long consider trying:
+"module --default avail" or "ml -d av" to just list the default modules.
+"module overview" or "ml ov" to display the number of modules for each name.
+Use "module spider" to find all possible modules and extensions.
+Use "module keyword key1 key2 ..." to search for all possible modules matching any of the "keys".
+===========================
+step 24
+lua ProjectDIR/src/lmod.in.lua shell --regression_testing load complr/gcc
+===========================
+===========================
+step 25
+lua ProjectDIR/src/lmod.in.lua shell --regression_testing purge
+===========================
+===========================
+step 26
+lua ProjectDIR/src/lmod.in.lua shell --regression_testing avail
+===========================
+ProjectDIR/rt/nvv/mf8
+   qiime/2-2020.2             qiime/2-2024.5/metagenome
+   qiime/2-2021.4             qiime/2-2024.10/amplicon   (D)
+   qiime/2-2023.5             qiime/2-2024.10/metagenome
+   qiime/2-2024.5/amplicon
+  Where:
+   D:  Default Module
+Module defaults are chosen based on Find First Rules due to Name/Version/Version modules found in the module tree.
+See https://lmod.readthedocs.io/en/latest/060_locating.html for details.
+If the avail list is too long consider trying:
+"module --default avail" or "ml -d av" to just list the default modules.
+"module overview" or "ml ov" to display the number of modules for each name.
+Use "module spider" to find all possible modules and extensions.
+Use "module keyword key1 key2 ..." to search for all possible modules matching any of the "keys".
+===========================
+step 27
+lua ProjectDIR/src/lmod.in.lua shell --regression_testing load qiime
+===========================
+===========================
+step 28
+lua ProjectDIR/src/lmod.in.lua shell --regression_testing load qiime/2-2023.5
+===========================
+The following have been reloaded with a version change:
+  1) qiime/2-2024.10/amplicon => qiime/2-2023.5
+===========================
+step 29
+lua ProjectDIR/src/lmod.in.lua shell --regression_testing load qiime/2-2024.10
+===========================
+The following have been reloaded with a version change:
+  1) qiime/2-2023.5 => qiime/2-2024.10/amplicon
+===========================
+step 30
+lua ProjectDIR/src/lmod.in.lua shell --regression_testing load qiime/2-2024.10/metagenome
+===========================
+The following have been reloaded with a version change:
+  1) qiime/2-2024.10/amplicon => qiime/2-2024.10/metagenome
+===========================
+step 31
+lua ProjectDIR/src/lmod.in.lua shell --regression_testing purge
+===========================
+===========================
+step 32
+lua ProjectDIR/src/lmod.in.lua shell --regression_testing load foo/1
+===========================
+===========================
+step 33
+lua ProjectDIR/src/lmod.in.lua shell --regression_testing load foo/1.0
+===========================
+===========================
+step 34
+lua ProjectDIR/src/lmod.in.lua shell --regression_testing load foo/2.0
+===========================
+Lmod has detected the following error: The following module(s) are unknown: "foo/2.0"
+Please check the spelling or version number. Also try "module spider ..."
+It is also possible your cache file is out-of-date; it may help to try:
+  $ module --ignore_cache load "foo/2.0"
+Also make sure that all modulefiles written in TCL start with the string #%Module
+===========================
+step 35
+lua ProjectDIR/src/lmod.in.lua shell --regression_testing load foo/variant/2.0
+===========================
+Lmod has detected the following error: The following module(s) are unknown: "foo/variant/2.0"
+Please check the spelling or version number. Also try "module spider ..."
+It is also possible your cache file is out-of-date; it may help to try:
+  $ module --ignore_cache load "foo/variant/2.0"
+Also make sure that all modulefiles written in TCL start with the string #%Module
+===========================
+step 36
+lua ProjectDIR/src/lmod.in.lua shell --regression_testing load foo/variant/1
+===========================
+The following have been reloaded with a version change:
+  1) foo/1.0 => foo/variant/1.0
+===========================
+step 37
+lua ProjectDIR/src/lmod.in.lua shell --regression_testing load foo/variantZ/1.0
+===========================
+Lmod has detected the following error: The following module(s) are unknown: "foo/variantZ/1.0"
+Please check the spelling or version number. Also try "module spider ..."
+It is also possible your cache file is out-of-date; it may help to try:
+  $ module --ignore_cache load "foo/variantZ/1.0"
+Also make sure that all modulefiles written in TCL start with the string #%Module
+===========================
+step 38
+lua ProjectDIR/src/lmod.in.lua shell --regression_testing load foo/variant/another/1
+===========================
+The following have been reloaded with a version change:
+  1) foo/variant/1.0 => foo/variant/another/1.0
+===========================
+step 39
+lua ProjectDIR/src/lmod.in.lua shell --regression_testing load foo/variant/another/2.0
+===========================
+Lmod has detected the following error: The following module(s) are unknown: "foo/variant/another/2.0"
+Please check the spelling or version number. Also try "module spider ..."
+It is also possible your cache file is out-of-date; it may help to try:
+  $ module --ignore_cache load "foo/variant/another/2.0"
+Also make sure that all modulefiles written in TCL start with the string #%Module
+===========================
+step 40
+lua ProjectDIR/src/lmod.in.lua shell --regression_testing load foo/variant/anotherzzz/2.0
+===========================
+Lmod has detected the following error: The following module(s) are unknown: "foo/variant/anotherzzz/2.0"
+Please check the spelling or version number. Also try "module spider ..."
+It is also possible your cache file is out-of-date; it may help to try:
+  $ module --ignore_cache load "foo/variant/anotherzzz/2.0"
+Also make sure that all modulefiles written in TCL start with the string #%Module
+===========================
+step 41
+lua ProjectDIR/src/lmod.in.lua shell --regression_testing load bar/a/b
+===========================
+===========================
+step 42
+lua ProjectDIR/src/lmod.in.lua shell --regression_testing load bar/a/b/1.0
+===========================
+The following have been reloaded with a version change:
+  1) bar/a/b/2.0 => bar/a/b/1.0
+===========================
+step 43
+lua ProjectDIR/src/lmod.in.lua shell --regression_testing load baz/a1
+===========================
+===========================
+step 44
+lua ProjectDIR/src/lmod.in.lua shell --regression_testing load baz/a1/d/e/f
+===========================
+The following have been reloaded with a version change:
+  1) baz/a1/d/3.0 => baz/a1/d/e/f/6.0

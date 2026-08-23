@@ -1,0 +1,5 @@
+name = "llvm"
+
+relocate = true
+destination = "{SM_ROOT}/llvm"
+modules = "{SM_ROOT}/modules"

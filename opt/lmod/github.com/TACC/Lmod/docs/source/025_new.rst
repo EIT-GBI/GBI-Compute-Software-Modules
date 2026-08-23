@@ -1,0 +1,247 @@
+New Features in Lmod
+====================
+
+**Lmod now looks for /etc/lmod/SitePackage.lua**
+  (Lmod 9.0.7+): After looking for SitePackage.lua in the usual
+  places, Lmod now looks in /etc/lmod for SitePackage.lua.  Actually
+  Lmod looks in LMOD_CONFIG_DIR which defaults to /etc/lmod
+
+**New commands** *hideRegex* {} **and** *forbidRegex* {} **have been added**
+  (Lmod 9.0.6+) The modulerc files now support Lua based regular
+  expression matching.  See :ref:`modulerc-label` for more details.
+
+
+**Collection are written to ~/.config/lmod only**
+   (Lmod 9.0+) This means that Lmod will only write to ~/.config/lmod
+   but always read from both directories (~/.config/lmod and ~/.lmod.d)
+
+**Using luaposix's syslog interface**
+  (Lmod 8.8+)  See :ref:`tracking_usage` for more details. In
+  particular please see the **l_report_loads** () function.
+
+**Irreversible module actions**
+  (Lmod 8.8) You can now set environment variable or load modules when
+  unloading. See :ref:`mode_select-label` for more details.
+
+
+**Updated Method for tracking module usage**
+  (Lmod 8.8+) See :ref:`tracking_usage` for more details.
+
+**decorate_module**:
+  (Lmod 8.7.59+)  Sites can use this new hook to add text to a
+  modulefile. Note that if this hook exists all modules will call this
+  hook, so sites will typically only want to text to certain modules.
+  Also this added text must be written in Lua.  TCL modulefiles will
+  have already been converted to Lua.
+
+
+**LMOD_FILE_IGNORE_PATTERNS**
+  (Lmod 8.7.56+)  Sites can replace the default value with their own
+  list of file patterns to ignore.
+
+**Updated Tracking Module Usage**
+  (Lmod 8.7.54+) The optional module usage tracking system has been
+  updated.  It now uses Python3 and mysql.connector.python.  The new
+  system also greatly reduces the amount of data stored.  See the
+  updated documentation at :ref:`tracking_usage` and how to convert
+  from old gen 1 format to the new gen 2 database format at
+  :ref:`convert_gen1_gen2-label` 
+
+
+**LMOD_SHOW_HIDDEN**
+  (Lmod 8.7.54+) The environment variable **LMOD_SHOW_HIDDEN**
+  can be used to control whether hidden modules will be show under
+  list, spider, avail.  See :ref:`show_hidden-label` for more details
+
+
+**Accessing isVisible status from load hook**
+   (Lmod 8.7.52+) The mname object is passed to the load hook.  Sites
+   can access the isVisible status by t.mname:isVisible()
+
+**hide** {} and **forbid** {}
+   (Lmod 8.7.52+) The *hide* {} function provides a more powerful way to
+   hide modules.  The *forbid* {} function provides a way to mark
+   modules that exist but cannot be loaded.  See :ref:`modulerc-label`
+   for more details.
+
+**Decorations added to --terse output**
+  (Lmod 8.7.50+) Lmod now adds decorations to terse output. See
+  :ref:`terse_output-label` for more details. 
+
+
+**MODULES_AUTO_DEFAULT**
+   (Lmod 8.7.41+) When this variable is set then Lmod treats *prereq*
+   as *depends_on* and *prereq_any* as *depends_on_any*.
+
+**depends_on_any("pkgA*,"pkgB",...)**
+   (Lmod 8.7.41+) A new function *depends_on_any()* which works like
+   *depends_on()* except that Lmod picks the first available in the
+   list. 
+
+**Lmod Warnings**
+   (Lmod 8.7.33) Lmod warning nolonger set the error status on exit.
+
+**hook.register(<hook_name>, func, <action>)**
+   (Lmod 8.7.25+) The hook.register function now takes a optional third
+   argument: action.  The legal actions are the followning strings:
+   "replace", "append", "prepend".  See
+   :ref:`registering_multiple_hook_functions-label` for more details.
+
+
+**/etc/lmod/.modulespath**
+   (Lmod 8.7.24) Sites can use /etc/lmod/.modulespath or set
+   $LMOD_MODULEPATH_INIT during their site's startup scripts to
+   control where Lmod finds the .modulespath file.
+
+**check_module_tree_syntax**
+   (Lmod 8.4.3+) check_module_tree_syntax is a command to find syntax
+   errors in your modulefiles.  It also reports when there are
+   modulefile directories that have multiple ways of marking a
+   default. See :ref:`checking_syntax-label` for more details.
+
+
+**module category**
+   (Lmod 8.7.14+) Community provided feature from PR #600. This
+   command has two levels.  1) "module category" list all the
+   categories in the entire module tree; 2) "module category <name1>
+   <name2> ..." list the all the modules that have list that
+   category.  Note that this listing is case insensitive.  So "Library"
+   and "library" will both be printed out when running **module
+   category library**
+
+
+
+**User cache files are now written to ~/.cache/lmod**:
+   (Lmod 8.7.12+) The old user cache directory was ~/.lmod.d/.cache
+   and it has now changed to ~/.cache/lmod/\*.  Lmod is transitioning
+   away from using the ~/.lmod.d directory. Also
+   the --with-useDotFiles configuration option has been remove as it
+   is nolonger needed.
+
+**Controlling installed permission**:
+    (Lmod 8.7.11+): Lmod now uses your umask to set permissions unless
+    your user id (id -u) is less than UID_MIN (from /etc/login.defs)
+    or UID_MIN=500 by default.  In that case, it uses a
+    umask of 022.  This translates to 755 for executable files and 644
+    for all others.  Sites can override this at configure time with
+    **--with-mode=MODE**.
+
+**LMOD_SYSTEM_DEFAULT_MODULES**:
+     (Lmod 8.7.7+) If a site has no system default modules they can set this
+     variable to **__NO_SYSTEM_DEFAULT_MODULES__**.  This will
+     allow **module reset** to purge all modules and reset $MODULEPATH
+     to the system default.
+     
+**Dynamic Spider Cache Support**:
+     (Lmod 8.7.4+): If a modulefile changes $MODULEPATH, it is marked
+     as dynamic and is re-read when performing a *module spider*.
+     This is to allow sites to dynamically add in modulefiles in user
+     directories.  This can be turned off at configure time or with by
+     setting LMOD_DYNAMIC_SPIDER_CACHE=no.
+
+**Warning when reading too many non-modulefile**:
+     Lmod (8.7.4+): To catch directory that are full of
+     non-modulefiles, Lmod count the number of regular files that do
+     not start with a ".". If there are more than 100, Lmod reports
+     a warning.
+
+**Loading a modulefile too many times**:
+     (Lmod 8.7.3+): Lmod throws an error if any modulefile is loaded
+     500 time or more in a single module command.  This is to prevent
+     infinite load loops.
+
+**An unload cannot fail**:
+     As of Lmod 8.7+, an error found during unload is treated as a
+     warning.
+
+**puts stdout**:
+     This TCL modulefile will generate its output at the end of the
+     modulefile evaluation and not the beginning. New in Lmod 8.7.
+     This matches Tmod 4.1
+
+**puts prestdout**:
+     This TCL modulefile will generate its output at the beginning of the
+     modulefile evaluation. New in Lmod 8.7. This matches Tmod 5.1.
+
+**LmodBreak**:
+     LmodBreak() modulefile function causes the evaluation of the
+     current modulefile to stop and all changed in the user's
+     environment to be ignored from the current modulefile.  However,
+     all other modulefiles are evaluated.  In TCL modulefiles, this
+     command is **break**.  Break works normally inside a loop.  If a
+     bare break is found outside a loop, it cause the current
+     modulefile stop its processing. New in Lmod 8.7+
+
+     **Note** As of Lmod 8.6.16: LmodBreak()/break does nothing when
+     unloading. 
+
+
+**/etc/lmod/lmod_config.lua**:
+     Lmod looks for a file named lmod_config.lua in the
+     LMOD_CONFIG_DIR which is by default /etc/lmod/lmod_config.lua.
+     This file allows sites configure lmod through lua instead
+     of setting environment variables by using the cosmit:assigin()
+     functions::
+         
+         cosmit:assign("LMOD_SITE_NAME","XYZZY")
+
+     See :ref:`lmod_config-label` for details.  New in Lmod 8.6+
+
+**LMOD_QUARANTINE_VARS**:
+
+     This is an environment variable containing a list of environment
+     variables that Lmod will not change the value of.  Note that this
+     only applies to non-path variables.  Variables such as PATH or
+     LD_LIBRARY_PATH are ignored in this variable.  In other words,
+     Lmod could change any path like variables.  New in Lmod 8.6+
+
+**source_sh** ("shellName","shell_script arg1 ..."):
+     source a shell script as part of a module. Supported shellNames
+     are *sh*, *dash*, *bash*, *zsh*, *csh*, *tcsh*, *ksh*.  When
+     loading, Lmod automatically converts the shell script into module
+     commands and saves the module commands in the environment.  It
+     does this by sourcing the shell script string in a subshell and
+     comparing the environment before and after sourcing the shell
+     script string. When unloading, the saved module commands from the
+     environment are used.
+
+     See :ref:`sh_to_modulefile-label` for details (New in version 8.6) 
+     
+
+
+**sh_to_modulefile**:
+   New in version 8.6, it now track converts alias and shell functions
+   as well as environment variables into a modulefile.
+
+**LMOD_SITE_MODULEPATH**:
+    An colon separated list of directories to be prepended to
+    $MODULEPATH before the first call to the Lmod command.
+    See :ref:`lmod_site_modulepath-label` for details
+    New in version 8.5.18
+
+**module overview**:
+     Similar to **module avail**, this command prints the just
+     module name and not the name and the version.  The number of
+     versions is printed next to the module name:  For example::
+
+        $ module overview
+
+        ------------ /apps/modulefiles/Core -------------
+        StdEnv    (1)   hashrf    (2)   papi        (2)  
+        ddt       (1)   intel     (2)   singularity (2)   
+        git       (1)   noweb     (1)   valgrind    (1)
+
+    New in version 8.5.10+
+
+**sh_to_modulefile**:
+   New in version 8.6, it now track converts alias and shell functions
+   as well as environment variables into a modulefile.
+
+**extension()**:
+   New in version 8.2.5+, Lmod provides a module function which says
+   that these packages available when this module is loaded.  See
+   :ref:`extensions-label` for details.
+      
+**depends_on()**:
+  A safe way to have one module load another.  See
+  :ref:`dependent_modules-label` for details.  New in version 7.5.12+

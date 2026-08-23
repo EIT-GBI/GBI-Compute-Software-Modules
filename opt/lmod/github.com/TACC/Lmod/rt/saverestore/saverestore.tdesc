@@ -1,0 +1,139 @@
+-- -*- lua -*-
+inactiveTbl = { Darwin = 1, }
+_G._DEBUG   = false               -- Required by the new lua posix
+local function isActive()
+   local posix  = require("posix")
+   local osName = posix.uname("%s")
+   return (not inactiveTbl[osName])
+end
+
+testdescript = {
+   owner   = "rtm",
+   product = "modules",
+   description = [[
+	 Test initial module load
+   ]],
+   keywords = {"default","setdefault", "getdefault","setgetdefault","getsetdefault" },
+
+   active = 1,
+   testName = "saverestore",
+   job_submit_method = "INTERACTIVE",
+
+   runScript = [[
+
+     . $(projectDir)/rt/common_funcs.sh
+
+     unsetMT
+     initStdEnvVars
+     MODULEPATH=$(testDir)/TACC;        export MODULEPATH
+     MODULEPATH_ROOT=$(testDir);        export MODULEPATH_ROOT
+     LMOD_PACKAGE_PATH=$(testDir);      export LMOD_PACKAGE_PATH
+
+     remove_generated_lmod_files Core
+
+     LMOD_PACKAGE_PATH=$(testDir);      export LMOD_PACKAGE_PATH
+     runLmod --version               # 1
+     runLmod describe                # 2 
+     runLmod load TACC               # 3
+     runLmod load pgi/7.2-5          # 4
+     runLmod list                    # 5
+     runLmod save default            # 6
+     unset OMP_NUM_THREADS
+     runLmod restore                 # 7 
+     runLmod list                    # 8
+     runLmod use $(testDir)/TACC2    # 9
+     runLmod load a                  #10
+     runLmod list                    #11
+     runLmod save                    #12
+     runLmod describe                #13
+
+     runLmod purge                   #14
+     unsetMT
+     MODULEPATH=$(testDir)/TACC
+
+     runLmod restore                 #15
+     runLmod list                    #16
+     runLmod spider                  #17
+
+     runLmod purge                   #18
+     unsetMT
+     MODULEPATH=$(outputDir)/Core
+     mkdir      $(outputDir)/Core
+     (cd $(testDir)/Core; tar cf - . | (cd $(outputDir)/Core && tar xBf -))
+     sed -e 's|@outputDir@|$(outputDir)|g'  < $(testDir)/.lmod.d/stdenv > $(outputDir)/.config/lmod/stdenv
+     runLmod restore stdenv          #19
+     sed -e 's/--#%#//g'  < $(outputDir)/Core/StdEnv.lua > $(outputDir)/Core/StdEnv.new
+     mv $(outputDir)/Core/StdEnv.new $(outputDir)/Core/StdEnv.lua
+     runLmod restore stdenv          #20
+
+     runLmod purge                   #21
+     runLmod use $(testDir)/PREREQ   #22
+     runLmod load M T A              #23
+     runLmod list                    #24
+     runLmod save                    #25
+     runLmod restore                 #26
+     runLmod list                    #27
+     runLmod purge                   #28
+     runLmod load a b                #29
+     runLmod save                    #30
+     rm Core/a/default
+     ln -s 3.0 Core/a/default
+     runLmod restore                 #31
+     runLmod list                    #32
+     export LMOD_PIN_VERSIONS=yes
+     runLmod purge                   #33
+     runLmod restore                 #34
+     runLmod list                    #35
+
+     runLmod purge                   #36
+     runLmod use $(testDir)/EB       #37
+     runLmod load gcc/5.4            #38
+     runLmod list                    #39
+     runLmod save    foss            #40
+     runLmod restore foss            #41
+     runLmod list                    #42
+     runLmod purge                   #43
+     unsetMT
+
+     MODULEPATH=$(testDir)/Core     
+     export LMOD_CACHED_LOADS=yes
+     mkdir -p $HOME/.cache/lmod
+     buildSpiderT $MODULEPATH > $HOME/.cache/lmod/spiderT.lua
+
+     runLmod load a                  #44
+     runLmod save my_A               #45
+     runLmod purge                   #46
+     runLmod restore my_A            #47
+
+     runLmod purge                   #48
+     runLmod load icc ifort          #49
+     runLmod save my_intel           #50
+     runLmod purge                   #51
+     runLmod restore my_intel        #52
+
+     HOME=$ORIG_HOME
+     export HOME
+     cat _stdout.[0-9][0-9][0-9] > _stdout.orig
+     joinBase64Results -bash _stdout.orig _stdout.new
+     cleanUp _stdout.new out.txt
+
+     cat _stderr.[0-9][0-9][0-9] > _stderr.orig
+     cleanUp _stderr.orig err.txt
+
+     rm -f results.csv
+
+     wrapperDiff --csv results.csv $(testDir)/out.txt out.txt
+     wrapperDiff --csv results.csv $(testDir)/err.txt err.txt
+     testFinish -r $(resultFn) -t $(runtimeFn) results.csv
+   ]],
+
+
+   blessScript = [[
+         # perform what is needed
+   ]],
+
+   tests = {
+      { id='t1'},
+   },
+
+}

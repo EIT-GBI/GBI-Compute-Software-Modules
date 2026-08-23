@@ -1,0 +1,101 @@
+-- -*- lua -*-
+local testName = "end2end"
+
+testdescript = {
+   owner   = "rtm",
+   product = "modules",
+   description = [[
+	 end to end test
+   ]],
+   keywords = {testName, },
+
+   active = 1,
+   testName = testName,
+   job_submit_method = "INTERACTIVE",
+
+   runScript = [[
+
+     . $(projectDir)/rt/common_funcs.sh
+
+     unsetMT
+     initStdEnvVars
+     export MODULEPATH_ROOT=$(testDir)/mf
+     export MODULEPATH=$MODULEPATH_ROOT/Core
+     numStep=0
+     COUNT=0
+     ORIG_HOME=`(cd $HOME; /bin/pwd)`
+     HOME=`/bin/pwd`
+     CMD="lmod.in.lua"
+     DIR=Lmod
+     dir=lmod
+
+     remove_generated_lmod_files build b0 lmod results.csv
+
+     GIT_BRANCH=`git status | head -n 1 | sed -e 's/^[# ]*On branch //g' -e 's/^[# ]*HEAD detached at//g'`
+     runLmod --version              # 1
+     LmodV=`$LUA_EXEC $projectDir/src/$CMD bash --dumpversion 2>&1`
+     echo LmodV=$LmodV
+     mkdir b0
+     (cd b0; sh $(projectDir)/configure --prefix=$(outputDir)/b0 --with-useBuiltinPkgs=yes)
+     (cd $(projectDir); make -f $(outputDir)/b0/makefile dist GIT_BRANCH=$GIT_BRANCH)
+     tar xf $projectDir/${DIR}-$LmodV.tar.bz2
+     rm -rf $projectDir/${DIR}-$LmodV.tar.bz2
+     mkdir build; cd build; ../${DIR}-$LmodV/configure --prefix=`pwd`/.. --with-useBuiltinPkgs=yes;
+     make install
+     myStatus=$?
+
+     cd $outputDir
+     echo status: $myStatus
+     if [ $myStatus -eq 0 ]; then
+        echo "passed, make" >> results.csv
+     else
+        echo "diff, make"   >> results.csv
+     fi
+
+
+     LMOD_EXEC=$outputDir/$dir/$dir/libexec/lmod
+
+     runMe $LMOD_EXEC --version
+     mkdir ${dir}/etc
+     cp $(testDir)/modulerc ${dir}/etc/rc
+
+     runMe $LMOD_EXEC load admin
+     runMe $LMOD_EXEC load amber
+     runMe $LMOD_EXEC load bad
+     runMe $LMOD_EXEC load myinfo
+     runMe $LMOD_EXEC list
+     runMe $LMOD_EXEC avail
+     export TEST=0
+     runMe $LMOD_EXEC load b
+     runMe printErr "TEST: $TEST" 
+     runMe $LMOD_EXEC unload b
+     runMe printErr "TEST: $TEST"
+
+
+
+     cp $(testDir)/bad_modulerc ${dir}/etc/rc
+     runMe $LMOD_EXEC avail
+
+     HOME=$ORIG_HOME
+     cat _stdout.[0-9][0-9][0-9] > _stdout.orig
+     joinBase64Results  -bash  _stdout.orig _stdout.new
+     cleanUp _stdout.new out.txt
+
+     cat _stderr.[0-9][0-9][0-9] > _stderr.orig
+     cleanUp _stderr.orig err.txt
+
+     wrapperDiff --csv results.csv $(testDir)/out.txt out.txt
+     wrapperDiff --csv results.csv $(testDir)/err.txt err.txt
+     testFinish -r $(resultFn) -t $(runtimeFn) results.csv
+   ]],
+
+
+   blessScript = [[
+         # perform what is needed
+   ]],
+
+   tests = {
+      { id='t1'},
+   },
+
+}

@@ -1,0 +1,137 @@
+===========================
+step 1
+lua ProjectDIR/src/lmod.in.lua shell --regression_testing --version
+===========================
+Modules based on Lua: Version 8.7.65 2025-08-05 10:24 -06:00
+    https://lmod.readthedocs.io
+===========================
+step 2
+lua ProjectDIR/src/lmod.in.lua shell --regression_testing show gcc
+===========================
+   ProjectDIR/rt/show/mf/Core/gcc/4.2.3.lua:
+family("compiler")
+prepend_path("MODULEPATH","ProjectDIR/rt/show/mf/Compiler/gcc/4.2.3")
+===========================
+step 3
+lua ProjectDIR/src/lmod.in.lua shell --regression_testing show alex
+===========================
+   ProjectDIR/rt/show/mf/Core/alex/1.0.lua:
+load("noweb")
+load("git")
+===========================
+step 4
+lua ProjectDIR/src/lmod.in.lua shell --regression_testing avail
+===========================
+ProjectDIR/rt/show/mf/Core
+   PrgEnv                   git/1.7.4            junk/d/3.0
+   admin/admin-1.0          git/1.7.4.3   (D)    local/local
+   alex/1.0                 gotoblas/1.20        mode_test/1.0
+   boost/1.46.0             gotoblas/1.26 (D)    multi/multi
+   boost/1.47.1             gotoblas/1.30        noweb/2.10c
+   boost/1.49.0    (o,D)    intel/intel          parmetis/3.1  (m)
+   gcc/4.2.3                junk/a/c/1.0         showMe/2.0
+   git/1.6.3.1              junk/b/c/2.0         unix/unix
+  Where:
+   D:  Default Module
+   m:  built for host and native MIC
+   o:  built for offload to the MIC only
+If the avail list is too long consider trying:
+"module --default avail" or "ml -d av" to just list the default modules.
+"module overview" or "ml ov" to display the number of modules for each name.
+Use "module spider" to find all possible modules and extensions.
+Use "module keyword key1 key2 ..." to search for all possible modules matching any of the "keys".
+===========================
+step 5
+lua ProjectDIR/src/lmod.in.lua shell --regression_testing show boost
+===========================
+   ProjectDIR/rt/show/mf/Core/boost/1.49.0.lua:
+setenv("TACC_BOOST_DIR","/unknown/apps/boost/1.49.0")
+add_property("arch","offload")
+===========================
+step 6
+lua ProjectDIR/src/lmod.in.lua shell --regression_testing load boost/1.47.1
+===========================
+===========================
+step 7
+lua ProjectDIR/src/lmod.in.lua shell --regression_testing list
+===========================
+Currently Loaded Modules:
+  1) boost/1.47.1
+===========================
+step 8
+lua ProjectDIR/src/lmod.in.lua shell --regression_testing show boost
+===========================
+   ProjectDIR/rt/show/mf/Core/boost/1.47.1.lua:
+setenv("TACC_BOOST_DIR","/unknown/apps/boost/1.47.1")
+===========================
+step 9
+lua ProjectDIR/src/lmod.in.lua shell --regression_testing show boost/1.49.0
+===========================
+   ProjectDIR/rt/show/mf/Core/boost/1.49.0.lua:
+setenv("TACC_BOOST_DIR","/unknown/apps/boost/1.49.0")
+add_property("arch","offload")
+===========================
+step 10
+lua ProjectDIR/src/lmod.in.lua shell --regression_testing use ProjectDIR/rt/show/mf/Core2
+===========================
+===========================
+step 11
+lua ProjectDIR/src/lmod.in.lua shell --regression_testing show a
+===========================
+   ProjectDIR/rt/show/mf/Core2/a/1.0.lua:
+conflict("A","B")
+prereq_any("C","D","E")
+prereq("F")
+load("G")
+always_load("G")
+unload("H")
+os.exit("143")
+===========================
+step 12
+lua ProjectDIR/src/lmod.in.lua shell --regression_testing show b_tcl
+===========================
+   ProjectDIR/rt/show/mf/Core2/b_tcl/1.0:
+setenv("A","B")
+os.exit("1")
+===========================
+step 13
+lua ProjectDIR/src/lmod.in.lua shell --regression_testing show nosuchmodule
+===========================
+Lmod has detected the following error: Failed to find the following module(s): "nosuchmodule" in your MODULEPATH
+Try:
+    $ module spider nosuchmodule
+to see if the module(s) are available across all compilers and MPI implementations.
+===========================
+step 14
+lua ProjectDIR/src/lmod.in.lua shell --regression_testing show nosuchmodule
+===========================
+===========================
+step 15
+lua ProjectDIR/src/lmod.in.lua shell --regression_testing --location show a
+===========================
+ProjectDIR/rt/show/mf/Core2/a/1.0.lua
+===========================
+step 16
+lua ProjectDIR/src/lmod.in.lua shell --regression_testing --terse show a
+===========================
+ProjectDIR/rt/show/mf/Core2/a/1.0.lua
+===========================
+step 17
+lua ProjectDIR/src/lmod.in.lua shell --regression_testing show showMe
+===========================
+   ProjectDIR/rt/show/mf/Core/showMe/2.0.lua:
+setenv("TVAR","/tmp")
+prepend_path("TESTPATH","/tmp")
+===========================
+step 18
+lua ProjectDIR/src/lmod.in.lua shell --regression_testing show mode_test
+===========================
+   ProjectDIR/rt/show/mf/Core/mode_test/1.0.lua:
+help([[Test module for showing mode-specific function definitions
+]])
+whatis("Name: Mode Test")
+whatis("Version: 1.0")
+setenv("STANDARD_VAR","value")
+setenv{"MODE_VAR","value",modeA={"load"}}
+prepend_path{"MODE_PATH","/path",modeA={"unload"},priority="10"}
+setenv{"VAR","value",modeA={"load"}}

@@ -1,0 +1,136 @@
+-- -*- lua -*-
+local testName = "nvv"
+
+testdescript = {
+   owner   = "rtm",
+   product = "modules",
+   description = [[
+	 nvv_prereq
+   ]],
+   keywords = {testName },
+
+   active   = true,
+   testName = testName,
+   job_submit_method = "INTERACTIVE",
+
+   runScript = [[
+
+     . $(projectDir)/rt/common_funcs.sh
+
+     unsetMT
+     initStdEnvVars
+     export MODULEPATH=$(testDir)/mf
+
+     remove_generated_lmod_files
+
+     runLmod --version                         # 1
+     runLmod avail                             # 2
+
+     runLmod purge                             # 3
+     unsetMT
+
+     MODULEPATH=$(testDir)/el1:$(testDir)/el2
+     runLmod load intel/17                     # 4
+     runLmod list                              # 5
+
+     runLmod purge                             # 6
+     unsetMT
+
+     MODULEPATH=$(testDir)/bc/mf:$(testDir)/bc/cm
+     runLmod avail                             # 7
+     runLmod load HPCBIOS/2015q2               # 8
+     
+     runLmod purge                             # 9
+     unsetMT
+
+     MODULEPATH=$(testDir)/mf2:$(testDir)/mf3
+     runLmod avail                             #10
+     runLmod load aaa                          #11
+     runLmod list                              #12
+
+     runLmod purge                             #13
+     unsetMT
+
+     MODULEPATH=$(testDir)/mf4:$(testDir)/mf5:
+     export LMOD_TMOD_FIND_FIRST=yes
+     runLmod load A/3.0                        #14
+
+     runLmod purge                             #15
+     unsetMT
+
+     MODULEPATH=$(testDir)/mf6
+     runLmod avail                             #16
+     runLmod load vasp/does_not_exist          #17
+
+     runLmod purge                             #18
+     unsetMT
+
+     MODULEPATH=$(testDir)/mf7
+     runLmod avail                             #19
+     runLmod load complr/gcc                   #20
+     runLmod list                              #21
+
+
+     runLmod purge                             #22
+     unsetMT
+
+     MODULEPATH=$(testDir)/mf7
+     runLmod avail                             #23
+     runLmod load complr/gcc                   #24
+
+     runLmod purge                             #25
+     unsetMT
+
+     MODULEPATH=$(testDir)/mf8
+     runLmod avail                             #26
+     runLmod load qiime                        #27
+     runLmod load qiime/2-2023.5               #28
+     runLmod load qiime/2-2024.10              #29
+     runLmod load qiime/2-2024.10/metagenome   #30
+
+     #----------------------------------------
+     # Issue 778
+     runLmod purge                             #31
+     unsetMT
+
+     MODULEPATH=$(testDir)/mf9/Core
+     runLmod load foo/1                        #32
+     runLmod load foo/1.0                      #33
+     runLmod load foo/2.0                      #34
+     runLmod load foo/variant/2.0              #35
+     runLmod load foo/variant/1                #36
+     runLmod load foo/variantZ/1.0             #37
+     runLmod load foo/variant/another/1        #38
+     runLmod load foo/variant/another/2.0      #39
+     runLmod load foo/variant/anotherzzz/2.0   #40
+     runLmod load bar/a/b                      #41
+     runLmod load bar/a/b/1.0                  #42
+     runLmod load baz/a1                       #43
+     runLmod load baz/a1/d/e/f                 #44
+
+
+
+     HOME=$ORIG_HOME
+     cat _stdout.[0-9][0-9][0-9] > _stdout.orig
+     joinBase64Results  -bash  _stdout.orig _stdout.new
+     cleanUp _stdout.new out.txt
+
+     cat _stderr.[0-9][0-9][0-9] > _stderr.orig
+     cleanUp _stderr.orig err.txt
+
+     rm -f results.csv
+     wrapperDiff --csv results.csv $(testDir)/out.txt out.txt
+     wrapperDiff --csv results.csv $(testDir)/err.txt err.txt
+     testFinish -r $(resultFn) -t $(runtimeFn) results.csv
+   ]],
+
+
+   blessScript = [[
+         # perform what is needed
+   ]],
+
+   tests = {
+      { id='t1'},
+   },
+
+}

@@ -1,0 +1,6 @@
+name = "rust"
+variant = "compiled"
+
+relocate = false
+destination = "{SM_ROOT}/rust"
+modules = "{SM_ROOT}/modules"

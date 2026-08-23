@@ -1,0 +1,48 @@
+#!/bin/bash
+# -*- shell-script -*-
+VERSION=`cat .version` 
+echo Making Version: $VERSION
+
+myhost=$(uname -n)
+myhost=${myhost%.tacc.utexas.edu}
+first=${myhost%%.*}
+SYSHOST=${myhost#*.}
+
+SUDO=""
+if   [[ $first =~ login-knl[0-9]           ]] then
+   SYSHOST="stampedeknl"
+elif [[ $first =~ c56[1-9]-[0-9][0-9][0-9] ]]; then
+   SYSHOST="stampedeknl"
+fi 
+    
+
+case $SYSHOST in
+    mclay-d630 | mijo | jedrik | vato)
+	SUDO=sudo
+	prefix="/opt/apps";;
+    
+    stampede | stampedeknl)
+	prefix="$HOME/l/pkg/$($HOME/.up/bin/arch.py)";;
+    *)
+	prefix="$HOME/l/pkg";;
+esac
+
+cmdA=("make distclean"
+      "export CC=gcc"
+      "export CFLAGS=-O2"
+      "./configure --prefix=$prefix/lua/$VERSION"
+      "make"
+      "$SUDO make CC=gcc install"
+      "make distclean"
+      "$SUDO rm -f $prefix/lua/lua"
+      "$SUDO ln -s $VERSION $prefix/lua/lua"
+      )
+
+
+for i in "${cmdA[@]}" ; do
+  echo ----------------------------------------
+  echo "$i"
+  echo ----------------------------------------
+
+  $i
+done

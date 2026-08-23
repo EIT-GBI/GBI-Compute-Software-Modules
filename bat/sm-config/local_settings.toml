@@ -1,0 +1,5 @@
+name = "bat"
+
+relocate = true
+destination = "{SM_ROOT}/bat"
+modules = "{SM_ROOT}/modules"

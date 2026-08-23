@@ -1,0 +1,5 @@
+name = "neovim"
+
+relocate = true
+destination = "{SM_ROOT}/neovim"
+modules = "{SM_ROOT}/modules"

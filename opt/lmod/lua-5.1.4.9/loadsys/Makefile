@@ -1,0 +1,35 @@
+SONAME   := sys.so
+SONAMEV  := $(SONAME).1
+LIBRARY  := $(SONAMEV).0.1
+SRC      := unx_sys.c
+OBJ      := $(patsubst %.c, %.o, $(SRC))
+CFLAGS   := -fPIC -I $(LUAINC)
+
+ifeq ($(OS),macosx)
+  LIB_OPTION = -bundle -undefined dynamic_lookup #for MacOS X
+  CFLAGS += -DLUA_INCLUDE_STRING_H
+else
+  LIB_OPTION = -shared -Wl,-soname,$(SONAMEV) #for Linux
+endif
+
+all:  $(LIBRARY) $(SONAMEV) $(SONAME)
+
+$(SONAMEV):
+	ln -s $(LIBRARY) $@
+
+$(SONAME):
+	ln -s $(SONAMEV) $@
+
+$(LIBRARY): $(OBJ)
+	$(CC) $(CFLAGS) $(LIB_OPTION) -o $(LIBRARY) $(OBJ) -lc
+
+install: all
+	cp $(LIBRARY) $(LUA_LIB)
+
+clean:	neat
+	$(RM) $(LIBRARY) $(SONAMEV) $(SONAME)
+neat:
+	$(RM) *~ *.o
+
+echo:
+	@echo $(OBJ)

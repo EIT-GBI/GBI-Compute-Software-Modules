@@ -1,0 +1,6 @@
+name = "ncdu"
+variant = "compiled"
+
+relocate = false
+destination = "{SM_ROOT}/ncdu"
+modules = "{SM_ROOT}/modules"

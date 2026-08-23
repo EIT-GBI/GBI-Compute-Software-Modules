@@ -1,0 +1,143 @@
+name: run Lmod tests
+on: [push, pull_request]
+
+jobs:
+  Lmod_tests:
+      runs-on: ${{ matrix.os }}
+      strategy:
+        matrix:
+          os: [ubuntu-latest, macos-latest]
+          # 5.5 excluded: luaposix/lua-term/etc lack 5.5 support (as of 2026-02)
+          luaVersion: ["5.4", "5.3", "5.2", "5.1"]
+      steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      - name: install dependencies MacOS
+        if: matrix.os == 'macos-latest'
+        shell: bash
+        run: |
+          set -euo pipefail
+          brew_install() { brew install coreutils gnu-sed; }
+          for attempt in 1 2 3; do
+            if brew_install; then
+              exit 0
+            fi
+            echo "brew install failed (attempt $attempt/3); retrying in 30s..."
+            sleep 30
+          done
+          echo "brew install failed after 3 attempts"
+          exit 1
+      - name: install dependencies Linux
+        if: matrix.os == 'ubuntu-latest'
+        shell: bash
+        run: |
+          set -euo pipefail
+          export DEBIAN_FRONTEND=noninteractive
+
+          APT_OPTS=(
+            -o Acquire::Retries=5
+            -o Acquire::http::Timeout=30
+            -o Acquire::https::Timeout=30
+            -o Dpkg::Use-Pty=0
+          )
+
+          sudo apt-get "${APT_OPTS[@]}" update -y
+
+          pkgs=(
+            tcsh
+            tcl
+            tcl-dev
+            uuid
+            r-base
+            r-base-dev
+            cmake
+            fish
+            tclsh
+            zsh
+            ksh
+          )
+
+          install_once() {
+            sudo apt-get "${APT_OPTS[@]}" install -y --no-install-recommends "${pkgs[@]}"
+          }
+
+          if ! install_once; then
+            echo "apt-get install failed; refreshing indexes and retrying (mirror may be stale)"
+            sudo rm -rf /var/lib/apt/lists/*
+            sudo apt-get "${APT_OPTS[@]}" update -y
+            install_once
+          fi
+      - name: set up lua
+        uses: leafo/gh-actions-lua@v10
+        with:
+          luaVersion: ${{ matrix.luaVersion }}
+      - name: install luarocks
+        uses: leafo/gh-actions-luarocks@v6
+      - name: install lua dependencies
+        run: |
+          luarocks install luaposix
+          luarocks install luafileSystem
+          luarocks install luajson
+          luarocks install lua-term
+          luarocks install busted
+      - name: set up Hermes
+        run: |
+         cd /tmp
+         git clone https://github.com/TACC/Hermes.git
+         echo "$PWD/Hermes/bin" >> $GITHUB_PATH
+         cd -
+      - name: Run tests
+        run: tm
+      - name: show output of failed Lmod tests
+        if: ${{ failure() }}
+        run: |
+         set +e
+         for dir in $(ls -pd rt/* | grep '/$'); do
+           diff -c ${dir}t1/*/_err.left ${dir}/t1/*/_err.right > /dev/null 2>&1
+           if [ $? -ne 0 ]; then
+             echo ">>>> ${dir}/err.txt"
+             diff -c ${dir}t1/*/_err.left ${dir}/t1/*/_err.right || echo
+             echo ">>>> ${dir}/out.txt"
+             diff -c ${dir}/out.txt ${dir}/t1/*/out.txt || echo
+             echo ">>>> ${dir}/t1.txt"
+             cat ${dir}t1/*/t1.log
+           fi
+         done
+      - name: run busted tests
+        run: |
+          PROJDIR=`pwd` LMOD_FAST_TCL_INTERP=no busted --verbose -m "./src/?.lua;./tools/?.lua;./tools/?/init.lua"
+      - name: Lmod_test_suite
+        run: |
+         set -e
+         mkdir b0
+         cd b0
+         ../configure --prefix=/tmp
+         make install
+         sudo mkdir -p /etc/profile.d
+         sudo cp /tmp/lmod/lmod/init/profile /etc/profile.d/z00_lmod.sh
+         cd -
+         cd /tmp
+         git clone https://github.com/rtmclay/Lmod_test_suite.git
+         cd -
+         cd /tmp/Lmod_test_suite
+         sudo cp z98_StdEnv.sh /etc/profile.d
+         tm -k normal
+      - name: show output of failed suite tests
+        if: ${{ failure() }}
+        run: |
+         cd /tmp/Lmod_test_suite
+         set +e
+         for dir in $(ls -pd rt/* | grep '/$'); do
+           diff -c ${dir}t1/*/_err.left ${dir}/t1/*/_err.right > /dev/null 2>&1
+           if [ $? -ne 0 ]; then
+             echo ">>>> ${dir}/err.txt"
+             diff -c ${dir}t1/*/_err.left ${dir}/t1/*/_err.right || echo
+             echo ">>>> ${dir}/_err.left (gold)"
+             cat ${dir}t1/*/_err.left
+             echo ">>>> ${dir}/_err.right"
+             cat ${dir}t1/*/_err.right
+             echo ">>>> ${dir}/t1.txt"
+             cat ${dir}t1/*/t1.log
+           fi
+         done
+

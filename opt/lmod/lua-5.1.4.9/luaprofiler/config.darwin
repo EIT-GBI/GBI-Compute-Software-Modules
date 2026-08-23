@@ -1,0 +1,10 @@
+
+PROFILER_OUTPUT= bin/profiler.so
+INCS= -I$(LUA_INC)
+CC= gcc
+WARN=  -W -Wall
+EXTRA_LIBS=
+CFLAGS  := -O2 -DTESTS $(WARN) $(INCS) -I./src
+LIB_OPTION :=  -bundle -undefined dynamic_lookup
+EXPORT_VARS := export MACOSX_DEPLOYMENT_TARGET=10.5 &&
+LD := gcc

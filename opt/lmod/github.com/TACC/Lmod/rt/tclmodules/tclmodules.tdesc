@@ -1,0 +1,67 @@
+-- -*- lua -*-
+local testName = "tclmodules"
+
+testdescript = {
+   owner   = "rtm",
+   product = "modules",
+   description = [[
+	 nvv_prereq
+   ]],
+   keywords = {testName },
+
+   active   = true,
+   testName = testName,
+   job_submit_method = "INTERACTIVE",
+
+   runScript = [[
+
+     . $(projectDir)/rt/common_funcs.sh
+
+     unsetMT
+     initStdEnvVars
+     export MODULEPATH=$(testDir)/mf
+     export FOO=BAR
+
+     remove_generated_lmod_files
+
+     runLmod --version                         # 1
+     runLmod whatis a                          # 2
+     runLmod load   earlyLateOutput            # 3
+     runLmod list                              # 4
+     runLmod show showMe                       # 5
+     runLmod avail                             # 6
+     runLmod load getenv                       # 7
+     runLmod spider                            # 8
+     runBase cat myMode.log                    # 9
+     runLmod load help/1.0                     # 10
+     runLmod help help/1.0                     # 11
+     runLmod help help/2.0                     # 12
+     runLmod load report/1.0                   # 13
+     runLmod show report/1.0                   # 14
+     runLmod help report/1.0                   # 15
+     runLmod unload report/1.0                 # 16
+
+     HOME=$ORIG_HOME
+     cat _stdout.[0-9][0-9][0-9] > _stdout.orig
+     joinBase64Results  -bash  _stdout.orig _stdout.new
+     cleanUp _stdout.new out.txt
+
+     cat _stderr.[0-9][0-9][0-9] > _stderr.orig
+     cleanUp _stderr.orig err.txt
+
+     rm -f results.csv
+     wrapperDiff --csv results.csv $(testDir)/out.txt out.txt
+     wrapperDiff --csv results.csv $(testDir)/err.txt err.txt
+     testFinish -r $(resultFn) -t $(runtimeFn) results.csv
+   ]],
+
+
+   blessScript = [[
+         # perform what is needed
+   ]],
+
+   tests = {
+      { id='t1'},
+   },
+
+}

@@ -1,0 +1,6 @@
+name = "llvm"
+variant = "compiled"
+
+relocate = false
+destination = "{SM_ROOT}/llvm"
+modules = "{SM_ROOT}/modules"

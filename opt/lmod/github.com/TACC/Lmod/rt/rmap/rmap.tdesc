@@ -1,0 +1,85 @@
+-- -*- lua -*-
+local testName = "rmap"
+
+testdescript = {
+   owner   = "rtm",
+   product = "modules",
+   description = [[
+	 Test always_load, always_unload
+   ]],
+   keywords = {testName },
+
+   active   = true,
+   testName = testName,
+   job_submit_method = "INTERACTIVE",
+
+   runScript = [[
+
+     . $(projectDir)/rt/common_funcs.sh
+
+     unsetMT
+     initStdEnvVars
+     export MODULEPATH_ROOT=$(testDir)/mf
+     export MODULEPATH=$MODULEPATH_ROOT/Core
+     export APPS_DIR=$(testDir)/apps
+     export MY_BIN=$(outputDir)/my_bin
+
+     remove_generated_lmod_files more_apps otherBin
+
+     mkdir -p more_apps/bin
+     cp $(testDir)/echo_this.sh more_apps/bin
+     ln -s more_apps/bin my_bin
+    
+
+     runLmod --version                     # 1
+     mkdir -p $HOME/.cache/lmod
+     runBase buildSpiderT $MODULEPATH      # 2
+     runBase buildDbT     $MODULEPATH      # 3
+     runBase buildRmapT   $MODULEPATH      # 4
+     runLmod spider                        # 5
+
+     unsetMT
+
+     export MODULEPATH=$MODULEPATH_ROOT/2Core
+     runLmod spider                        # 6
+     runBase buildSpiderT $MODULEPATH      # 7
+     runBase buildDbT     $MODULEPATH      # 8
+
+     export MODULEPATH_LOOP=1
+
+     runBase buildSpiderT $MODULEPATH      # 9
+     runBase buildDbT     $MODULEPATH      #10
+
+     unset MODULEPATH_LOOP
+     mkdir -p $(outputDir)/otherBin
+     export OTHERBIN=$(outputDir)/otherBin
+     runBase buildRmapT   $MODULEPATH      #11
+     export LMOD_PACKAGE_PATH=$(testDir)/site;
+     runBase buildRmapT   $MODULEPATH      #12
+
+
+
+     HOME=$ORIG_HOME
+     cat _stdout.[0-9][0-9][0-9] > _stdout.orig
+     joinBase64Results  -bash  _stdout.orig _stdout.new
+     cleanUp _stdout.new out.txt
+
+     cat _stderr.[0-9][0-9][0-9] > _stderr.orig
+     cleanUp _stderr.orig err.txt
+
+     rm -f results.csv
+     wrapperDiff --csv results.csv $(testDir)/out.txt out.txt
+     wrapperDiff --csv results.csv $(testDir)/err.txt err.txt
+     testFinish -r $(resultFn) -t $(runtimeFn) results.csv
+   ]],
+
+
+   blessScript = [[
+         # perform what is needed
+   ]],
+
+   tests = {
+      { id='t1'},
+   },
+
+}

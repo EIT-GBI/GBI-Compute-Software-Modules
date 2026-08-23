@@ -1,0 +1,6 @@
+name = "fish"
+variant = "compiled"
+
+relocate = false
+destination = "{SM_ROOT}/fish"
+modules = "{SM_ROOT}/modules"

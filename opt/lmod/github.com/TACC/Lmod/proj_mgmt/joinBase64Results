@@ -1,0 +1,428 @@
+#!/usr/bin/env lua
+-- -*- lua -*-
+--------------------------------------------------------------------------
+-- Convert base64 encoded Strings into the module table.  This is used
+-- to generate test results.
+-- @script joinBase64Results
+
+--------------------------------------------------------------------------
+-- Lmod License
+--------------------------------------------------------------------------
+--
+--  Lmod is licensed under the terms of the MIT license reproduced below.
+--  This means that Lmod is free software and can be used for both academic
+--  and commercial purposes at absolutely no cost.
+--
+--  ----------------------------------------------------------------------
+--
+--  Copyright (C) 2008-2025 Robert McLay
+--
+--  Permission is hereby granted, free of charge, to any person obtaining
+--  a copy of this software and associated documentation files (the
+--  "Software"), to deal in the Software without restriction, including
+--  without limitation the rights to use, copy, modify, merge, publish,
+--  distribute, sublicense, and/or sell copies of the Software, and to
+--  permit persons to whom the Software is furnished to do so, subject
+--  to the following conditions:
+--
+--  The above copyright notice and this permission notice shall be
+--  included in all copies or substantial portions of the Software.
+--
+--  THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+--  EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES
+--  OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+--  NONINFRINGEMENT.  IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS
+--  BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN
+--  ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
+--  CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+--  THE SOFTWARE.
+--
+--------------------------------------------------------------------------
+
+
+local cmd = arg[0]
+
+local i,j = cmd:find(".*/")
+local cmd_dir = "./"
+if (i) then
+   cmd_dir = cmd:sub(1,j)
+end
+package.path = cmd_dir .. "../tools/?.lua;"      ..
+               cmd_dir .. "../tools/?/init.lua;" ..
+               cmd_dir .. "?.lua;"               ..
+               package.path
+
+_G._DEBUG   = false
+local posix = require("posix")
+
+require("strict")
+
+--------------------------------------------------------------------------
+-- This is 5.1 Lua function to cover the table.pack function
+-- that is in Lua 5.2 and later.
+
+local function l_argsPack(...)
+   local arg = { n = select("#", ...), ...}
+   return arg
+end
+pack     = (_VERSION == "Lua 5.1") and l_argsPack or table.pack
+
+require("string_utils")
+require("serializeTbl")
+require("declare")
+local base64    = require("base64")
+local cosmic    = require("Cosmic"):singleton()
+local concatTbl = table.concat
+local decode64  = base64.decode64
+local load      = (_VERSION == "Lua 5.1") and loadstring or load
+
+cosmic:init{name = "LMOD_LD_LIBRARY_PATH", default = false, assignV = false}
+cosmic:init{name = "LMOD_LD_PRELOAD",      default = false, assignV = false}
+
+
+local function l_grab(line, b)
+   local eqIdx = line:find("=")
+   local scIdx = line:find(";")
+   b[#b+1]     = line:sub(eqIdx+1,scIdx-1):gsub("\"","")
+end
+
+local function l_grabCsh(line,b)
+   local a = {}
+   for v in line:split(' ') do
+      a[#a + 1] = v
+   end
+   b[#b+1] = a[3]:gsub(";","")
+end   
+
+local function l_grabFish(line,b)
+   local a = {}
+   for v in line:split(' ') do
+      a[#a + 1] = v
+   end
+   b[#b+1] = a[5]:gsub(";","")
+end   
+
+local function l_grabNushell(line,b)
+   local a = {}
+   for v in line:split(' ') do
+      a[#a + 1] = v
+   end
+   b[#b+1] = a[3]:gsub("r#'([^']*)'#;","%1")
+end   
+
+
+
+declare("_ModuleTable_",false)
+declare("_SettargTable_",false)
+function fixB64(name, s)
+   if (s == nil) then return "" end
+   local func, msg = load(s)
+   if (func) then
+      func()
+   else
+      io.stderr:write("joinBase64Results:fixB64:Found syntax error: ",msg,"\n")
+      io.stderr:write("--------------\n")
+      io.stderr:write(s,"\n")
+      io.stderr:write("--------------\n")
+      return ""
+   end
+
+   local mt = _G[name]
+
+   for k,v in pairs(mt) do
+      if (k:sub(1,2) == "c_") then
+         mt[k] = nil
+      end
+   end
+
+   local mT = mt.mT
+   for sn, v in pairs(mT) do
+      local mcmdT_64 = mT[sn].mcmdT_64 
+      if (mcmdT_64 and next(mcmdT_64) ~= nil) then
+         local t = {}
+         for script64, mcmdA_64 in pairsByKeys(mcmdT_64) do
+            local a = {}
+            for i = 1,#mcmdA_64 do
+               a[i] = decode64(mcmdA_64[i])
+            end
+            local script = decode64(script64)
+            t[script] = a
+         end
+         mT[sn].mcmdT    = t
+         mT[sn].mcmdT_64 = nil
+      end
+   end
+
+   local s = serializeTbl{indent=false, name=name, value=mt}
+   return s:gsub("[\n]",""):gsub(" = ","="):gsub("  *"," "):gsub(", ",",")
+end
+
+function sectionEnd(sType, name, A, a1, a2, a3)
+   local b = {}
+   if (#a2 > 0) then
+      local s64 = concatTbl(a2,"")
+      local s   = decode64(s64)
+      local v   = s
+      if (name == "_ModuleTable_") then
+         v      = fixB64(name,s)
+      end
+      if (sType == "bash") then
+         b[1] = name .."='" .. v .. "';"
+         b[2] = "export ".. name ..";"
+      elseif (sType == "csh") then
+         b[1] = "setenv " .. name .. " '" .. v .. "';"
+      elseif (sType == "fish") then
+         b[1] = "set -x -g " .. name .. " '" .. v .. "';"
+      elseif (sType == "nushell") then
+         b[1] = "$env." .. name .. " = \"" .. v .. "\""
+      end
+   end
+   joinArrays(A, a1, b, a3)
+   a1 = {}
+   a2 = {}
+   a3 = {}
+   return a1, a2, a3
+end
+
+function joinArrays(A,...)
+   local argA = pack(...)
+   for i = 1, argA.n do
+      local b = argA[i]
+      for j = 1, #b do
+         A[#A + 1] = b[j]
+      end
+   end
+end
+
+function joinB64_fish(name, whole)
+   local A  = {}
+   local a1 = {}
+   local a2 = {}
+   local a3 = {}
+   local a  = a1
+   local state = "init"
+   for s in whole:split("\n") do
+      if (s:find("^set %-x %-g ".. name .. "%d%d%d_")) then
+         if (state == "init") then
+            state = "mt"
+         end
+         a = a3
+         l_grabFish(s, a2)
+      elseif (state == "init") then
+         a[#a + 1] = s
+      else
+         a1, a2, a3 = sectionEnd("fish",name.."_",A,a1,a2,a3)
+         state   = "init"
+         a       = a1
+         a[#a+1] = s
+      end
+   end
+   sectionEnd("fish",name.."_",A,a1,a2,a3)
+   return A
+end
+
+function joinB64_nushell(name, whole)
+   local A  = {}
+   local a1 = {}
+   local a2 = {}
+   local a3 = {}
+   local a  = a1
+   local haveMT = false
+   for s in whole:split("\n") do
+      local state = "init"
+      if (s:find("^.env." .. name .."%d%d%d_ = ")) then
+         if (state == "init") then
+            state = "mt"
+         end
+         a = a3
+         l_grabNushell(s,a2)
+         haveMT = true
+      elseif (s:find("^.env." .. name .. "_Sz")) then
+         state = "ignore"
+      elseif (haveMT and s:find("^===========================")) then
+         a1, a2, a3 = sectionEnd("nushell", name.."_", A, a1, a2, a3)
+         state   = "init"
+         a       = a1
+         haveMT  = false
+      elseif (state == "init") then
+         a[#a + 1] = s
+      end
+   end
+   sectionEnd("nushell", name.."_", A, a1, a2, a3)
+   return A
+end
+
+function joinB64_bash(name, whole)
+   local A  = {}
+   local a1 = {}
+   local a2 = {}
+   local a3 = {}
+   local a  = a1
+   local haveMT = false
+
+   for s in whole:split("\n") do
+      local state = "init"
+      if (s:find("^" .. name .."%d%d%d_=")) then
+         if (state == "init") then
+            state = "mt"
+         end
+         a = a3
+         l_grab(s, a2)
+         haveMT = true
+      elseif (s:find("^export " .. name ) or
+              s:find("^unset "  .. name ) or
+              s:find("^" .. name .. "_Sz")) then
+         state = "ignore"
+      elseif (haveMT and s:find("^===========================")) then
+         a1, a2, a3 = sectionEnd("bash", name.."_", A, a1, a2, a3)
+         state   = "init"
+         a       = a1
+         haveMT  = false
+      end
+      if (state == "init") then
+         a[#a + 1] = s
+      end
+   end
+   sectionEnd("bash", name.."_", A, a1, a2, a3)
+   return A
+end
+
+function joinB64_csh(name, whole)
+   local A  = {}
+   local a1 = {}
+   local a2 = {}
+   local a3 = {}
+   local a  = a1
+   local state = "init"
+   for s in whole:split("\n") do
+      if (s:find("^setenv ".. name .. "%d%d%d_")) then
+         if (state == "init") then
+            state = "mt"
+         end
+         a = a3
+         l_grabCsh(s, a2)
+      elseif (state == "init") then
+         a[#a + 1] = s
+      else
+         a1, a2, a3 = sectionEnd("csh", name.."_", A,a1,a2,a3)
+         state   = "init"
+         a       = a1
+         a[#a+1] = s
+      end
+   end
+   sectionEnd("csh", name.."_",A,a1,a2,a3)
+   return A
+end
+
+local function l_stackVar_common(name, str, sep, a)
+   local b = {}
+   b[#b+1] = name
+   b[#b+1] = sep
+   for myWord in str:split(":") do
+      local v = (myWord ~= "false") and decode64(myWord) or "false"
+      b[#b+1] = v:multiEscaped()
+      b[#b+1] = ":"
+   end
+   b[#b] = ";"
+   a[#a+1] = concatTbl(b,"")
+   return a
+end
+
+local function l_stackVar_fish(name, str, sep, a)
+   local b = {}
+   b[#b+1] = name
+   b[#b+1] = sep
+   for myWord in str:split(sep) do
+      local v = (myWord ~= "false") and decode64(myWord) or "false"
+      b[#b+1] = v:multiEscaped()
+      b[#b+1] = " "
+   end
+   b[#b] = ";"
+   a[#a+1] = concatTbl(b,"")
+   return a
+end
+
+local function l_stackVar_nushell(name, str, sep, a)
+   local b = {}
+   b[#b+1] = name
+   b[#b+1] = " = ["
+   for myWord in str:split(sep) do
+      local v = (myWord ~= "false") and decode64(myWord) or "false"
+      b[#b+1] = v:multiEscaped()
+      b[#b+1] = ","
+   end
+   b[#b] = "];"
+   a[#a+1] = concatTbl(b,"")
+   return a
+end
+
+local s_stackFnA = {
+   bash    = l_stackVar_common,
+   csh     = l_stackVar_common,
+   fish    = l_stackVar_fish,
+   nushell = l_stackVar_nushell,
+}      
+
+
+function lmod_stack(shell, whole)
+   local pattT =
+      { 
+         csh     = {"^(setenv __LMOD_STACK[^ ]*)%s+([^;]*);?",        " "   },
+         bash    = {"^(__LMOD_STACK[^=]*)=([^;]*);",                  "="   },
+         fish    = {"^(set %-x %-g __LMOD_STACK[^ ]*)%s+(.*);",       " "   },
+         nushell = {"^(%$env.__LMOD_STACK_[^ ]*)%s+=%s+[[](.*)[]];",  ",%s*"},
+      }
+   local a = {}
+   local patt = pattT[shell][1]
+   local sep  = pattT[shell][2]
+   for s in whole:split("\n") do
+      local i,j, name, str = s:find(patt)
+      if (not i) then
+         a[#a + 1] = s
+      else
+        a = s_stackFnA[shell](name, str, sep, a)
+      end
+   end
+   return concatTbl(a,"\n")
+end
+
+function main()
+   local resultA
+   local resultB
+   local joinB64 = joinB64_csh
+   local shell   = "csh"
+   if ( arg[1]:sub(1,1) == "-") then
+      if (arg[1] == "-bash") then
+         joinB64 = joinB64_bash
+         shell   = "bash"
+      elseif (arg[1] == "-fish") then
+         joinB64 = joinB64_fish
+         shell   = "fish"
+      elseif (arg[1] == "-nushell") then
+         joinB64 = joinB64_nushell
+         shell   = "nushell"
+      end
+      table.remove(arg,1)
+   end
+
+   local fn = arg[1]
+   local f = io.open(fn)
+   if (f) then
+      local whole = f:read("*all")
+      f:close()
+      local s = lmod_stack(shell,whole)
+      resultA = joinB64("_ModuleTable", s)
+      local s = concatTbl(resultA,"\n")
+      resultB = joinB64("_SettargTable", s)
+      fn = arg[2]
+      f = io.open(fn,"w")
+      for _,v in ipairs(resultB) do
+         if (v:len() > 0) then
+            f:write(v,"\n")
+         end
+      end
+      f:close()
+   end
+end
+
+main()

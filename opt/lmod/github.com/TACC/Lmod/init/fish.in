@@ -1,0 +1,25 @@
+#!/usr/bin/env fish
+set -gx LMOD_ROOT @lmod_root@
+set -gx LMOD_PKG  @PKG@
+set -gx LMOD_DIR  @PKG@/libexec
+set -gx LMOD_CMD  @PKG@/libexec/lmod
+
+set -gx MODULESHOME @PKG@
+
+set -gx LMOD_VERSION "@lmod_version@"
+
+set -gx FPATH (@PKGV@/libexec/addto --append FPATH @PKGV@/init/ksh_funcs)
+
+if status -i
+   function module
+      eval $LMOD_CMD fish $argv | source -
+   end
+else
+   function module
+      eval $LMOD_CMD fish --no_redirect $argv | source -
+   end
+end
+
+function ml
+   eval $LMOD_DIR/ml_cmd $argv | source -
+end

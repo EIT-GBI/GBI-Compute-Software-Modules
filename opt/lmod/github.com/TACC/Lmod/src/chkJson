@@ -1,0 +1,153 @@
+-- -*- lua -*-
+local sys_lua_path = "@sys_lua_path@"
+if (sys_lua_path:sub(1,1) == "@") then
+   sys_lua_path = package.path
+end
+
+local sys_lua_cpath = "@sys_lua_cpath@"
+if (sys_lua_cpath:sub(1,1) == "@") then
+   sys_lua_cpath = package.cpath
+end
+
+package.path   = sys_lua_path
+package.cpath  = sys_lua_cpath
+
+local arg_0    = arg[0]
+_G._DEBUG      = false
+local posix    = require("posix")
+local readlink = posix.readlink
+local stat     = posix.stat
+
+local st       = stat(arg_0)
+while (st.type == "link") do
+   local lnk = readlink(arg_0)
+   if (arg_0:find("/") and (lnk:find("^/") == nil)) then
+      local dir = arg_0:gsub("/[^/]*$","")
+      lnk       = dir .. "/" .. lnk
+   end
+   arg_0 = lnk
+   st    = stat(arg_0)
+end
+
+local ia,ja = arg_0:find(".*/")
+local LuaCommandName     = false
+local LuaCommandName_dir = "./"
+if (ia) then
+   LuaCommandName_dir = arg_0:sub(1,ja)
+   LuaCommandName     = arg_0:sub(ja+1)
+end
+
+package.path  = LuaCommandName_dir .. "?.lua;"                ..
+                LuaCommandName_dir .. "../tools/?.lua;"       ..
+                LuaCommandName_dir .. "../tools/?/init.lua;"  ..
+                LuaCommandName_dir .. "../shells/?.lua;"      ..
+                LuaCommandName_dir .. "?/init.lua;"           ..
+                sys_lua_path
+package.cpath = LuaCommandName_dir .. "../lib/?.so;"..
+                sys_lua_cpath
+
+require("strict")
+require("serializeTbl")
+if ( _VERSION ~= "Lua 5.1" ) then
+   require("declare")
+   declare("loadstring")
+   loadstring = load
+end
+local Dbg  = require("Dbg")
+local json = require("json")
+
+function main()
+
+   local configT = {
+      lmodV        = { rule = "have"},
+      lfsV         = { rule = "have"},
+      lua_term_A   = { rule = "have"},
+      luaV         = { rule = "have"},
+      mpath_init   = { rule = "have"},
+      modRC        = { rule = "have"},
+      siteName     = { rule = "have"},
+      sysName      = { rule = "have"},
+      syshost      = { rule = "have"},
+      uname        = { rule = "have"},
+      z01_admin    = { rule = "have"},
+      prefix_site  = { rule = "have"},
+      path_hash    = { rule = "have"},
+      allowTCL     = { rule = "match", value = "yes"},
+      autoSwap     = { rule = "match", value = "yes"},
+      case         = { rule = "match", value = "no"},
+      colorize     = { rule = "match", value = "yes"},
+      disable1N    = { rule = "match", value = "no"},
+      dot_files    = { rule = "match", value = "yes"},
+      dupPaths     = { rule = "match", value = "no"},
+      exactMatch   = { rule = "match", value = "no"},
+      expMCmd      = { rule = "match", value = "yes"},
+      hiddenItalic = { rule = "match", value = "no"},
+      lang         = { rule = "match", value = "en"},
+      lang_site    = { rule = "match", value = "<empty>"},
+      ld_lib_path  = { rule = "match", value = "<empty>"},
+      ld_preload   = { rule = "match", value = "<empty>"},
+      lua_cpath    = { rule = "match", value = "@sys_lua_cpath@"},
+      lua_path     = { rule = "match", value = "@sys_lua_path@"},
+      lua_term     = { rule = "match", value = "no"},
+      mpath_av     = { rule = "match", value = "no"},
+      mpath_root   = { rule = "match", value = ""},
+      numSC        = { rule = "match", value = 0},
+      pager        = { rule = "match", value = "less"},
+      pager_opts   = { rule = "match", value = "-XqMREF"},
+      path_lua     = { rule = "match", value = "lua"},
+      pin_v        = { rule = "match", value = "no"},
+      pkg          = { rule = "match", value = "Pkg"},
+      prefix       = { rule = "match", value = "@PREFIX@"},
+      prpnd_blk    = { rule = "match", value = "normal"},
+      redirect     = { rule = "match", value = "no"},
+      settarg      = { rule = "match", value = "no"},
+      shell        = { rule = "match", value = "bash"},
+      sitePkg      = { rule = "match", value = "standard"},
+      spdr_ignore  = { rule = "match", value = "no"},
+      spdr_loads   = { rule = "match", value = "no"},
+      tm_ancient   = { rule = "match", value = 86400},
+      tm_short     = { rule = "match", value = 2},
+      tm_threshold = { rule = "match", value = 1},
+      tmod_rule    = { rule = "match", value = "no"},
+      tmod_find1st = { rule = "match", value = "no"},
+      tracing      = { rule = "match", value = "no"},
+   }
+
+   local s       = io.read()
+   local t       = json.decode(s)
+
+   local match = true
+   for k, v in pairs(configT) do
+      local testV = t.configT[k]
+      if (testV == nil) then
+         io.stderr:write("Json is missing key: ",k,"\n")
+         match = false
+      elseif (v.rule == "match" and testV ~= v.value) then
+         io.stderr:write("Json key: ",k," has the wrong value: testV: ",testV,", v.value: ",v.value,"\n")
+         match = false
+      end
+   end
+
+   if (match) then
+      io.stderr:write("configT matches\n")
+   end
+
+   if (type(t.rcfileA) == "table") then
+      io.stderr:write("rcfileA is a table\n")
+      if (#t.rcfileA == 2) then
+         io.stderr:write("rcfileA has two entries\n")
+      end
+   else
+      io.stderr:write("rcfileA is not a table\n")
+   end
+   
+
+   if (type(t.propT) == "table") then
+      io.stderr:write("propT is a table\n")
+   else
+      io.stderr:write("propT is not a table\n")
+   end
+end
+
+
+main()

@@ -1,0 +1,30 @@
+===========================
+step 1
+lua ProjectDIR/src/lmod.in.lua shell --regression_testing --version
+===========================
+Modules based on Lua: Version 8.7.61 2025-06-20 16:09 -05:00
+    https://lmod.readthedocs.io
+===========================
+step 2
+lua ProjectDIR/src/lmod.in.lua shell --regression_testing load PrgEnv
+===========================
+===========================
+step 3
+lua ProjectDIR/src/lmod.in.lua shell --regression_testing use ProjectDIR/rt/isloaded/mf/Core2
+===========================
+===========================
+step 4
+lua ProjectDIR/src/lmod.in.lua shell --regression_testing load foo/1.0
+===========================
+===========================
+step 5
+lua ProjectDIR/src/lmod.in.lua shell --regression_testing load isloaded
+===========================
+Found intel
+Found foo
+Found foo/1.0
+Found baz
+===========================
+step 6
+lua ProjectDIR/src/lmod.in.lua shell --regression_testing del isloaded
+===========================

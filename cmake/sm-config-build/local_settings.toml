@@ -1,0 +1,6 @@
+name = "cmake"
+variant = "compiled"
+
+relocate = false
+destination = "{SM_ROOT}/cmake"
+modules = "{SM_ROOT}/modules"

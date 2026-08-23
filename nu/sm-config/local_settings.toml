@@ -1,0 +1,5 @@
+name = "nu"
+
+relocate = true
+destination = "{SM_ROOT}/nu"
+modules = "{SM_ROOT}/modules"

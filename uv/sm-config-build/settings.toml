@@ -1,0 +1,33 @@
+[env]
+CARGO_HOME   = "{SITE_DESTINATION}/{STAGE_DIR}/cargo"
+VERSION      = "{INSTALL_VERSION}"
+NPROCS       = 16
+INSTALL_ROOT = "{SITE_DESTINATION}/{INSTALL_VERSION_VARIANT}"
+
+[install]
+versions = ["stable", "0.12.1"]
+prefix = "{SITE_DESTINATION}/{STAGE_DIR}/cargo"
+# note: this is Lua regex: you will need to escape - and + (using %)
+format = "^bin$"
+# (optional) relocate after install
+destination = "{SITE_DESTINATION}/{INSTALL_VERSION_VARIANT}/bin"
+stage = true
+
+[module]
+PATH = "{INSTALL_DIR}"
+LD_LIBRARY_PATH = "{INSTALL_DIR}"
+INSTALL_VERSION = "{INSTALL_VERSION}"
+
+UV_TOOL_SCRIPTS_DIR = "{INSTALL_DIR}/opt/bin"
+UV_TOOL_BIN_DIR = "{INSTALL_DIR}/bin"
+UV_TOOL_DIR = "{INSTALL_DIR}/opt"
+
+UV_CONCURRENT_INSTALLS = 8
+UV_CONCURRENT_BUILDS = 8
+
+[post]
+# toggles mandatory relocate if `stage` and `clean` are true. If the install
+# script already relocates the package, then we can set `safe = false`
+safe = true
+# delete staging aread after successful install
+clean = true

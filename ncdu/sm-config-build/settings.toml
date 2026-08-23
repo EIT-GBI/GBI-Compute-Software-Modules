@@ -1,0 +1,37 @@
+[env]
+SOURCE_NAME     = "ncdu"
+SOURCE_PREFIX   = "https://dev.yorhel.nl/download"
+INSTALL_VERSION = "{INSTALL_VERSION}"
+INSTALL_PREFIX  = "{SITE_DESTINATION}/{INSTALL_VERSION_VARIANT}"
+RUNTIME_OS      = "{RUNTIME_OS}"
+RUNTIME_ARCH    = "{RUNTIME_ARCH}"
+
+# ncdu 2.x is written in zig, and pins itself to zig 0.14/0.15 => load that
+# exact version of the `zig` module rather than whatever the default is
+ZIG_VERSION     = "0.15.2"
+
+# ncdu also needs libzstd, which ships with neither the macOS SDK nor every
+# linux => build a static one into the staging directory and link against that
+ZSTD_VERSION    = "1.5.7"
+ZSTD_PREFIX     = "https://github.com/facebook/zstd/releases/download"
+
+NPROCS          = 8
+
+[install]
+versions = ["2.9.2"]
+prefix = "{SITE_DESTINATION}"
+format = "{INSTALL_VERSION_VARIANT}$"
+# (optional) relocate after install
+destination = "{SITE_DESTINATION}/{INSTALL_VERSION_VARIANT}"
+stage = true
+
+[module]
+NCDU_PATH = "{INSTALL_DIR}"
+INSTALL_VERSION = "{INSTALL_VERSION}"
+
+[post]
+# toggles mandatory relocate if `stage` and `clean` are true. If the install
+# script already relocates the package, then we can set `safe = false`
+safe = false
+# delete staging aread after successful install
+clean = true

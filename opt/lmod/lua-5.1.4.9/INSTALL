@@ -1,0 +1,26 @@
+This tar file contains the latest version of lua along with a few useful libraries that are needed for the
+Lmod command.
+
+Make sure that your has the ncurses library and ncurses development packages installed.  
+
+
+
+The usual install method will install lua:
+
+ $ CC=gcc ./configure --prefix=/PATH/TO/LUA
+
+
+where obviously you must replace /PATH/TO/LUA with something useful on your system such as "/usr/local"
+
+If you wish to have link with static libraries you can do:
+
+ $ CC=gcc ./configure --prefix=/PATH/TO/LUA --with-static=yes
+
+
+Then:
+
+ $ make
+ $ make install
+
+
+The add the path to lua into your PATH environment variable.

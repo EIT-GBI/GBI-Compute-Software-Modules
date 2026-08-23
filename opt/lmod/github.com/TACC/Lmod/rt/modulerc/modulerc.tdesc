@@ -1,0 +1,329 @@
+-- -*- lua -*-
+local testName = "modulerc"
+
+testdescript = {
+   owner   = "rtm",
+   product = "modules",
+   description = [[
+      Test modulerc
+   ]],
+   keywords = {testName },
+
+   active = 1,
+   testName = testName,
+   job_submit_method = "INTERACTIVE",
+
+   runScript = [[
+
+     . $(projectDir)/rt/common_funcs.sh
+
+     unsetMT
+     initStdEnvVars
+     numStep=0
+     COUNT=0
+     ORIG_HOME=`(cd $HOME; /bin/pwd)`
+     HOME=`/bin/pwd`
+     cacheDir=`userCacheDir`
+ 
+     remove_generated_lmod_files myCacheDir fn spiderT.lua SitePackage.lua
+
+     cp $(testDir)/dot.modulerc .modulerc
+
+     export MODULEPATH_ROOT=$(testDir)/mf
+     export MODULEPATH=$MODULEPATH_ROOT/Core
+     export LMOD_TERM_WIDTH=500
+
+
+     runLmod --version               # 1
+     runLmod load intel              # 2
+     runLmod list                    # 3
+     runLmod load intel/15           # 4
+     runLmod list                    # 5
+     runLmod -t list                 # 6
+     runLmod load a14                # 7
+     runLmod list                    # 8
+     runLmod load a13                # 9
+     runLmod list                    #10
+     runLmod load abinit/6           #11
+     runLmod list                    #12
+     runLmod load abinit/7           #13
+     runLmod list                    #14
+     runLmod load hidden/2.0         #15
+     runLmod list                    #16
+     runLmod -t avail                #17
+     runLmod --show_hidden avail     #18
+     export LMOD_SHORT_TIME=0
+     runLmod avail                   #19
+     spiderFns=`find $cacheDir  -name spiderT.*.lua`
+     [ -n "${spiderFns:-}" ] && cp $cacheDir/spiderT.*.lua ~/spiderT.lua
+     unset LMOD_SHORT_TIME
+     runLmod avail                   #20
+     rm -rf $cacheDir
+
+     cat > fn << EOF
+$(outputDir)/cacheDir: $(outputDir)/last_update
+EOF
+
+     lua $(projectDir)/src/spiderCacheSupport.in.lua --descriptFn fn > .lmodrc.lua
+     mkdir myCacheDir
+     touch last_update
+     buildSpiderT $MODULEPATH > myCacheDir/spiderT.lua
+     runBase runSpiderCmd -o spiderT $MODULEPATH       #21
+     runLmod avail                                     #22
+     runLmod use  $(testDir)/mf2/Core                  #23
+     runLmod spider dum                                #24
+
+     unsetMT
+     export MODULEPATH=$(testDir)/mf/Core:$(testDir)/mf3/Core
+     runLmod load cluster                              #25
+
+     rm .modulerc
+     unsetMT
+     export MODULEPATH=$(testDir)/mf4
+     runLmod avail                                     #26
+
+     cp $testDir/dot.modulerc .modulerc
+     runLmod avail                                     #27
+     runLmod --show_hidden avail                       #28
+     runLmod load mpich a                              #29
+     runLmod list                                      #30
+
+     rm .modulerc
+     export LMOD_MODULERC=$testDir/dot.modulerc
+     runLmod avail                                     #31
+     runLmod --show_hidden avail                       #32
+
+     export LMOD_MODULERC=$testDir/dot.modulerc.lua
+     runLmod avail                                     #33
+     runLmod --show_hidden avail                       #34
+
+
+     unset LMOD_MODULERC
+     unsetMT
+     export MODULEPATH=$(testDir)/mf5
+     runLmod avail                                     #35
+
+     unsetMT
+     export MODULEPATH=$(testDir)/mf6:$(testDir)/mf7:$(testDir)/mf4
+     runBase    runSpiderCmd -o spiderT  $MODULEPATH   #36
+     runLmod avail                                     #37
+
+     unsetMT
+     export MODULEPATH=$(testDir)/mf7:$(testDir)/mf6:$(testDir)/mf4
+     runBase    runSpiderCmd -o spiderT  $MODULEPATH   #38
+     runLmod avail                                     #39
+
+     unsetMT
+     export MODULEPATH=$(testDir)/mf8
+     runLmod    avail                                  #40
+     runLmod -t avail                                  #41
+     runLmod -t avail  compiler/intel/19.0             #42
+     runLmod -t avail  compiler/intel/2019.5           #43
+
+     unsetMT
+     export MODULEPATH=$(testDir)/mf9/Core
+     runLmod    avail                                  #44
+
+     unsetMT
+     export MODULEPATH_ROOT=$(testDir)/mf
+     export MODULEPATH=$MODULEPATH_ROOT/Core
+     export LMOD_MODULERC=$(testDir)/loop_modulerc_d.lua
+     runLmod    avail                                  #45
+
+     unsetMT
+     export MODULEPATH_ROOT=$(testDir)/mf
+     export MODULEPATH=$MODULEPATH_ROOT/Core
+     export LMOD_MODULERC=$(testDir)/modulerc.d
+     runLmod    avail                                  #46
+
+     runLmod    purge                                  #47
+     unsetMT
+     rm -f .modulerc .modulerc.lua
+     cp $(testDir)/dot.modulerc_defaults.lua .modulerc.lua
+     export LMOD_MODULERC=$(testDir)/MRC/mainRC.lua
+     export MODULEPATH_ROOT=$(testDir)/mfA
+     export MODULEPATH=$MODULEPATH_ROOT/Core
+     runLmod    avail                                  #48
+     runLmod    load newDefaults                       #49
+     runLmod    list                                   #50
+     runLmod    avail                                  #51
+     
+     runLmod    purge                                  #52
+     unsetMT
+     unset LMOD_MODULERC
+     export MODULEPATH_ROOT=$(testDir)/mfB
+     export MODULEPATH=$MODULEPATH_ROOT/Core
+
+     runLmod    load ABC                               #53
+     runLmod    list                                   #54
+     runLmod    load ABC/2.5                           #55
+     runLmod    list                                   #56
+     runLmod -A list                                   #57
+     export LMOD_SHOW_HIDDEN=list
+     runLmod    list                                   #58
+     runLmod    --show_hidden avail                    #59
+     export LMOD_SHOW_HIDDEN=avail
+     runLmod    avail                                  #60
+     runLmod    list                                   #61
+     unset LMOD_SHOW_HIDDEN
+     runLmod    avail                                  #62
+     runBase    runSpiderCmd -o spiderT $MODULEPATH    #63
+     runBase    runSpiderCmd -o dbT     $MODULEPATH    #64
+     runLmod    spider                                 #65
+     export LMOD_SHOW_HIDDEN=spider
+     runLmod    spider                                 #66
+     unset LMOD_SHOW_HIDDEN
+
+     # Test hidden_loaded feature
+     runLmod    load C D E F                           #67
+     runLmod    --mt                                   #68
+     runLmod    list                                   #69
+     runLmod    --show_hidden list                     #70
+     runLmod    spider                                 #71
+     runLmod -A spider                                 #72
+
+     # test before and after hide modifiers
+     runLmod    purge                                  #73
+     unsetMT
+     export MODULEPATH_ROOT=$(testDir)/mfC
+     export MODULEPATH=$MODULEPATH_ROOT/Core
+
+     $(testDir)/create_hide_modulerc $(projectDir) > $(outputDir)/modulerc.lua
+     export LMOD_MODULERC=$(outputDir)/modulerc.lua
+     runLmod    avail                                  #74
+     runLmod -A avail                                  #75
+     runLmod    load B/1.0                             #76
+
+     # test forbidden
+     runLmod    purge                                  #77
+     unsetMT
+     export MODULEPATH_ROOT=$(testDir)/mfD
+     export MODULEPATH=$MODULEPATH_ROOT/Core
+
+     # This is a hack for the ages:  Instead trying use
+     # a relative 14 days to test nearly forbidden
+     # we will use an after="3000-01-01" and NEARLY be 400,000 days
+     # Note this test will fail sometime after the year 3000
+
+     export LMOD_NEARLY_FORBIDDEN_DAYS=400000
+     runLmod       avail                               #78
+     runLmod -A    avail                               #79
+     runLmod -t -A avail                               #80
+     runLmod       load C                              #81
+     runLmod       load cluster                        #82
+     runLmod       load D H/1.0                        #83
+     runLmod       list                                #84
+     runLmod       --mt                                #85
+     runLmod -t    list                                #86
+     runBase runSpiderCmd -o spiderT $MODULEPATH       #87
+     runLmod       spider                              #88
+     runLmod    -A spider                              #89
+     runLmod -t    spider                              #90
+     runLmod -t -A spider                              #91
+
+     mkdir -p $HOME/.cache/lmod
+     buildSpiderT $MODULEPATH > $HOME/.cache/lmod/spiderT.lua
+     runLmod -A    avail                               #92
+     runLmod       load soft/1.0                       #93
+     runLmod       load G/1.0                          #94
+     runLmod       load C/1.0                          #95
+
+     cp $HOME/.cache/lmod/spiderT.lua spiderT.87.lua
+     rm -rf $HOME/.cache
+
+     runLmod    purge                                  #96
+     unsetMT
+     unset LMOD_MODULERC
+     export LMOD_PACKAGE_PATH=$(outputDir)
+     export MODULEPATH_ROOT=$(testDir)/mfE
+     export MODULEPATH=$MODULEPATH_ROOT/Core
+     cp $(testDir)/isVisibleHook_SitePackage.lua SitePackage.lua
+     runLmod       avail                               # 97
+     runLmod -A    avail                               # 98
+     runLmod       load A/1.0                          # 99
+     runLmod       load B/3.0                          #100
+     runLmod       load F/1.0                          #101
+     runLmod       rm F/1.0                            #102
+     runLmod       load EESSI/1.0                      #103
+    
+     runLmod    purge                                  #104
+     unsetMT
+     unset LMOD_MODULERC
+     cp $(testDir)/SitePackage.lua .
+     export MODULEPATH_ROOT=$(testDir)/mfF
+     export MODULEPATH=$MODULEPATH_ROOT/Core
+     runLmod       load xcc Foo/invisible              #105
+     runLmod -A    avail                               #106
+
+     runLmod       unload Foo/invisible xcc            #107
+     runLmod       load xcc Foo/invisible              #108
+     runLmod       unload Foo/invisible xcc            #109
+     runLmod       load xcc                            #110
+     runLmod       load Foo/invisible                  #111
+     runLmod       load xcc                            #112
+     runLmod       load Foo/invisible                  #113
+
+     
+     rm -rf $HOME/.cache
+     mkdir -p $HOME/.cache/lmod
+     SED=sed
+     if [ `uname -s` = Darwin ]; then SED=gsed; fi
+     $SED -e "s|%testDir%|$(testDir)|g" < $(testDir)/spiderT-basf-old.lua > $HOME/.cache/lmod/spiderT.lua
+     runLmod    purge                                  #114
+     runLmod    load xcc                               #115
+     runLmod    load Foo/invisible                     #116
+     runLmod    load xcc                               #117
+
+     runLmod    purge                                  #118
+     unsetMT
+     unset LMOD_MODULERC
+     rm SitePackage.lua
+     export MODULEPATH_ROOT=$(testDir)/mfG
+     export MODULEPATH=$MODULEPATH_ROOT/Core
+     rm -rf $HOME/.cache
+     mkdir -p $HOME/.cache/lmod
+     $SED -e "s|%testDir%|$(testDir)|g" < $(testDir)/spiderT-vub-old.lua > $HOME/.cache/lmod/spiderT.lua
+     runLmod -A    avail                               #119
+
+     ############################################################
+     # Issue #797: Test regex matching of hidden/forbidden modules
+     runLmod    purge                                  #120
+     unsetMT
+     rm -f $HOME/.cache/lmod/spiderT.lua
+     unset LMOD_MODULERC
+     export MODULEPATH_ROOT=$(testDir)/mfH
+     export MODULEPATH=$MODULEPATH_ROOT/Core
+     export LMOD_MODULERC=$(testDir)/lmodrc_797.lua
+     runLmod -A avail                                  #121
+     runLmod    avail                                  #122
+     export LMOD_MODULERC=$(testDir)/modrc_797
+     runLmod -A avail                                  #123
+
+
+
+
+
+     HOME=$ORIG_HOME
+     cat _stdout.[0-9][0-9][0-9] > _stdout.orig
+     joinBase64Results  -bash  _stdout.orig _stdout.new
+     cleanUp _stdout.new out.txt
+
+     cat _stderr.[0-9][0-9][0-9] > _stderr.orig
+     cleanUp _stderr.orig err.txt
+
+     rm -f results.csv
+     wrapperDiff --csv results.csv $(testDir)/out.txt out.txt
+     wrapperDiff --csv results.csv $(testDir)/err.txt err.txt
+     testFinish -r $(resultFn) -t $(runtimeFn) results.csv
+   ]],
+
+
+   blessScript = [[
+         # perform what is needed
+   ]],
+
+   tests = {
+      { id='t1'},
+   },
+
+}

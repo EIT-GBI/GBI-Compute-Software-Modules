@@ -1,0 +1,101 @@
+GIT_BRANCH  := master
+USE_STATIC  := @STATIC@
+prefix      := @prefix@
+CC          := @CC@
+DIR         := lua
+POSIX       := luaposix
+LUA_ROOT    := $(prefix)/
+UnixType    := $(shell $(CURDIR)/unixType)
+
+LUA_LIB     := $(LUA_ROOT)lib/lua/5.1
+LUA_SHARE   := $(LUA_ROOT)share/lua/5.1
+LUA_BIN     := $(LUA_ROOT)bin
+LUA_MAN     := $(LUA_ROOT)man/man1
+
+LUA_Dirs    := $(DESTDIR)$(LUA_LIB) $(DESTDIR)$(LUA_BIN) $(DESTDIR)$(LUA_SHARE) $(DESTDIR)$(LUA_MAN)
+LUA_RELEASE := "Lua $(shell cat .version)"
+version     := $(shell cat .version | sed -e 's/-rtm//')
+
+.PHONY: install
+
+all:    
+	$(MAKE) -C $(DIR) $(UnixType) USE_STATIC=$(USE_STATIC) MYCFLAGS='-DLUA_ROOT=\\\"$(LUA_ROOT)\\\" -DLUA_RELEASE="\"\\\"$(LUA_RELEASE)\\\"\""'
+	cd $(POSIX);      $(MAKE) LUAINC=$(CURDIR)/lua/src   posix.so                 CC=$(CC)
+	cd loadsys;       $(MAKE) LUAINC=$(CURDIR)/lua/src             OS=$(UnixType) CC=$(CC)
+	cd luafilesystem; $(MAKE) LUA_INC=$(CURDIR)/lua/src            OS=$(UnixType) CC=$(CC)
+	cd luaprofiler;   $(MAKE) LUA_INC=$(CURDIR)/lua/src            OS=$(UnixType) CC=$(CC)
+	cd lpeg;          $(MAKE) LUADIR=$(CURDIR)/lua/src                            CC=$(CC)
+
+install: all install_libs modules_install 
+
+install_libs: $(LUA_Dirs)
+	$(MAKE) -C $(DIR) $(UnixType) INSTALL_TOP=$(DESTDIR)$(LUA_ROOT) install
+	cd $(POSIX); cp posix.so $(DESTDIR)$(LUA_LIB)
+	cd loadsys; rsync -l *.so* $(DESTDIR)$(LUA_LIB)
+	cd luafilesystem; $(MAKE) LUA_ROOT=$(DESTDIR)$(LUA_ROOT) LUA_LIB=$(DESTDIR)$(LUA_LIB) install
+	cd luaprofiler;   $(MAKE) LUA_ROOT=$(DESTDIR)$(LUA_ROOT) LUA_LIB=$(DESTDIR)$(LUA_LIB) LUA_BIN=$(DESTDIR)$(LUA_BIN) OS=$(UnixType) CC=$(CC) install
+	cd lpeg;          cp lpeg.so $(DESTDIR)$(LUA_LIB); cp re.lua $(DESTDIR)$(LUA_SHARE)
+	cd luajson;       cp -r -p * $(DESTDIR)$(LUA_SHARE)
+
+modules_install: $(LUA_Dirs)
+	cd lua_modules; cp *.lua $(DESTDIR)$(LUA_SHARE)
+
+
+makefile: Makefile.in
+	./config.status
+
+
+uninstall:
+	$(RM) -r  $(DESTDIR)$(LUA_SHARE) 
+	cd $(DESTDIR)$(LUA_BIN);          $(RM)    lua luac summary.lua
+	cd $(DESTDIR)$(LUA_ROOT)include;  $(RM)    lauxlib.h lua.h lua.hpp luaconf.h lualib.h config.h
+	cd $(DESTDIR)$(LUA_ROOT)lib;      $(RM) -r liblua.a lua pkgconfig/lua.pc
+	cd $(DESTDIR)$(LUA_ROOT)man/man1; $(RM)    lua.1 luac.1
+
+
+clean: cleanMe
+	-cd $(DIR);   	  $(MAKE) clean
+	cd $(POSIX);  	  $(MAKE) clean
+	cd loadsys;   	  $(MAKE) clean
+	cd luafilesystem; $(MAKE) clean
+	cd luaprofiler;   $(MAKE) clean OS=$(UnixType) CC=$(CC) 
+	cd lpeg;          $(MAKE) clean
+
+cleanMe:
+	$(RM) config.log
+
+clobber: clean
+	$(RM)  config.log confdefs.h
+
+distclean: clobber
+	$(RM) Makefile config.status
+
+echo:
+	@echo $(LUA_RELEASE)
+	@echo $(UnixType)
+
+$(LUA_Dirs):
+	mkdir -p $@
+
+svntag:
+        ifneq ($(TAG),)
+	  echo "$(TAG)"                       >   .version;          	             \
+          SVN=`svn info | grep "Repository Root" | sed -e 's/Repository Root: //'`;  \
+	  svn ci -m'moving to TAG_VERSION $(TAG)' .version;          	             \
+	  svn cp -m'moving to TAG_VERSION $(TAG)' $$SVN/trunk $$SVN/tags/$(TAG)
+        else
+	  @echo "To svn tag do: make svntag TAG=?"
+        endif
+
+dist:
+	git archive --prefix=lua-$(version)/ $(GIT_BRANCH) > lua-$(version).tar
+	$(RM) -rf DIST;                               			     	 \
+        mkdir DIST;                                   			     	 \
+        cd DIST;                                      			     	 \
+        tar xf ../lua-$(version).tar;                			     	 \
+        $(RM) ../lua-$(version).tar;                 			     	 \
+        echo "lua"-$(version) > .fname;                		     	         \
+        tar chf `cat .fname`.tar `cat .fname`;           		     	 \
+        bzip2 `cat .fname`.tar;                           		     	 \
+        mv `cat .fname`.tar.bz2  ..;                         		     	 \
+        cd ..; $(RM) -rf DIST

@@ -1,0 +1,11 @@
+prefix=/Users/runner/work/lua-regolith/lua-regolith/lua-regolith
+exec_prefix=${prefix}
+libdir=${exec_prefix}/lib
+includedir=${prefix}/include
+
+Name: lua-regolith 5.4
+Description: lua-regolith — Lua 5.4 with bundled luaposix, luv, lfs, lpeg, lua-term, dkjson
+Version: 5.4.7
+Libs: -L${libdir} -llua -lm -ldl
+Libs.private: -lpthread
+Cflags: -I${includedir}

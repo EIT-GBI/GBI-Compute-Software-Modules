@@ -1,0 +1,90 @@
+===========================
+step 1
+lua ProjectDIR/src/lmod.in.lua shell --regression_testing --version
+===========================
+===========================
+step 2
+lua ProjectDIR/src/lmod.in.lua shell --regression_testing use ProjectDIR/rt/inaccessible/mf/path1
+===========================
+__LMOD_REF_COUNT_MODULEPATH=ProjectDIR/rt/inaccessible/mf/path1:1\;ProjectDIR/rt/inaccessible/mf/Core:1;
+export __LMOD_REF_COUNT_MODULEPATH;
+MODULEPATH=ProjectDIR/rt/inaccessible/mf/path1:ProjectDIR/rt/inaccessible/mf/Core;
+export MODULEPATH;
+_ModuleTable_='_ModuleTable_={MTversion=3,depthT={},family={},mT={},mpathA={"ProjectDIR/rt/inaccessible/mf/path1","ProjectDIR/rt/inaccessible/mf/Core",},systemBaseMPATH="ProjectDIR/rt/inaccessible/mf/Core",}';
+export _ModuleTable_;
+===========================
+step 3
+lua ProjectDIR/src/lmod.in.lua shell --regression_testing --ignore_cache spider
+===========================
+MODULEPATH=ProjectDIR/rt/inaccessible/mf/path1:ProjectDIR/rt/inaccessible/mf/Core;
+export MODULEPATH;
+_ModuleTable_='_ModuleTable_={MTversion=3,depthT={},family={},mT={},mpathA={"ProjectDIR/rt/inaccessible/mf/path1","ProjectDIR/rt/inaccessible/mf/Core",},systemBaseMPATH="ProjectDIR/rt/inaccessible/mf/Core",}';
+export _ModuleTable_;
+===========================
+step 4
+lua ProjectDIR/src/lmod.in.lua shell --regression_testing --ignore_cache spider inaccessible
+===========================
+MODULEPATH=ProjectDIR/rt/inaccessible/mf/path1:ProjectDIR/rt/inaccessible/mf/Core;
+export MODULEPATH;
+_ModuleTable_='_ModuleTable_={MTversion=3,depthT={},family={},mT={},mpathA={"ProjectDIR/rt/inaccessible/mf/path1","ProjectDIR/rt/inaccessible/mf/Core",},systemBaseMPATH="ProjectDIR/rt/inaccessible/mf/Core",}';
+export _ModuleTable_;
+===========================
+step 5
+lua ProjectDIR/src/lmod.in.lua shell --regression_testing unuse ProjectDIR/rt/inaccessible/mf/path1
+===========================
+__LMOD_REF_COUNT_MODULEPATH=ProjectDIR/rt/inaccessible/mf/Core:1;
+export __LMOD_REF_COUNT_MODULEPATH;
+MODULEPATH=ProjectDIR/rt/inaccessible/mf/Core;
+export MODULEPATH;
+_ModuleTable_='_ModuleTable_={MTversion=3,depthT={},family={},mT={},mpathA={"ProjectDIR/rt/inaccessible/mf/Core",},systemBaseMPATH="ProjectDIR/rt/inaccessible/mf/Core",}';
+export _ModuleTable_;
+===========================
+step 6
+lua ProjectDIR/src/lmod.in.lua shell --regression_testing spider inaccessible
+===========================
+false
+===========================
+step 7
+lua ProjectDIR/src/lmod.in.lua shell --regression_testing load extend
+===========================
+false
+===========================
+step 8
+lua ProjectDIR/src/lmod.in.lua shell --regression_testing purge
+===========================
+MODULEPATH=ProjectDIR/rt/inaccessible/mf/Core;
+export MODULEPATH;
+_ModuleTable_='_ModuleTable_={MTversion=3,depthT={},family={},mT={},mpathA={"ProjectDIR/rt/inaccessible/mf/Core",},systemBaseMPATH="ProjectDIR/rt/inaccessible/mf/Core",}';
+export _ModuleTable_;
+===========================
+step 9
+lua ProjectDIR/src/lmod.in.lua shell --regression_testing spider software1
+===========================
+__LMOD_REF_COUNT_MODULEPATH=ProjectDIR/rt/inaccessible/mf2/Stages/2017a/UI/Compilers:1;
+export __LMOD_REF_COUNT_MODULEPATH;
+MODULEPATH=ProjectDIR/rt/inaccessible/mf2/Stages/2017a/UI/Compilers;
+export MODULEPATH;
+_ModuleTable_='_ModuleTable_={MTversion=3,depthT={},family={},mT={},mpathA={"ProjectDIR/rt/inaccessible/mf2/Stages/2017a/UI/Compilers",},systemBaseMPATH="ProjectDIR/rt/inaccessible/mf2/Stages/2017a/UI/Compilers",}';
+export _ModuleTable_;
+===========================
+step 10
+lua ProjectDIR/src/lmod.in.lua shell --regression_testing load compiler1
+===========================
+LOADEDMODULES=compiler1/1.0;
+export LOADEDMODULES;
+__LMOD_REF_COUNT_MODULEPATH=ProjectDIR/rt/inaccessible/mf2/Stages/2017a/modules/Compilers/compiler1/1.0:1\;ProjectDIR/rt/inaccessible/mf2/Stages/2017a/UI/Compilers:1;
+export __LMOD_REF_COUNT_MODULEPATH;
+MODULEPATH=ProjectDIR/rt/inaccessible/mf2/Stages/2017a/modules/Compilers/compiler1/1.0:ProjectDIR/rt/inaccessible/mf2/Stages/2017a/UI/Compilers;
+export MODULEPATH;
+_LMFILES_=ProjectDIR/rt/inaccessible/mf2/Stages/2017a/UI/Compilers/compiler1/1.0.lua;
+export _LMFILES_;
+_ModuleTable_='_ModuleTable_={MTversion=3,depthT={},family={},mT={compiler1={actionA={[[prepend_path("MODULEPATH","ProjectDIR/rt/inaccessible/mf2/Stages/2017a/modules/Compilers/compiler1/1.0")]],},fn="ProjectDIR/rt/inaccessible/mf2/Stages/2017a/UI/Compilers/compiler1/1.0.lua",fullName="compiler1/1.0",loadOrder=1,propT={},stackDepth=0,status="active",userName="compiler1",wV="000000001.*zfinal",},},mpathA={"ProjectDIR/rt/inaccessible/mf2/Stages/2017a/modules/Compilers/compiler1/1.0","ProjectDIR/rt/inaccessible/mf2/Stages/2017a/UI/Compilers",},systemBaseMPATH="ProjectDIR/rt/inaccessible/mf2/Stages/2017a/UI/Compilers",}';
+export _ModuleTable_;
+===========================
+step 11
+lua ProjectDIR/src/lmod.in.lua shell --regression_testing av
+===========================
+MODULEPATH=ProjectDIR/rt/inaccessible/mf2/Stages/2017a/modules/Compilers/compiler1/1.0:ProjectDIR/rt/inaccessible/mf2/Stages/2017a/UI/Compilers;
+export MODULEPATH;
+_ModuleTable_='_ModuleTable_={MTversion=3,depthT={},family={},mT={compiler1={actionA={[[prepend_path("MODULEPATH","ProjectDIR/rt/inaccessible/mf2/Stages/2017a/modules/Compilers/compiler1/1.0")]],},fn="ProjectDIR/rt/inaccessible/mf2/Stages/2017a/UI/Compilers/compiler1/1.0.lua",fullName="compiler1/1.0",loadOrder=1,propT={},stackDepth=0,status="active",userName="compiler1",wV="000000001.*zfinal",},},mpathA={"ProjectDIR/rt/inaccessible/mf2/Stages/2017a/modules/Compilers/compiler1/1.0","ProjectDIR/rt/inaccessible/mf2/Stages/2017a/UI/Compilers",},systemBaseMPATH="ProjectDIR/rt/inaccessible/mf2/Stages/2017a/UI/Compilers",}';
+export _ModuleTable_;

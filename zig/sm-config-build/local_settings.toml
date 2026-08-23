@@ -1,0 +1,6 @@
+name = "zig"
+variant = "compiled"
+
+relocate = false
+destination = "{SM_ROOT}/zig"
+modules = "{SM_ROOT}/modules"

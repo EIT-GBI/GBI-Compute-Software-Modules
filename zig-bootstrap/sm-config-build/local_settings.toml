@@ -1,0 +1,6 @@
+name = "zig"
+variant = "bootstrap"
+
+relocate = false
+destination = "{SM_ROOT}/zig"
+modules = "{SM_ROOT}/modules"

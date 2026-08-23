@@ -1,0 +1,64 @@
+[env]
+SOURCE_NAME     = "rustc"
+SOURCE_PREFIX   = "https://static.rust-lang.org/dist"
+INSTALL_VERSION = "{INSTALL_VERSION}"
+INSTALL_PREFIX  = "{SITE_DESTINATION}/{INSTALL_VERSION_VARIANT}"
+
+# rustc hardcodes the oldest external LLVM it will accept -- see
+# `check_llvm_version` in src/bootstrap/src/core/build_steps/llvm.rs. 1.98.0
+# wants >= 21, which is exactly what the `llvm` module provides.
+#
+# NOTE the `-compiled` suffix: as for zig, this must be the SOURCE-built llvm
+# (`make llvm MODE=build`). See install.sh for why the binary release is not
+# usable here.
+LLVM_VERSION    = "21.1.8-compiled"
+
+# Extended tools installed next to rustc. `cargo` is the one every other recipe
+# in this repo needs (they all `module load rust; cargo install ...`); the rest
+# are what rustup would have given you. Each one is an extra crate graph to
+# compile, so trim this if you only want a compiler -- but note that naming any
+# tools at all makes the list exhaustive: drop `rustdoc` from it and `cargo doc`
+# stops working, because bootstrap then leaves rustdoc out of the install image.
+TOOLS           = "cargo,clippy,rustfmt,rustdoc"
+
+# Bootstrap compiler. Rust is written in Rust, so building it needs a rustc
+# that is already there:
+#
+#   * empty (default) -- bootstrap downloads the stage0 compiler pinned in
+#     src/stage0 (rustc/cargo/rust-std of the previous release, with sha256s
+#     recorded in the source tree) from static.rust-lang.org.
+#   * a prefix with bin/rustc + bin/cargo -- build from that compiler instead,
+#     e.g. STAGE0_ROOT="{SM_ROOT}/rust/stable" for the rustup-installed module,
+#     or an earlier `-compiled` install to chain source builds. Bootstrap
+#     insists the stage0 be the same version as the source being built or one
+#     minor behind it (check_stage0_version), so this only works while the two
+#     are in step.
+STAGE0_ROOT     = ""
+
+# Compile width. rustc's own build is dominated by rustc/cargo invocations
+# which are individually memory hungry; kept below the core count for the same
+# reason as the llvm recipe.
+NPROCS          = 8
+
+[install]
+# Any version with a source tarball on static.rust-lang.org works, including
+# the rolling "beta" and "nightly" channels -- install.sh derives the release
+# channel from this string.
+versions = ["1.98.0"]
+prefix = "{SITE_DESTINATION}"
+format = "{INSTALL_VERSION_VARIANT}$"
+# (optional) relocate after install
+destination = "{SITE_DESTINATION}/{INSTALL_VERSION_VARIANT}"
+stage = true
+
+[module]
+RUST_PATH = "{INSTALL_DIR}/bin"
+RUST_LD_LIBRARY_PATH = "{INSTALL_DIR}/lib"
+INSTALL_VERSION = "{INSTALL_VERSION}"
+
+[post]
+# toggles mandatory relocate if `stage` and `clean` are true. If the install
+# script already relocates the package, then we can set `safe = false`
+safe = false
+# delete staging aread after successful install
+clean = true

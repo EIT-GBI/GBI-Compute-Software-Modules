@@ -1,0 +1,132 @@
+#!/usr/bin/env lua
+-- -*- lua -*-
+
+_G._DEBUG    = false
+local posix  = require("posix")
+
+Version = "1.1"
+
+require("declare")
+require("strict")
+require("string_utils")
+local Optiks      = require("Optiks")
+local dbg         = require("Dbg"):dbg()
+local s_optionTbl = {}
+local load        = (_VERSION == "Lua 5.1") and loadstring or load
+
+function optionTbl()
+   return s_optionTbl
+end
+
+function main()
+   options()
+   local optionTbl   = optionTbl()
+   local fn = optionTbl.pargs[1] or "UnknownFile"
+   local whole
+   local fh
+
+   declare("myFullVersion")
+   declare("myDate")
+   declare("myVersion")
+   myFullVersion = optionTbl.version
+   myDate        = optionTbl.date
+
+   local vA = {}
+   for value in myFullVersion:split("%.") do
+      vA[#vA + 1 ]  = value
+   end
+
+   myVersion = vA[1] .. "." .. (vA[2] or "0")
+
+   declare("patternA")
+   if (not isFile(optionTbl.patternFile)) then
+      io.stderr:write("missing patternFile\n")
+      os.exit(1)
+   end
+
+   fh    = io.open(optionTbl.patternFile,"r")
+   whole = fh:read("*all")
+   fh:close()
+   local ok
+   local func, msg = load(whole)
+   if (func) then
+      ok, msg = pcall(func)
+   else
+      ok = false
+   end
+   if (not ok) then
+      io.stderr:write("Error: unable to load: ", optionTbl.patternFile,"\n", " ", msg, "\n");
+      os.exit(1)
+   end
+
+   fh    = io.open(fn,"r")
+   if (not fh) then
+      io.stderr:write("unable to open ",fn,"\n")
+   end
+
+   whole = fh:read("*all")
+   fh:close()
+
+   fh    = io.open(fn,"w")
+   for myLine in whole:split("\n") do
+      local line = myLine
+      for i = 1,#patternA do
+         local pattern = patternA[i][1]
+         local value   = patternA[i][2]
+         line          = line:gsub(pattern,value)
+      end
+      fh:write(line,"\n")
+   end
+   fh:close()
+end
+
+function options()
+   local optionTbl     = optionTbl()
+   local usage         = "Usage: "
+   local cmdlineParser = Optiks:new{usage=usage, version=Version}
+
+   cmdlineParser:add_option{ 
+      name    = {'-v','--verbose'},
+      dest    = 'verbosityLevel',
+      action  = 'count',
+   }
+   cmdlineParser:add_option{ 
+      name    = {'-p','--patternFile'},
+      dest    = 'patternFile',
+      default = '',
+      action  = 'store',
+   }
+   cmdlineParser:add_option{ 
+      name    = {'--version'},
+      dest    = 'version',
+      default = '0.0.0',
+      action  = 'store',
+   }
+   cmdlineParser:add_option{ 
+      name    = {'--date'},
+      dest    = 'date',
+      default = '',
+      action  = 'store',
+   }
+   local optTbl, pargs = cmdlineParser:parse(arg)
+
+   for v in pairs(optTbl) do
+      optionTbl[v] = optTbl[v]
+   end
+   optionTbl.pargs = pargs
+
+end
+
+--------------------------------------------------------------------------
+-- Return true if file exists is and is a file or link.
+-- @param fn A file path
+function isFile(fn)
+   if (fn == nil) then return false end
+   local t = posix.stat(fn,"type")
+
+   local result = ((t == "regular") or (t == "link"))
+
+   return result
+end
+
+main()

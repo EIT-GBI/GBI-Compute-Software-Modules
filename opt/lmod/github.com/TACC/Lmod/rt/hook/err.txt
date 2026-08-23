@@ -1,0 +1,47 @@
+===========================
+step 1
+lua ProjectDIR/src/lmod.in.lua shell --regression_testing --version
+===========================
+Modules based on Lua: Version 9.1.2 2026-02-23 15:02 -06:00
+    https://lmod.readthedocs.io
+===========================
+step 2
+lua ProjectDIR/src/lmod.in.lua shell --regression_testing use -a ProjectDIR/rt/hook/mf/Core
+===========================
+===========================
+step 3
+lua ProjectDIR/src/lmod.in.lua shell --regression_testing load admin intel
+===========================
+Load hook B called on admin
+Load hook B called on intel
+===========================
+step 4
+lua ProjectDIR/src/lmod.in.lua shell --regression_testing load admin intel
+===========================
+Load hook B called on admin
+Load hook B called on intel
+===========================
+step 5
+lua ProjectDIR/src/lmod.in.lua shell --regression_testing load admin intel
+===========================
+Load hook A called on admin
+Load hook B called on admin
+Load hook A called on intel
+Load hook B called on intel
+===========================
+step 6
+lua ProjectDIR/src/lmod.in.lua shell --regression_testing load admin intel
+===========================
+Load hook B called on admin
+Load hook A called on admin
+Load hook B called on intel
+Load hook A called on intel
+===========================
+step 7
+lua ProjectDIR/src/lmod.in.lua shell --regression_testing load A
+===========================
+===========================
+step 8
+lua ProjectDIR/src/lmod.in.lua shell --regression_testing load decorate
+===========================
+I made it!

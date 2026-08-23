@@ -1,0 +1,132 @@
+===========================
+step 1
+lua ProjectDIR/src/lmod.in.lua shell --regression_testing --version
+===========================
+Modules based on Lua: Version 8.7.61 2025-06-20 16:09 -05:00
+    https://lmod.readthedocs.io
+===========================
+step 2
+lua ProjectDIR/src/lmod.in.lua shell --regression_testing load StdEnv
+===========================
+===========================
+step 3
+lua ProjectDIR/src/lmod.in.lua shell --regression_testing list
+===========================
+Currently Loaded Modules:
+  1) apps/moab                (S)   3) compilers/intel/14.0   5) StdEnv (S)
+  2) apps/buildtools/20140527       4) mpi/openmpi/1.6.5
+  Where:
+   S:  Module is Sticky, requires --force to unload or purge
+===========================
+step 4
+lua ProjectDIR/src/lmod.in.lua shell --regression_testing purge
+===========================
+The following modules were not unloaded:
+  (Use "module --force purge" to unload all):
+  1) apps/moab                  3) compilers/intel/14.0   5) StdEnv
+  2) apps/buildtools/20140527   4) mpi/openmpi/1.6.5
+===========================
+step 5
+lua ProjectDIR/src/lmod.in.lua shell --regression_testing avail
+===========================
+ProjectDIR/rt/hook_avail/mf/Compilers/intel14.0
+   mpi/mvapich2/1.9    mpi/openmpi/1.6.5 (L,D)    mpi/openmpi/1.8.1
+ProjectDIR/rt/hook_avail/mf/Core
+   StdEnv (S,L)    apps/buildtools/20140527 (L)    foo/1.0
+ProjectDIR/rt/hook_avail/mf/Core-helios
+   apps/lua/5.1.4.6          compilers/intel/14.0 (L)
+   apps/moab        (S,L)    foo/1.1              (D)
+  Where:
+   D:  Default Module
+   L:  Module is loaded
+   S:  Module is Sticky, requires --force to unload or purge
+If the avail list is too long consider trying:
+"module --default avail" or "ml -d av" to just list the default modules.
+"module overview" or "ml ov" to display the number of modules for each name.
+Use "module spider" to find all possible modules and extensions.
+Use "module keyword key1 key2 ..." to search for all possible modules matching any of the "keys".
+===========================
+step 6
+lua ProjectDIR/src/lmod.in.lua shell --regression_testing -s en_grouped avail
+===========================
+Complr Dep.
+   mpi/mvapich2/1.9    mpi/openmpi/1.6.5 (L,D)    mpi/openmpi/1.8.1
+Core Modules
+   StdEnv                   (S,L)    apps/moab            (S,L)    foo/1.1 (D)
+   apps/buildtools/20140527 (L)      compilers/intel/14.0 (L)
+   apps/lua/5.1.4.6                  foo/1.0
+  Where:
+   D:  Default Module
+   L:  Module is loaded
+   S:  Module is Sticky, requires --force to unload or purge
+If the avail list is too long consider trying:
+"module --default avail" or "ml -d av" to just list the default modules.
+"module overview" or "ml ov" to display the number of modules for each name.
+Use "module spider" to find all possible modules and extensions.
+Use "module keyword key1 key2 ..." to search for all possible modules matching any of the "keys".
+===========================
+step 7
+lua ProjectDIR/src/lmod.in.lua shell --regression_testing avail
+===========================
+Complr Dep.
+   mpi/mvapich2/1.9    mpi/openmpi/1.6.5 (L,D)    mpi/openmpi/1.8.1
+Core Modules
+   StdEnv                   (S,L)    apps/moab            (S,L)    foo/1.1 (D)
+   apps/buildtools/20140527 (L)      compilers/intel/14.0 (L)
+   apps/lua/5.1.4.6                  foo/1.0
+  Where:
+   D:  Default Module
+   L:  Module is loaded
+   S:  Module is Sticky, requires --force to unload or purge
+If the avail list is too long consider trying:
+"module --default avail" or "ml -d av" to just list the default modules.
+"module overview" or "ml ov" to display the number of modules for each name.
+Use "module spider" to find all possible modules and extensions.
+Use "module keyword key1 key2 ..." to search for all possible modules matching any of the "keys".
+===========================
+step 8
+lua ProjectDIR/src/lmod.in.lua shell --regression_testing avail
+===========================
+Compilateurs
+   mpi/mvapich2/1.9    mpi/openmpi/1.6.5 (L,D)    mpi/openmpi/1.8.1
+Modules de base
+   StdEnv                   (S,L)    apps/moab            (S,L)    foo/1.1 (D)
+   apps/buildtools/20140527 (L)      compilers/intel/14.0 (L)
+   apps/lua/5.1.4.6                  foo/1.0
+  Where:
+   D:  Default Module
+   L:  Module is loaded
+   S:  Module is Sticky, requires --force to unload or purge
+If the avail list is too long consider trying:
+"module --default avail" or "ml -d av" to just list the default modules.
+"module overview" or "ml ov" to display the number of modules for each name.
+Use "module spider" to find all possible modules and extensions.
+Use "module keyword key1 key2 ..." to search for all possible modules matching any of the "keys".
+===========================
+step 9
+lua ProjectDIR/src/lmod.in.lua shell --regression_testing avail
+===========================
+Complr Dep.
+   mpi/mvapich2/1.9    mpi/openmpi/1.6.5 (L,D)    mpi/openmpi/1.8.1
+Core Modules
+   apps/buildtools/20140527 (L)      compilers/intel/14.0 (L)    StdEnv (S,L)
+   apps/lua/5.1.4.6                  foo/1.0
+   apps/moab                (S,L)    foo/1.1              (D)
+  Where:
+   D:  Default Module
+   L:  Module is loaded
+   S:  Module is Sticky, requires --force to unload or purge
+If the avail list is too long consider trying:
+"module --default avail" or "ml -d av" to just list the default modules.
+"module overview" or "ml ov" to display the number of modules for each name.
+Use "module spider" to find all possible modules and extensions.
+Use "module keyword key1 key2 ..." to search for all possible modules matching any of the "keys".
+===========================
+step 10
+lua ProjectDIR/src/lmod.in.lua shell --regression_testing overview
+===========================
+Complr Dep.
+mpi/mvapich2 (1)   mpi/openmpi (2)
+Core Modules
+apps/buildtools (1)   apps/moab       (1)   foo    (2)
+apps/lua        (1)   compilers/intel (1)   StdEnv (1)

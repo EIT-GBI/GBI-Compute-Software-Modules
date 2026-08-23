@@ -1,0 +1,6 @@
+name = "bat"
+variant = "compiled"
+
+relocate = true
+destination = "{SM_ROOT}/bat"
+modules = "{SM_ROOT}/modules"

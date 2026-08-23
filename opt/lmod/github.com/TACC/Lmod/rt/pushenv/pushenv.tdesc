@@ -1,0 +1,126 @@
+-- -*- lua -*-
+testdescript = {
+   owner   = "rtm",
+   product = "modules",
+   description = [[
+	 Test initial module load
+   ]],
+   keywords = {"pushenv" },
+
+   active = 1,
+   testName = "pushenv",
+   job_submit_method = "INTERACTIVE",
+
+   runScript = [[
+
+     . $(projectDir)/rt/common_funcs.sh
+
+     unsetMT
+     initStdEnvVars
+     MODULEPATH_ROOT=$(testDir)/mf;     export MODULEPATH_ROOT
+     MODULEPATH=$MODULEPATH_ROOT/Core;  export MODULEPATH
+
+     RTM_SETTARG_CMD=":";               export RTM_SETTARG_CMD
+
+     remove_generated_lmod_files
+
+     runLmod --version        # 1
+     runLmod load   a b       # 2
+     runLmod unload a b       # 3
+     runLmod load intel       # 4
+     runLmod load mpich       # 5
+     runLmod load clang       # 6
+     runLmod unload clang     # 7
+     runLmod unload mpich     # 8
+     runLmod unload intel     # 9
+     runLmod load intel mpich #10
+     runLmod unload intel     #11
+     runLmod load intel       #12
+     runLmod load settarg     #13
+     runLmod unload settarg   #14
+     export LEWIS="test"
+     export   RTM="test"
+     runLmod load   ll/1.0    #15
+     runLmod unload ll/1.0    #16
+     runLmod load   ll/2.0    #17
+     runLmod unload ll/2.0    #18
+    
+     export LLOYD="FOO"
+     runLmod load   lloyd     #19
+     runLmod unload lloyd     #20
+     
+     runLmod save             #21
+     runLmod restore          #22
+
+     #--------------------------------------------------------------
+     # Issue: #627: pushenv("FOO","")
+     
+     runLmod purge            #23
+     unsetMT
+     MODULEPATH=$MODULEPATH_ROOT/Core2;  export MODULEPATH
+     unset FOO
+     unset BAZ
+     unset TEST
+     runLmod load   first     #24
+     runLmod load   second    #25
+     runLmod unload second    #26
+     runBase echo FOO="%$FOO%" BAZ="%$BAZ%"    #27
+     runLmod unload first     #28
+     runBase echo FOO="%$FOO%" BAZ="%$BAZ%"    #29
+
+     #--------------------------------------------------------------
+     # Issue: #745: pushenv("FOO",false) then module refresh
+
+     runLmod purge            #30
+     unsetMT
+     MODULEPATH=$MODULEPATH_ROOT/Core3;  export MODULEPATH
+     export TESTVAR="tryThis"
+     runLmod load tryThis     #31
+     runLmod refresh          #32
+
+     #--------------------------------------------------------------
+     # Issue: #367
+     runLmod purge            #33
+     unsetMT
+     MODULEPATH=$MODULEPATH_ROOT/Core4;  export MODULEPATH
+     export PSTART=something
+     export RR=Z
+     runLmod load   A         #34
+     runLmod load   B         #35
+     runLmod unload B         #36
+     runLmod unload A         #37
+     export RR=ZZ
+     runLmod load   A         #38
+     runLmod unload A         #39
+     export RR=Z
+     runLmod load   A         #40
+     export RR=AA
+     runLmod load   B         #41
+     runLmod unload B         #42
+     runLmod unload A         #43
+
+     HOME_ORIG=$HOME
+
+     cat _stdout.[0-9][0-9][0-9] > _stdout.orig
+     joinBase64Results -bash _stdout.orig _stdout.new
+     cleanUp _stdout.new out.txt
+
+     cat _stderr.[0-9][0-9][0-9] > _stderr.orig
+     cleanUp _stderr.orig err.txt
+
+     rm -f results.csv
+     wrapperDiff --csv results.csv $(testDir)/out.txt out.txt
+     wrapperDiff --csv results.csv $(testDir)/err.txt err.txt
+     testFinish -r $(resultFn) -t $(runtimeFn) results.csv
+   ]],
+
+
+   blessScript = [[
+         # perform what is needed
+   ]],
+
+   tests = {
+      { id='t1'},
+   },
+
+}

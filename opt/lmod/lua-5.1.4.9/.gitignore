@@ -1,0 +1,11 @@
+*~
+.*~
+stamp-h
+/makefile
+.libs
+autom4te.cache
+clidebug.cmd
+config.h
+config.log
+config.status
+lua/src/Makefile

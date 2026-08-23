@@ -1,0 +1,7 @@
+PROFILER_OUTPUT:= bin/profiler.so
+
+INCS:= -I$(LUA_INC)
+WARN= -W -Wall -fPIC
+EXTRA_LIBS=
+CFLAGS := -O2 -DTESTS $(WARN) $(INCS) -I./src
+LIB_OPTION := -shared

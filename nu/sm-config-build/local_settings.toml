@@ -1,0 +1,6 @@
+name = "nu"
+variant = "compiled"
+
+relocate = true
+destination = "{SM_ROOT}/nu"
+modules = "{SM_ROOT}/modules"

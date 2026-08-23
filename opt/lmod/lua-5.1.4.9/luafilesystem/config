@@ -1,0 +1,26 @@
+# Installation directories
+
+# Default installation prefix
+
+# System's libraries directory (where binary libraries are installed)
+LUA_LIBDIR= $(LUA_LIB)
+
+# Lua includes directory
+LUA_INC= $(LUA_ROOT)/include
+
+# OS dependent
+ifeq ($(OS),macosx)
+  LIB_OPTION= -bundle -undefined dynamic_lookup #for MacOS X
+else
+  LIB_OPTION= -shared #for Linux
+endif
+
+#LIBNAME= $T.so.$V
+
+# Compilation directives
+WARN= -O2 -Wall -fPIC -W -Waggregate-return -Wcast-align -Wmissing-prototypes -Wnested-externs -Wshadow -Wwrite-strings -pedantic
+INCS= -I$(LUA_INC)
+CFLAGS= $(WARN) $(INCS)
+CC= gcc
+
+# $Id: config,v 1.21 2007/10/27 22:42:32 carregal Exp $

@@ -1,0 +1,18 @@
+#!/bin/sh
+# -*- shell-script -*-
+
+# Lower case OSTYPE
+OSTYPE=`uname -s | tr '[A-Z]' '[a-z]' `
+MTYPE=`uname -m | tr '[A-Z]' '[a-z]' `
+
+if [ $OSTYPE = "linux" -o $OSTYPE = "bsd" -o $OSTYPE = "freebsd" ]; then
+  echo $OSTYPE
+elif [ $MTYPE  = "aix"    ]; then
+  echo $MTYPE
+elif [ $OSTYPE = "sunos"  ]; then
+  echo "solaris"
+elif [ $OSTYPE = "darwin" ]; then
+  echo "macosx"
+else
+  echo "posix"
+fi

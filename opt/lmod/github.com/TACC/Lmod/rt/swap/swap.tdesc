@@ -1,0 +1,88 @@
+-- -*- lua -*-
+testdescript = {
+   owner   = "rtm",
+   product = "modules",
+   description = [[
+	 Test initial module load
+   ]],
+   keywords = {"swap" },
+
+   active = true,
+   testName = "swap",
+   job_submit_method = "INTERACTIVE",
+
+   runScript = [[
+
+     . $(projectDir)/rt/common_funcs.sh
+
+     unsetMT
+     initStdEnvVars
+     MODULEPATH_ROOT=$(testDir)/mf;    export MODULEPATH_ROOT
+     MODULEPATH=$MODULEPATH_ROOT/Core; export MODULEPATH
+
+     remove_generated_lmod_files
+
+     cp $(projectDir)/init/lmodrc.lua .lmodrc.lua
+
+     runLmod --version                          # 1
+     runLmod load admin PrgEnv openmpi parmetis # 2
+     runLmod avail                              # 3
+     runLmod unload intel                       # 4
+     runLmod list                               # 5
+     runLmod load gcc                           # 6
+     runLmod list                               # 7
+     runLmod swap gcc intel                     # 8
+     runLmod load phdf5/1.8.2 petsc             # 9
+     runLmod list                               #10
+     runLmod swap openmpi mpich2                #11
+     runLmod list                               #12
+     runLmod swap mpich2  openmpi               #13
+     runLmod list                               #14
+     runLmod load phdf5                         #15
+     runLmod list                               #16
+     runLmod swap openmpi mpich2                #17
+     runLmod list                               #18
+     runLmod unload mpich2                      #19
+     runLmod list                               #20
+     runLmod load gotoblas                      #21
+     runLmod swap gotoblas/1.31                 #22
+     runLmod list                               #23
+
+     export LMOD_AUTO_SWAP=true
+     runLmod load mpich2                        #24
+     runLmod load openmpi                       #25
+     runLmod load gcc                           #26
+     runLmod load intel mpich2                  #27
+     runLmod load gcc openmpi                   #28
+     runLmod load intel gcc                     #29
+     runLmod purge                              #30
+     runLmod load gcc                           #31
+     runLmod load intel gcc                     #32
+     runLmod swap gcc                           #33
+     runLmod load intel unknown                 #34
+
+     HOME=$ORIG_HOME
+
+     cat _stdout.[0-9][0-9][0-9] > _stdout.orig
+     joinBase64Results -bash _stdout.orig _stdout.new
+     cleanUp _stdout.new out.txt
+
+     cat _stderr.[0-9][0-9][0-9] > _stderr.orig
+     cleanUp _stderr.orig err.txt
+
+     rm -f results.csv
+     wrapperDiff --csv results.csv $(testDir)/out.txt out.txt
+     wrapperDiff --csv results.csv $(testDir)/err.txt err.txt
+     testFinish -r $(resultFn) -t $(runtimeFn) results.csv
+   ]],
+
+
+   blessScript = [[
+         # perform what is needed
+   ]],
+
+   tests = {
+      { id='t1'},
+   },
+
+}

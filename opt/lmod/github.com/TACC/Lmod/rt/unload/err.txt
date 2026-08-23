@@ -1,0 +1,85 @@
+===========================
+step 1
+lua ProjectDIR/src/lmod.in.lua shell --regression_testing --version
+===========================
+Modules based on Lua: Version 8.7.61 2025-06-20 16:09 -05:00
+    https://lmod.readthedocs.io
+===========================
+step 2
+runSpiderCmd -o spiderT ProjectDIR/rt/unload/mf/Core
+===========================
+===========================
+step 3
+lua ProjectDIR/src/lmod.in.lua shell --regression_testing spider
+===========================
+The following is a list of the modules and extensions currently available:
+  B: B/2.0
+  C: C/1.0
+  D: D/1.0
+  gcc: gcc/4.7.2
+  intel: intel/13.0
+  mpich2: mpich2/1.5.2
+  petsc: petsc/3.2
+To learn more about a package execute:
+   $ module spider Foo
+where "Foo" is the name of a module.
+To find detailed information about a particular package you
+must specify the version if there is more than one version:
+   $ module spider Foo/11.1
+===========================
+step 4
+lua ProjectDIR/src/lmod.in.lua shell --regression_testing load intel
+===========================
+===========================
+step 5
+lua ProjectDIR/src/lmod.in.lua shell --regression_testing load mpich2 petsc
+===========================
+===========================
+step 6
+lua ProjectDIR/src/lmod.in.lua shell --regression_testing avail
+===========================
+ProjectDIR/rt/unload/mf/MPI/intel/13.0/mpich2/1.5
+   petsc/3.2 (L)
+ProjectDIR/rt/unload/mf/Compiler/intel/13.0
+   mpich2/1.5.2 (L)
+ProjectDIR/rt/unload/mf/Core
+   B/2.0    C/1.0    D/1.0    gcc/4.7.2    intel/13.0 (L)
+  Where:
+   L:  Module is loaded
+If the avail list is too long consider trying:
+"module --default avail" or "ml -d av" to just list the default modules.
+"module overview" or "ml ov" to display the number of modules for each name.
+Use "module spider" to find all possible modules and extensions.
+Use "module keyword key1 key2 ..." to search for all possible modules matching any of the "keys".
+===========================
+step 7
+lua ProjectDIR/src/lmod.in.lua shell --regression_testing list
+===========================
+Currently Loaded Modules:
+  1) intel/13.0   2) mpich2/1.5.2   3) petsc/3.2
+===========================
+step 8
+lua ProjectDIR/src/lmod.in.lua shell --regression_testing unload intel
+===========================
+Inactive Modules:
+  1) mpich2     2) petsc
+===========================
+step 9
+lua ProjectDIR/src/lmod.in.lua shell --regression_testing load B
+===========================
+===========================
+step 10
+lua ProjectDIR/src/lmod.in.lua shell --regression_testing unload B
+===========================
+Lmod Warning: (Forced inside modulefile) Error in unload of B/2.0
+While processing the following module(s):
+    Module fullname  Module Filename
+    B/2.0            ProjectDIR/rt/unload/mf/Core/B/2.0.lua
+===========================
+step 11
+lua ProjectDIR/src/lmod.in.lua shell --regression_testing load C
+===========================
+===========================
+step 12
+lua ProjectDIR/src/lmod.in.lua shell --regression_testing unload C
+===========================

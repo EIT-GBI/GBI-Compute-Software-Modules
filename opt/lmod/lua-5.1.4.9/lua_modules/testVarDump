@@ -1,0 +1,15 @@
+#!/usr/bin/env lua
+-- -*- lua -*-
+require("strict")
+require("VarDump")
+function main()
+
+   local foo = { "zero", 1, 2, 3, { 1, {1,2,3,4,{1,2,{1,"cool",2},4},6},3, vardump,5,6},5,{ Mary = 10, Paul = "10"}, "last value"}
+
+   vardump(foo)
+   vardump2(foo)
+
+
+end
+
+main()

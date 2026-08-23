@@ -1,0 +1,5 @@
+name = "eza"
+
+relocate = true
+destination = "{SM_ROOT}/eza"
+modules = "{SM_ROOT}/modules"

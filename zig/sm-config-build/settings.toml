@@ -1,0 +1,36 @@
+[env]
+SOURCE_NAME     = "zig"
+SOURCE_PREFIX   = "https://ziglang.org/download"
+INSTALL_VERSION = "{INSTALL_VERSION}"
+INSTALL_PREFIX  = "{SITE_DESTINATION}/{INSTALL_VERSION_VARIANT}"
+
+# zig hardcodes the LLVM major it will accept (see cmake/Find{llvm,clang,lld}
+# in the zig source) -- 0.16.0 wants 21.x.
+#
+# NOTE the `-compiled` suffix: this must be the SOURCE-built llvm module
+# (`make llvm MODE=build`). The upstream binary release cannot be used here --
+# see install.sh.
+LLVM_VERSION    = "21.1.8-compiled"
+
+# NOTE: kept deliberately low. See install.sh for why this build is memory
+# hungry regardless of -j.
+NPROCS          = 8
+
+[install]
+versions = ["0.16.0"]
+prefix = "{SITE_DESTINATION}"
+format = "{INSTALL_VERSION_VARIANT}$"
+# (optional) relocate after install
+destination = "{SITE_DESTINATION}/{INSTALL_VERSION_VARIANT}"
+stage = true
+
+[module]
+ZIG_PATH = "{INSTALL_DIR}"
+INSTALL_VERSION = "{INSTALL_VERSION}"
+
+[post]
+# toggles mandatory relocate if `stage` and `clean` are true. If the install
+# script already relocates the package, then we can set `safe = false`
+safe = false
+# delete staging aread after successful install
+clean = true

@@ -1,0 +1,653 @@
+===========================
+step 1
+lua ProjectDIR/src/lmod.in.lua shell --regression_testing --version
+===========================
+===========================
+step 2
+lua ProjectDIR/src/lmod.in.lua shell --regression_testing load python
+===========================
+LOADEDMODULES=python/2.7.9;
+export LOADEDMODULES;
+__LMOD_REF_COUNT_MODULEPATH=ProjectDIR/rt/hierarchy/mf/Core:1;
+export __LMOD_REF_COUNT_MODULEPATH;
+MODULEPATH=ProjectDIR/rt/hierarchy/mf/Core;
+export MODULEPATH;
+MY_VERSION=2.7.9;
+export MY_VERSION;
+_LMFILES_=ProjectDIR/rt/hierarchy/mf/Core/python/2.7.9.lua;
+export _LMFILES_;
+_ModuleTable_='_ModuleTable_={MTversion=3,depthT={},family={},mT={python={fn="ProjectDIR/rt/hierarchy/mf/Core/python/2.7.9.lua",fullName="python/2.7.9",loadOrder=1,propT={},stackDepth=0,status="active",userName="python",wV="000000002.000000007.000000009.*zfinal",},},mpathA={"ProjectDIR/rt/hierarchy/mf/Core",},systemBaseMPATH="ProjectDIR/rt/hierarchy/mf/Core",}';
+export _ModuleTable_;
+===========================
+step 3
+lua ProjectDIR/src/lmod.in.lua shell --regression_testing list
+===========================
+MODULEPATH=ProjectDIR/rt/hierarchy/mf/Core;
+export MODULEPATH;
+_ModuleTable_='_ModuleTable_={MTversion=3,depthT={},family={},mT={python={fn="ProjectDIR/rt/hierarchy/mf/Core/python/2.7.9.lua",fullName="python/2.7.9",loadOrder=1,propT={},stackDepth=0,status="active",userName="python",wV="000000002.000000007.000000009.*zfinal",},},mpathA={"ProjectDIR/rt/hierarchy/mf/Core",},systemBaseMPATH="ProjectDIR/rt/hierarchy/mf/Core",}';
+export _ModuleTable_;
+===========================
+step 4
+lua ProjectDIR/src/lmod.in.lua shell --regression_testing load gcc boost
+===========================
+BOOST_VERSION=1.59.0;
+export BOOST_VERSION;
+COMPILER_DEPENDENT=yes;
+export COMPILER_DEPENDENT;
+LMOD_FAMILY_COMPILER=gcc;
+export LMOD_FAMILY_COMPILER;
+LMOD_FAMILY_COMPILER_VERSION=6.1;
+export LMOD_FAMILY_COMPILER_VERSION;
+LOADEDMODULES=gcc/6.1:boost/1.59.0:python/2.7.9;
+export LOADEDMODULES;
+__LMOD_REF_COUNT_MODULEPATH=ProjectDIR/rt/hierarchy/mf/Compiler/gcc/6.1:1\;ProjectDIR/rt/hierarchy/mf/Core:1;
+export __LMOD_REF_COUNT_MODULEPATH;
+MODULEPATH=ProjectDIR/rt/hierarchy/mf/Compiler/gcc/6.1:ProjectDIR/rt/hierarchy/mf/Core;
+export MODULEPATH;
+MY_VERSION=2.7.9;
+export MY_VERSION;
+_LMFILES_=ProjectDIR/rt/hierarchy/mf/Core/gcc/6.1.lua:ProjectDIR/rt/hierarchy/mf/Compiler/gcc/6.1/boost/1.59.0.lua:ProjectDIR/rt/hierarchy/mf/Compiler/gcc/6.1/python/2.7.9.lua;
+export _LMFILES_;
+_ModuleTable_='_ModuleTable_={MTversion=3,depthT={},family={Compiler="gcc",},mT={boost={fn="ProjectDIR/rt/hierarchy/mf/Compiler/gcc/6.1/boost/1.59.0.lua",fullName="boost/1.59.0",loadOrder=2,propT={},stackDepth=0,status="active",userName="boost",wV="000000001.000000059.*zfinal",},gcc={actionA={[[prepend_path("MODULEPATH","ProjectDIR/rt/hierarchy/mf/Compiler/gcc/6.1")]],},fn="ProjectDIR/rt/hierarchy/mf/Core/gcc/6.1.lua",fullName="gcc/6.1",loadOrder=1,propT={},stackDepth=0,status="active",userName="gcc",wV="000000006.000000001.*zfinal",},python={fn="ProjectDIR/rt/hierarchy/mf/Compiler/gcc/6.1/python/2.7.9.lua",fullName="python/2.7.9",loadOrder=3,propT={},stackDepth=0,status="active",userName="python",wV="000000002.000000007.000000009.*zfinal",},},mpathA={"ProjectDIR/rt/hierarchy/mf/Compiler/gcc/6.1","ProjectDIR/rt/hierarchy/mf/Core",},systemBaseMPATH="ProjectDIR/rt/hierarchy/mf/Core",}';
+export _ModuleTable_;
+===========================
+step 5
+lua ProjectDIR/src/lmod.in.lua shell --regression_testing list
+===========================
+MODULEPATH=ProjectDIR/rt/hierarchy/mf/Compiler/gcc/6.1:ProjectDIR/rt/hierarchy/mf/Core;
+export MODULEPATH;
+_ModuleTable_='_ModuleTable_={MTversion=3,depthT={},family={Compiler="gcc",},mT={boost={fn="ProjectDIR/rt/hierarchy/mf/Compiler/gcc/6.1/boost/1.59.0.lua",fullName="boost/1.59.0",loadOrder=2,propT={},stackDepth=0,status="active",userName="boost",wV="000000001.000000059.*zfinal",},gcc={actionA={[[prepend_path("MODULEPATH","ProjectDIR/rt/hierarchy/mf/Compiler/gcc/6.1")]],},fn="ProjectDIR/rt/hierarchy/mf/Core/gcc/6.1.lua",fullName="gcc/6.1",loadOrder=1,propT={},stackDepth=0,status="active",userName="gcc",wV="000000006.000000001.*zfinal",},python={fn="ProjectDIR/rt/hierarchy/mf/Compiler/gcc/6.1/python/2.7.9.lua",fullName="python/2.7.9",loadOrder=3,propT={},stackDepth=0,status="active",userName="python",wV="000000002.000000007.000000009.*zfinal",},},mpathA={"ProjectDIR/rt/hierarchy/mf/Compiler/gcc/6.1","ProjectDIR/rt/hierarchy/mf/Core",},systemBaseMPATH="ProjectDIR/rt/hierarchy/mf/Core",}';
+export _ModuleTable_;
+===========================
+step 6
+lua ProjectDIR/src/lmod.in.lua shell --regression_testing unload gcc
+===========================
+unset BOOST_VERSION;
+unset COMPILER_DEPENDENT;
+unset LMOD_FAMILY_COMPILER;
+unset LMOD_FAMILY_COMPILER_VERSION;
+LOADEDMODULES=python/2.7.9;
+export LOADEDMODULES;
+__LMOD_REF_COUNT_MODULEPATH=ProjectDIR/rt/hierarchy/mf/Core:1;
+export __LMOD_REF_COUNT_MODULEPATH;
+MODULEPATH=ProjectDIR/rt/hierarchy/mf/Core;
+export MODULEPATH;
+MY_VERSION=2.7.9;
+export MY_VERSION;
+_LMFILES_=ProjectDIR/rt/hierarchy/mf/Core/python/2.7.9.lua;
+export _LMFILES_;
+_ModuleTable_='_ModuleTable_={MTversion=3,depthT={},family={},mT={boost={fn="ProjectDIR/rt/hierarchy/mf/Compiler/gcc/6.1/boost/1.59.0.lua",fullName="boost/1.59.0",loadOrder=-1,propT={},stackDepth=0,status="inactive",userName="boost",wV="000000001.000000059.*zfinal",},python={fn="ProjectDIR/rt/hierarchy/mf/Core/python/2.7.9.lua",fullName="python/2.7.9",loadOrder=1,propT={},stackDepth=0,status="active",userName="python",wV="000000002.000000007.000000009.*zfinal",},},mpathA={"ProjectDIR/rt/hierarchy/mf/Core",},systemBaseMPATH="ProjectDIR/rt/hierarchy/mf/Core",}';
+export _ModuleTable_;
+===========================
+step 7
+lua ProjectDIR/src/lmod.in.lua shell --regression_testing list
+===========================
+MODULEPATH=ProjectDIR/rt/hierarchy/mf/Core;
+export MODULEPATH;
+_ModuleTable_='_ModuleTable_={MTversion=3,depthT={},family={},mT={boost={fn="ProjectDIR/rt/hierarchy/mf/Compiler/gcc/6.1/boost/1.59.0.lua",fullName="boost/1.59.0",loadOrder=-1,propT={},stackDepth=0,status="inactive",userName="boost",wV="000000001.000000059.*zfinal",},python={fn="ProjectDIR/rt/hierarchy/mf/Core/python/2.7.9.lua",fullName="python/2.7.9",loadOrder=1,propT={},stackDepth=0,status="active",userName="python",wV="000000002.000000007.000000009.*zfinal",},},mpathA={"ProjectDIR/rt/hierarchy/mf/Core",},systemBaseMPATH="ProjectDIR/rt/hierarchy/mf/Core",}';
+export _ModuleTable_;
+===========================
+step 8
+lua ProjectDIR/src/lmod.in.lua shell --regression_testing unload boost
+===========================
+MODULEPATH=ProjectDIR/rt/hierarchy/mf/Core;
+export MODULEPATH;
+_ModuleTable_='_ModuleTable_={MTversion=3,depthT={},family={},mT={python={fn="ProjectDIR/rt/hierarchy/mf/Core/python/2.7.9.lua",fullName="python/2.7.9",loadOrder=1,propT={},stackDepth=0,status="active",userName="python",wV="000000002.000000007.000000009.*zfinal",},},mpathA={"ProjectDIR/rt/hierarchy/mf/Core",},systemBaseMPATH="ProjectDIR/rt/hierarchy/mf/Core",}';
+export _ModuleTable_;
+===========================
+step 9
+lua ProjectDIR/src/lmod.in.lua shell --regression_testing load gcc impi petsc
+===========================
+COMPILER_DEPENDENT=yes;
+export COMPILER_DEPENDENT;
+__LMOD_REF_COUNT_LD_LIBRARY_PATH=lib/openmpi:1\;lib:1;
+export __LMOD_REF_COUNT_LD_LIBRARY_PATH;
+LD_LIBRARY_PATH=lib/openmpi:lib;
+export LD_LIBRARY_PATH;
+LMOD_FAMILY_COMPILER=gcc;
+export LMOD_FAMILY_COMPILER;
+LMOD_FAMILY_COMPILER_VERSION=6.1;
+export LMOD_FAMILY_COMPILER_VERSION;
+LMOD_FAMILY_MPI=impi;
+export LMOD_FAMILY_MPI;
+LMOD_FAMILY_MPI_VERSION=17.0.3;
+export LMOD_FAMILY_MPI_VERSION;
+LOADEDMODULES=gcc/6.1:impi/17.0.3:petsc/3.7:python/2.7.9;
+export LOADEDMODULES;
+__LMOD_REF_COUNT_MANPATH=/opt/apps/gcc-6_1/impi/17.0.3/man:1;
+export __LMOD_REF_COUNT_MANPATH;
+MANPATH=/opt/apps/gcc-6_1/impi/17.0.3/man;
+export MANPATH;
+__LMOD_REF_COUNT_MODULEPATH=ProjectDIR/rt/hierarchy/mf/MPI/gcc/6.1/impi/17.0:1\;ProjectDIR/rt/hierarchy/mf/Compiler/gcc/6.1:1\;ProjectDIR/rt/hierarchy/mf/Core:1;
+export __LMOD_REF_COUNT_MODULEPATH;
+MODULEPATH=ProjectDIR/rt/hierarchy/mf/MPI/gcc/6.1/impi/17.0:ProjectDIR/rt/hierarchy/mf/Compiler/gcc/6.1:ProjectDIR/rt/hierarchy/mf/Core;
+export MODULEPATH;
+MPICH_HOME=/opt/apps/gcc-6_1/impi/17.0.3;
+export MPICH_HOME;
+MPIHOME=/opt/apps/gcc-6_1/impi/17.0.3;
+export MPIHOME;
+MY_VERSION=2.7.9;
+export MY_VERSION;
+TACC_IMPI_BIN=/opt/apps/gcc-6_1/impi/17.0.3/bin;
+export TACC_IMPI_BIN;
+TACC_IMPI_DIR=/opt/apps/gcc-6_1/impi/17.0.3;
+export TACC_IMPI_DIR;
+TACC_IMPI_INC=/opt/apps/gcc-6_1/impi/17.0.3/include;
+export TACC_IMPI_INC;
+TACC_IMPI_LIB=/opt/apps/gcc-6_1/impi/17.0.3/lib;
+export TACC_IMPI_LIB;
+_LMFILES_=ProjectDIR/rt/hierarchy/mf/Core/gcc/6.1.lua:ProjectDIR/rt/hierarchy/mf/Compiler/gcc/6.1/impi/17.0.3.lua:ProjectDIR/rt/hierarchy/mf/MPI/gcc/6.1/impi/17.0/petsc/3.7.lua:ProjectDIR/rt/hierarchy/mf/Compiler/gcc/6.1/python/2.7.9.lua;
+export _LMFILES_;
+_ModuleTable_='_ModuleTable_={MTversion=3,depthT={},family={Compiler="gcc",MPI="impi",},mT={gcc={actionA={[[prepend_path("MODULEPATH","ProjectDIR/rt/hierarchy/mf/Compiler/gcc/6.1")]],},fn="ProjectDIR/rt/hierarchy/mf/Core/gcc/6.1.lua",fullName="gcc/6.1",loadOrder=1,propT={},stackDepth=0,status="active",userName="gcc",wV="000000006.000000001.*zfinal",},impi={actionA={[[prepend_path("MODULEPATH","ProjectDIR/rt/hierarchy/mf/MPI/gcc/6.1/impi/17.0")]],},fn="ProjectDIR/rt/hierarchy/mf/Compiler/gcc/6.1/impi/17.0.3.lua",fullName="impi/17.0.3",loadOrder=2,propT={},stackDepth=0,status="active",userName="impi",wV="000000017.000000000.000000003.*zfinal",},petsc={fn="ProjectDIR/rt/hierarchy/mf/MPI/gcc/6.1/impi/17.0/petsc/3.7.lua",fullName="petsc/3.7",loadOrder=3,propT={},stackDepth=0,status="active",userName="petsc",wV="000000003.000000007.*zfinal",},python={fn="ProjectDIR/rt/hierarchy/mf/Compiler/gcc/6.1/python/2.7.9.lua",fullName="python/2.7.9",loadOrder=4,propT={},stackDepth=0,status="active",userName="python",wV="000000002.000000007.000000009.*zfinal",},},mpathA={"ProjectDIR/rt/hierarchy/mf/MPI/gcc/6.1/impi/17.0","ProjectDIR/rt/hierarchy/mf/Compiler/gcc/6.1","ProjectDIR/rt/hierarchy/mf/Core",},systemBaseMPATH="ProjectDIR/rt/hierarchy/mf/Core",}';
+export _ModuleTable_;
+===========================
+step 10
+lua ProjectDIR/src/lmod.in.lua shell --regression_testing avail
+===========================
+MODULEPATH=ProjectDIR/rt/hierarchy/mf/MPI/gcc/6.1/impi/17.0:ProjectDIR/rt/hierarchy/mf/Compiler/gcc/6.1:ProjectDIR/rt/hierarchy/mf/Core;
+export MODULEPATH;
+_ModuleTable_='_ModuleTable_={MTversion=3,depthT={},family={Compiler="gcc",MPI="impi",},mT={gcc={actionA={[[prepend_path("MODULEPATH","ProjectDIR/rt/hierarchy/mf/Compiler/gcc/6.1")]],},fn="ProjectDIR/rt/hierarchy/mf/Core/gcc/6.1.lua",fullName="gcc/6.1",loadOrder=1,propT={},stackDepth=0,status="active",userName="gcc",wV="000000006.000000001.*zfinal",},impi={actionA={[[prepend_path("MODULEPATH","ProjectDIR/rt/hierarchy/mf/MPI/gcc/6.1/impi/17.0")]],},fn="ProjectDIR/rt/hierarchy/mf/Compiler/gcc/6.1/impi/17.0.3.lua",fullName="impi/17.0.3",loadOrder=2,propT={},stackDepth=0,status="active",userName="impi",wV="000000017.000000000.000000003.*zfinal",},petsc={fn="ProjectDIR/rt/hierarchy/mf/MPI/gcc/6.1/impi/17.0/petsc/3.7.lua",fullName="petsc/3.7",loadOrder=3,propT={},stackDepth=0,status="active",userName="petsc",wV="000000003.000000007.*zfinal",},python={fn="ProjectDIR/rt/hierarchy/mf/Compiler/gcc/6.1/python/2.7.9.lua",fullName="python/2.7.9",loadOrder=4,propT={},stackDepth=0,status="active",userName="python",wV="000000002.000000007.000000009.*zfinal",},},mpathA={"ProjectDIR/rt/hierarchy/mf/MPI/gcc/6.1/impi/17.0","ProjectDIR/rt/hierarchy/mf/Compiler/gcc/6.1","ProjectDIR/rt/hierarchy/mf/Core",},systemBaseMPATH="ProjectDIR/rt/hierarchy/mf/Core",}';
+export _ModuleTable_;
+===========================
+step 11
+lua ProjectDIR/src/lmod.in.lua shell --regression_testing load intel petsc
+===========================
+unset COMPILER_DEPENDENT;
+LD_LIBRARY_PATH=lib/openmpi:lib;
+export LD_LIBRARY_PATH;
+LMOD_FAMILY_COMPILER=intel;
+export LMOD_FAMILY_COMPILER;
+LMOD_FAMILY_COMPILER_VERSION=17.0.4;
+export LMOD_FAMILY_COMPILER_VERSION;
+LMOD_FAMILY_MPI=impi;
+export LMOD_FAMILY_MPI;
+LMOD_FAMILY_MPI_VERSION=17.0.3;
+export LMOD_FAMILY_MPI_VERSION;
+LOADEDMODULES=intel/17.0.4:python/2.7.9:impi/17.0.3:petsc/3.7;
+export LOADEDMODULES;
+__LMOD_REF_COUNT_MANPATH=/opt/apps/intel-17_0/impi/17.0.3/man:1;
+export __LMOD_REF_COUNT_MANPATH;
+MANPATH=/opt/apps/intel-17_0/impi/17.0.3/man;
+export MANPATH;
+__LMOD_REF_COUNT_MODULEPATH=ProjectDIR/rt/hierarchy/mf/MPI/intel/17.0/impi/17.0:1\;ProjectDIR/rt/hierarchy/mf/Compiler/intel/17.0:1\;ProjectDIR/rt/hierarchy/mf/Core:1;
+export __LMOD_REF_COUNT_MODULEPATH;
+MODULEPATH=ProjectDIR/rt/hierarchy/mf/MPI/intel/17.0/impi/17.0:ProjectDIR/rt/hierarchy/mf/Compiler/intel/17.0:ProjectDIR/rt/hierarchy/mf/Core;
+export MODULEPATH;
+MPICH_HOME=/opt/apps/intel-17_0/impi/17.0.3;
+export MPICH_HOME;
+MPIHOME=/opt/apps/intel-17_0/impi/17.0.3;
+export MPIHOME;
+MY_VERSION=2.7.9;
+export MY_VERSION;
+TACC_IMPI_BIN=/opt/apps/intel-17_0/impi/17.0.3/bin;
+export TACC_IMPI_BIN;
+TACC_IMPI_DIR=/opt/apps/intel-17_0/impi/17.0.3;
+export TACC_IMPI_DIR;
+TACC_IMPI_INC=/opt/apps/intel-17_0/impi/17.0.3/include;
+export TACC_IMPI_INC;
+TACC_IMPI_LIB=/opt/apps/intel-17_0/impi/17.0.3/lib;
+export TACC_IMPI_LIB;
+_LMFILES_=ProjectDIR/rt/hierarchy/mf/Core/intel/17.0.4.lua:ProjectDIR/rt/hierarchy/mf/Core/python/2.7.9.lua:ProjectDIR/rt/hierarchy/mf/Compiler/intel/17.0/impi/17.0.3.lua:ProjectDIR/rt/hierarchy/mf/MPI/intel/17.0/impi/17.0/petsc/3.7.lua;
+export _LMFILES_;
+_ModuleTable_='_ModuleTable_={MTversion=3,depthT={},family={Compiler="intel",MPI="impi",},mT={impi={actionA={[[prepend_path("MODULEPATH","ProjectDIR/rt/hierarchy/mf/MPI/intel/17.0/impi/17.0")]],},fn="ProjectDIR/rt/hierarchy/mf/Compiler/intel/17.0/impi/17.0.3.lua",fullName="impi/17.0.3",loadOrder=3,propT={},stackDepth=0,status="active",userName="impi",wV="000000017.000000000.000000003.*zfinal",},intel={actionA={[[prepend_path("MODULEPATH","ProjectDIR/rt/hierarchy/mf/Compiler/intel/17.0")]],},fn="ProjectDIR/rt/hierarchy/mf/Core/intel/17.0.4.lua",fullName="intel/17.0.4",loadOrder=1,propT={},stackDepth=0,status="active",userName="intel",wV="000000017.000000000.000000004.*zfinal",},petsc={fn="ProjectDIR/rt/hierarchy/mf/MPI/intel/17.0/impi/17.0/petsc/3.7.lua",fullName="petsc/3.7",loadOrder=4,propT={},stackDepth=0,status="active",userName="petsc",wV="000000003.000000007.*zfinal",},python={fn="ProjectDIR/rt/hierarchy/mf/Core/python/2.7.9.lua",fullName="python/2.7.9",loadOrder=2,propT={},stackDepth=0,status="active",userName="python",wV="000000002.000000007.000000009.*zfinal",},},mpathA={"ProjectDIR/rt/hierarchy/mf/MPI/intel/17.0/impi/17.0","ProjectDIR/rt/hierarchy/mf/Compiler/intel/17.0","ProjectDIR/rt/hierarchy/mf/Core",},systemBaseMPATH="ProjectDIR/rt/hierarchy/mf/Core",}';
+export _ModuleTable_;
+===========================
+step 12
+lua ProjectDIR/src/lmod.in.lua shell --regression_testing avail
+===========================
+MODULEPATH=ProjectDIR/rt/hierarchy/mf/MPI/intel/17.0/impi/17.0:ProjectDIR/rt/hierarchy/mf/Compiler/intel/17.0:ProjectDIR/rt/hierarchy/mf/Core;
+export MODULEPATH;
+_ModuleTable_='_ModuleTable_={MTversion=3,depthT={},family={Compiler="intel",MPI="impi",},mT={impi={actionA={[[prepend_path("MODULEPATH","ProjectDIR/rt/hierarchy/mf/MPI/intel/17.0/impi/17.0")]],},fn="ProjectDIR/rt/hierarchy/mf/Compiler/intel/17.0/impi/17.0.3.lua",fullName="impi/17.0.3",loadOrder=3,propT={},stackDepth=0,status="active",userName="impi",wV="000000017.000000000.000000003.*zfinal",},intel={actionA={[[prepend_path("MODULEPATH","ProjectDIR/rt/hierarchy/mf/Compiler/intel/17.0")]],},fn="ProjectDIR/rt/hierarchy/mf/Core/intel/17.0.4.lua",fullName="intel/17.0.4",loadOrder=1,propT={},stackDepth=0,status="active",userName="intel",wV="000000017.000000000.000000004.*zfinal",},petsc={fn="ProjectDIR/rt/hierarchy/mf/MPI/intel/17.0/impi/17.0/petsc/3.7.lua",fullName="petsc/3.7",loadOrder=4,propT={},stackDepth=0,status="active",userName="petsc",wV="000000003.000000007.*zfinal",},python={fn="ProjectDIR/rt/hierarchy/mf/Core/python/2.7.9.lua",fullName="python/2.7.9",loadOrder=2,propT={},stackDepth=0,status="active",userName="python",wV="000000002.000000007.000000009.*zfinal",},},mpathA={"ProjectDIR/rt/hierarchy/mf/MPI/intel/17.0/impi/17.0","ProjectDIR/rt/hierarchy/mf/Compiler/intel/17.0","ProjectDIR/rt/hierarchy/mf/Core",},systemBaseMPATH="ProjectDIR/rt/hierarchy/mf/Core",}';
+export _ModuleTable_;
+===========================
+step 13
+lua ProjectDIR/src/lmod.in.lua shell --regression_testing purge
+===========================
+unset __LMOD_REF_COUNT_LD_LIBRARY_PATH;
+unset LD_LIBRARY_PATH;
+unset LMOD_FAMILY_COMPILER;
+unset LMOD_FAMILY_COMPILER_VERSION;
+unset LMOD_FAMILY_MPI;
+unset LMOD_FAMILY_MPI_VERSION;
+unset LOADEDMODULES;
+unset __LMOD_REF_COUNT_MANPATH;
+unset MANPATH;
+__LMOD_REF_COUNT_MODULEPATH=ProjectDIR/rt/hierarchy/mf/Core:1;
+export __LMOD_REF_COUNT_MODULEPATH;
+MODULEPATH=ProjectDIR/rt/hierarchy/mf/Core;
+export MODULEPATH;
+unset MPICH_HOME;
+unset MPIHOME;
+unset MY_VERSION;
+unset TACC_IMPI_BIN;
+unset TACC_IMPI_DIR;
+unset TACC_IMPI_INC;
+unset TACC_IMPI_LIB;
+unset _LMFILES_;
+_ModuleTable_='_ModuleTable_={MTversion=3,depthT={},family={},mT={},mpathA={"ProjectDIR/rt/hierarchy/mf/Core",},systemBaseMPATH="ProjectDIR/rt/hierarchy/mf/Core",}';
+export _ModuleTable_;
+===========================
+step 14
+lua ProjectDIR/src/lmod.in.lua shell --regression_testing load gcc impi petsc
+===========================
+__LMOD_REF_COUNT_LD_LIBRARY_PATH=lib/openmpi:1\;lib:1;
+export __LMOD_REF_COUNT_LD_LIBRARY_PATH;
+LD_LIBRARY_PATH=lib/openmpi:lib;
+export LD_LIBRARY_PATH;
+LMOD_FAMILY_COMPILER=gcc;
+export LMOD_FAMILY_COMPILER;
+LMOD_FAMILY_COMPILER_VERSION=6.1;
+export LMOD_FAMILY_COMPILER_VERSION;
+LMOD_FAMILY_MPI=impi;
+export LMOD_FAMILY_MPI;
+LMOD_FAMILY_MPI_VERSION=17.0.3;
+export LMOD_FAMILY_MPI_VERSION;
+LOADEDMODULES=gcc/6.1:impi/17.0.3:petsc/3.7;
+export LOADEDMODULES;
+__LMOD_REF_COUNT_MANPATH=/opt/apps/gcc-6_1/impi/17.0.3/man:1;
+export __LMOD_REF_COUNT_MANPATH;
+MANPATH=/opt/apps/gcc-6_1/impi/17.0.3/man;
+export MANPATH;
+__LMOD_REF_COUNT_MODULEPATH=ProjectDIR/rt/hierarchy/mf/MPI/gcc/6.1/impi/17.0:1\;ProjectDIR/rt/hierarchy/mf/Compiler/gcc/6.1:1\;ProjectDIR/rt/hierarchy/mf/Core:1;
+export __LMOD_REF_COUNT_MODULEPATH;
+MODULEPATH=ProjectDIR/rt/hierarchy/mf/MPI/gcc/6.1/impi/17.0:ProjectDIR/rt/hierarchy/mf/Compiler/gcc/6.1:ProjectDIR/rt/hierarchy/mf/Core;
+export MODULEPATH;
+MPICH_HOME=/opt/apps/gcc-6_1/impi/17.0.3;
+export MPICH_HOME;
+MPIHOME=/opt/apps/gcc-6_1/impi/17.0.3;
+export MPIHOME;
+TACC_IMPI_BIN=/opt/apps/gcc-6_1/impi/17.0.3/bin;
+export TACC_IMPI_BIN;
+TACC_IMPI_DIR=/opt/apps/gcc-6_1/impi/17.0.3;
+export TACC_IMPI_DIR;
+TACC_IMPI_INC=/opt/apps/gcc-6_1/impi/17.0.3/include;
+export TACC_IMPI_INC;
+TACC_IMPI_LIB=/opt/apps/gcc-6_1/impi/17.0.3/lib;
+export TACC_IMPI_LIB;
+_LMFILES_=ProjectDIR/rt/hierarchy/mf/Core/gcc/6.1.lua:ProjectDIR/rt/hierarchy/mf/Compiler/gcc/6.1/impi/17.0.3.lua:ProjectDIR/rt/hierarchy/mf/MPI/gcc/6.1/impi/17.0/petsc/3.7.lua;
+export _LMFILES_;
+_ModuleTable_='_ModuleTable_={MTversion=3,depthT={},family={Compiler="gcc",MPI="impi",},mT={gcc={actionA={[[prepend_path("MODULEPATH","ProjectDIR/rt/hierarchy/mf/Compiler/gcc/6.1")]],},fn="ProjectDIR/rt/hierarchy/mf/Core/gcc/6.1.lua",fullName="gcc/6.1",loadOrder=1,propT={},stackDepth=0,status="active",userName="gcc",wV="000000006.000000001.*zfinal",},impi={actionA={[[prepend_path("MODULEPATH","ProjectDIR/rt/hierarchy/mf/MPI/gcc/6.1/impi/17.0")]],},fn="ProjectDIR/rt/hierarchy/mf/Compiler/gcc/6.1/impi/17.0.3.lua",fullName="impi/17.0.3",loadOrder=2,propT={},stackDepth=0,status="active",userName="impi",wV="000000017.000000000.000000003.*zfinal",},petsc={fn="ProjectDIR/rt/hierarchy/mf/MPI/gcc/6.1/impi/17.0/petsc/3.7.lua",fullName="petsc/3.7",loadOrder=3,propT={},stackDepth=0,status="active",userName="petsc",wV="000000003.000000007.*zfinal",},},mpathA={"ProjectDIR/rt/hierarchy/mf/MPI/gcc/6.1/impi/17.0","ProjectDIR/rt/hierarchy/mf/Compiler/gcc/6.1","ProjectDIR/rt/hierarchy/mf/Core",},systemBaseMPATH="ProjectDIR/rt/hierarchy/mf/Core",}';
+export _ModuleTable_;
+===========================
+step 15
+lua ProjectDIR/src/lmod.in.lua shell --regression_testing -T rm impi gcc
+===========================
+unset __LMOD_REF_COUNT_LD_LIBRARY_PATH;
+unset LD_LIBRARY_PATH;
+unset LMOD_FAMILY_COMPILER;
+unset LMOD_FAMILY_COMPILER_VERSION;
+unset LMOD_FAMILY_MPI;
+unset LMOD_FAMILY_MPI_VERSION;
+unset LOADEDMODULES;
+unset __LMOD_REF_COUNT_MANPATH;
+unset MANPATH;
+__LMOD_REF_COUNT_MODULEPATH=ProjectDIR/rt/hierarchy/mf/Core:1;
+export __LMOD_REF_COUNT_MODULEPATH;
+MODULEPATH=ProjectDIR/rt/hierarchy/mf/Core;
+export MODULEPATH;
+unset MPICH_HOME;
+unset MPIHOME;
+unset TACC_IMPI_BIN;
+unset TACC_IMPI_DIR;
+unset TACC_IMPI_INC;
+unset TACC_IMPI_LIB;
+unset _LMFILES_;
+_ModuleTable_='_ModuleTable_={MTversion=3,depthT={},family={},mT={petsc={fn="ProjectDIR/rt/hierarchy/mf/MPI/gcc/6.1/impi/17.0/petsc/3.7.lua",fullName="petsc/3.7",loadOrder=-1,propT={},stackDepth=0,status="inactive",userName="petsc",wV="000000003.000000007.*zfinal",},},mpathA={"ProjectDIR/rt/hierarchy/mf/Core",},systemBaseMPATH="ProjectDIR/rt/hierarchy/mf/Core",}';
+export _ModuleTable_;
+===========================
+step 16
+lua ProjectDIR/src/lmod.in.lua shell --regression_testing list
+===========================
+MODULEPATH=ProjectDIR/rt/hierarchy/mf/Core;
+export MODULEPATH;
+_ModuleTable_='_ModuleTable_={MTversion=3,depthT={},family={},mT={petsc={fn="ProjectDIR/rt/hierarchy/mf/MPI/gcc/6.1/impi/17.0/petsc/3.7.lua",fullName="petsc/3.7",loadOrder=-1,propT={},stackDepth=0,status="inactive",userName="petsc",wV="000000003.000000007.*zfinal",},},mpathA={"ProjectDIR/rt/hierarchy/mf/Core",},systemBaseMPATH="ProjectDIR/rt/hierarchy/mf/Core",}';
+export _ModuleTable_;
+===========================
+step 17
+lua ProjectDIR/src/lmod.in.lua shell --regression_testing purge
+===========================
+MODULEPATH=ProjectDIR/rt/hierarchy/mf/Core;
+export MODULEPATH;
+_ModuleTable_='_ModuleTable_={MTversion=3,depthT={},family={},mT={},mpathA={"ProjectDIR/rt/hierarchy/mf/Core",},systemBaseMPATH="ProjectDIR/rt/hierarchy/mf/Core",}';
+export _ModuleTable_;
+===========================
+step 18
+lua ProjectDIR/src/lmod.in.lua shell --regression_testing load gcc impi petsc
+===========================
+__LMOD_REF_COUNT_LD_LIBRARY_PATH=lib/openmpi:1\;lib:1;
+export __LMOD_REF_COUNT_LD_LIBRARY_PATH;
+LD_LIBRARY_PATH=lib/openmpi:lib;
+export LD_LIBRARY_PATH;
+LMOD_FAMILY_COMPILER=gcc;
+export LMOD_FAMILY_COMPILER;
+LMOD_FAMILY_COMPILER_VERSION=6.1;
+export LMOD_FAMILY_COMPILER_VERSION;
+LMOD_FAMILY_MPI=impi;
+export LMOD_FAMILY_MPI;
+LMOD_FAMILY_MPI_VERSION=17.0.3;
+export LMOD_FAMILY_MPI_VERSION;
+LOADEDMODULES=gcc/6.1:impi/17.0.3:petsc/3.7;
+export LOADEDMODULES;
+__LMOD_REF_COUNT_MANPATH=/opt/apps/gcc-6_1/impi/17.0.3/man:1;
+export __LMOD_REF_COUNT_MANPATH;
+MANPATH=/opt/apps/gcc-6_1/impi/17.0.3/man;
+export MANPATH;
+__LMOD_REF_COUNT_MODULEPATH=ProjectDIR/rt/hierarchy/mf/MPI/gcc/6.1/impi/17.0:1\;ProjectDIR/rt/hierarchy/mf/Compiler/gcc/6.1:1\;ProjectDIR/rt/hierarchy/mf/Core:1;
+export __LMOD_REF_COUNT_MODULEPATH;
+MODULEPATH=ProjectDIR/rt/hierarchy/mf/MPI/gcc/6.1/impi/17.0:ProjectDIR/rt/hierarchy/mf/Compiler/gcc/6.1:ProjectDIR/rt/hierarchy/mf/Core;
+export MODULEPATH;
+MPICH_HOME=/opt/apps/gcc-6_1/impi/17.0.3;
+export MPICH_HOME;
+MPIHOME=/opt/apps/gcc-6_1/impi/17.0.3;
+export MPIHOME;
+TACC_IMPI_BIN=/opt/apps/gcc-6_1/impi/17.0.3/bin;
+export TACC_IMPI_BIN;
+TACC_IMPI_DIR=/opt/apps/gcc-6_1/impi/17.0.3;
+export TACC_IMPI_DIR;
+TACC_IMPI_INC=/opt/apps/gcc-6_1/impi/17.0.3/include;
+export TACC_IMPI_INC;
+TACC_IMPI_LIB=/opt/apps/gcc-6_1/impi/17.0.3/lib;
+export TACC_IMPI_LIB;
+_LMFILES_=ProjectDIR/rt/hierarchy/mf/Core/gcc/6.1.lua:ProjectDIR/rt/hierarchy/mf/Compiler/gcc/6.1/impi/17.0.3.lua:ProjectDIR/rt/hierarchy/mf/MPI/gcc/6.1/impi/17.0/petsc/3.7.lua;
+export _LMFILES_;
+_ModuleTable_='_ModuleTable_={MTversion=3,depthT={},family={Compiler="gcc",MPI="impi",},mT={gcc={actionA={[[prepend_path("MODULEPATH","ProjectDIR/rt/hierarchy/mf/Compiler/gcc/6.1")]],},fn="ProjectDIR/rt/hierarchy/mf/Core/gcc/6.1.lua",fullName="gcc/6.1",loadOrder=1,propT={},stackDepth=0,status="active",userName="gcc",wV="000000006.000000001.*zfinal",},impi={actionA={[[prepend_path("MODULEPATH","ProjectDIR/rt/hierarchy/mf/MPI/gcc/6.1/impi/17.0")]],},fn="ProjectDIR/rt/hierarchy/mf/Compiler/gcc/6.1/impi/17.0.3.lua",fullName="impi/17.0.3",loadOrder=2,propT={},stackDepth=0,status="active",userName="impi",wV="000000017.000000000.000000003.*zfinal",},petsc={fn="ProjectDIR/rt/hierarchy/mf/MPI/gcc/6.1/impi/17.0/petsc/3.7.lua",fullName="petsc/3.7",loadOrder=3,propT={},stackDepth=0,status="active",userName="petsc",wV="000000003.000000007.*zfinal",},},mpathA={"ProjectDIR/rt/hierarchy/mf/MPI/gcc/6.1/impi/17.0","ProjectDIR/rt/hierarchy/mf/Compiler/gcc/6.1","ProjectDIR/rt/hierarchy/mf/Core",},systemBaseMPATH="ProjectDIR/rt/hierarchy/mf/Core",}';
+export _ModuleTable_;
+===========================
+step 19
+lua ProjectDIR/src/lmod.in.lua shell --regression_testing -T rm gcc impi
+===========================
+unset __LMOD_REF_COUNT_LD_LIBRARY_PATH;
+unset LD_LIBRARY_PATH;
+unset LMOD_FAMILY_COMPILER;
+unset LMOD_FAMILY_COMPILER_VERSION;
+unset LMOD_FAMILY_MPI;
+unset LMOD_FAMILY_MPI_VERSION;
+unset LOADEDMODULES;
+unset __LMOD_REF_COUNT_MANPATH;
+unset MANPATH;
+__LMOD_REF_COUNT_MODULEPATH=ProjectDIR/rt/hierarchy/mf/Core:1;
+export __LMOD_REF_COUNT_MODULEPATH;
+MODULEPATH=ProjectDIR/rt/hierarchy/mf/Core;
+export MODULEPATH;
+unset MPICH_HOME;
+unset MPIHOME;
+unset TACC_IMPI_BIN;
+unset TACC_IMPI_DIR;
+unset TACC_IMPI_INC;
+unset TACC_IMPI_LIB;
+unset _LMFILES_;
+_ModuleTable_='_ModuleTable_={MTversion=3,depthT={},family={},mT={petsc={fn="ProjectDIR/rt/hierarchy/mf/MPI/gcc/6.1/impi/17.0/petsc/3.7.lua",fullName="petsc/3.7",loadOrder=-1,propT={},stackDepth=0,status="inactive",userName="petsc",wV="000000003.000000007.*zfinal",},},mpathA={"ProjectDIR/rt/hierarchy/mf/Core",},systemBaseMPATH="ProjectDIR/rt/hierarchy/mf/Core",}';
+export _ModuleTable_;
+===========================
+step 20
+lua ProjectDIR/src/lmod.in.lua shell --regression_testing list
+===========================
+MODULEPATH=ProjectDIR/rt/hierarchy/mf/Core;
+export MODULEPATH;
+_ModuleTable_='_ModuleTable_={MTversion=3,depthT={},family={},mT={petsc={fn="ProjectDIR/rt/hierarchy/mf/MPI/gcc/6.1/impi/17.0/petsc/3.7.lua",fullName="petsc/3.7",loadOrder=-1,propT={},stackDepth=0,status="inactive",userName="petsc",wV="000000003.000000007.*zfinal",},},mpathA={"ProjectDIR/rt/hierarchy/mf/Core",},systemBaseMPATH="ProjectDIR/rt/hierarchy/mf/Core",}';
+export _ModuleTable_;
+===========================
+step 21
+lua ProjectDIR/src/lmod.in.lua shell --regression_testing purge
+===========================
+MODULEPATH=ProjectDIR/rt/hierarchy/mf/Core;
+export MODULEPATH;
+_ModuleTable_='_ModuleTable_={MTversion=3,depthT={},family={},mT={},mpathA={"ProjectDIR/rt/hierarchy/mf/Core",},systemBaseMPATH="ProjectDIR/rt/hierarchy/mf/Core",}';
+export _ModuleTable_;
+===========================
+step 22
+lua ProjectDIR/src/lmod.in.lua shell --regression_testing load Default
+===========================
+LOADEDMODULES=moduleA:moduleB:Default;
+export LOADEDMODULES;
+__LMOD_REF_COUNT_MODULEPATH=ProjectDIR/rt/hierarchy/mf2/Compiler:1\;ProjectDIR/rt/hierarchy/mf2/Core:1;
+export __LMOD_REF_COUNT_MODULEPATH;
+MODULEPATH=ProjectDIR/rt/hierarchy/mf2/Compiler:ProjectDIR/rt/hierarchy/mf2/Core;
+export MODULEPATH;
+MY_NAME=moduleB;
+export MY_NAME;
+_LMFILES_=ProjectDIR/rt/hierarchy/mf2/Core/moduleA.lua:ProjectDIR/rt/hierarchy/mf2/Compiler/moduleB.lua:ProjectDIR/rt/hierarchy/mf2/Core/Default.lua;
+export _LMFILES_;
+_ModuleTable_='_ModuleTable_={MTversion=3,depthT={},family={},mT={Default={fn="ProjectDIR/rt/hierarchy/mf2/Core/Default.lua",fullName="Default",loadOrder=3,propT={},stackDepth=0,status="active",userName="Default",wV="M.*zfinal",},moduleA={actionA={[[prepend_path("MODULEPATH","ProjectDIR/rt/hierarchy/mf2/Compiler")]],},fn="ProjectDIR/rt/hierarchy/mf2/Core/moduleA.lua",fullName="moduleA",loadOrder=1,propT={},stackDepth=1,status="active",userName="moduleA",wV="M.*zfinal",},moduleB={fn="ProjectDIR/rt/hierarchy/mf2/Compiler/moduleB.lua",fullName="moduleB",loadOrder=2,propT={},stackDepth=1,status="active",userName="moduleB",wV="M.*zfinal",},},mpathA={"ProjectDIR/rt/hierarchy/mf2/Compiler","ProjectDIR/rt/hierarchy/mf2/Core",},systemBaseMPATH="ProjectDIR/rt/hierarchy/mf2/Core",}';
+export _ModuleTable_;
+===========================
+step 23
+lua ProjectDIR/src/lmod.in.lua shell --regression_testing list
+===========================
+MODULEPATH=ProjectDIR/rt/hierarchy/mf2/Compiler:ProjectDIR/rt/hierarchy/mf2/Core;
+export MODULEPATH;
+_ModuleTable_='_ModuleTable_={MTversion=3,depthT={},family={},mT={Default={fn="ProjectDIR/rt/hierarchy/mf2/Core/Default.lua",fullName="Default",loadOrder=3,propT={},stackDepth=0,status="active",userName="Default",wV="M.*zfinal",},moduleA={actionA={[[prepend_path("MODULEPATH","ProjectDIR/rt/hierarchy/mf2/Compiler")]],},fn="ProjectDIR/rt/hierarchy/mf2/Core/moduleA.lua",fullName="moduleA",loadOrder=1,propT={},stackDepth=1,status="active",userName="moduleA",wV="M.*zfinal",},moduleB={fn="ProjectDIR/rt/hierarchy/mf2/Compiler/moduleB.lua",fullName="moduleB",loadOrder=2,propT={},stackDepth=1,status="active",userName="moduleB",wV="M.*zfinal",},},mpathA={"ProjectDIR/rt/hierarchy/mf2/Compiler","ProjectDIR/rt/hierarchy/mf2/Core",},systemBaseMPATH="ProjectDIR/rt/hierarchy/mf2/Core",}';
+export _ModuleTable_;
+===========================
+step 24
+lua ProjectDIR/src/lmod.in.lua shell --regression_testing purge
+===========================
+unset LOADEDMODULES;
+__LMOD_REF_COUNT_MODULEPATH=ProjectDIR/rt/hierarchy/mf2/Core:1;
+export __LMOD_REF_COUNT_MODULEPATH;
+MODULEPATH=ProjectDIR/rt/hierarchy/mf2/Core;
+export MODULEPATH;
+unset MY_NAME;
+unset _LMFILES_;
+_ModuleTable_='_ModuleTable_={MTversion=3,depthT={},family={},mT={},mpathA={"ProjectDIR/rt/hierarchy/mf2/Core",},systemBaseMPATH="ProjectDIR/rt/hierarchy/mf2/Core",}';
+export _ModuleTable_;
+===========================
+step 25
+lua ProjectDIR/src/lmod.in.lua shell --regression_testing load gcc/10 boost
+===========================
+LOADEDMODULES=gcc/10.0:boost/1.9;
+export LOADEDMODULES;
+__LMOD_REF_COUNT_MODULEPATH=ProjectDIR/rt/hierarchy/mf3/Compiler/gcc/10:1\;ProjectDIR/rt/hierarchy/mf3/Core:1;
+export __LMOD_REF_COUNT_MODULEPATH;
+MODULEPATH=ProjectDIR/rt/hierarchy/mf3/Compiler/gcc/10:ProjectDIR/rt/hierarchy/mf3/Core;
+export MODULEPATH;
+VERSION=1.9;
+export VERSION;
+_LMFILES_=ProjectDIR/rt/hierarchy/mf3/Core/gcc/10.0.lua:ProjectDIR/rt/hierarchy/mf3/Compiler/gcc/10/boost/1.9.lua;
+export _LMFILES_;
+_ModuleTable_='_ModuleTable_={MTversion=3,depthT={},family={},mT={boost={fn="ProjectDIR/rt/hierarchy/mf3/Compiler/gcc/10/boost/1.9.lua",fullName="boost/1.9",loadOrder=2,propT={},stackDepth=0,status="active",userName="boost",wV="000000001.000000009.*zfinal",},gcc={actionA={[[prepend_path("MODULEPATH","ProjectDIR/rt/hierarchy/mf3/Compiler/gcc/10")]],},fn="ProjectDIR/rt/hierarchy/mf3/Core/gcc/10.0.lua",fullName="gcc/10.0",loadOrder=1,propT={},stackDepth=0,status="active",userName="gcc/10.0",wV="000000010.*zfinal",},},mpathA={"ProjectDIR/rt/hierarchy/mf3/Compiler/gcc/10","ProjectDIR/rt/hierarchy/mf3/Core",},systemBaseMPATH="ProjectDIR/rt/hierarchy/mf3/Core",}';
+export _ModuleTable_;
+===========================
+step 26
+lua ProjectDIR/src/lmod.in.lua shell --regression_testing load gcc/11 boost
+===========================
+false
+===========================
+step 27
+lua ProjectDIR/src/lmod.in.lua shell --regression_testing list
+===========================
+MODULEPATH=ProjectDIR/rt/hierarchy/mf3/Compiler/gcc/10:ProjectDIR/rt/hierarchy/mf3/Core;
+export MODULEPATH;
+_ModuleTable_='_ModuleTable_={MTversion=3,depthT={},family={},mT={boost={fn="ProjectDIR/rt/hierarchy/mf3/Compiler/gcc/10/boost/1.9.lua",fullName="boost/1.9",loadOrder=2,propT={},stackDepth=0,status="active",userName="boost",wV="000000001.000000009.*zfinal",},gcc={actionA={[[prepend_path("MODULEPATH","ProjectDIR/rt/hierarchy/mf3/Compiler/gcc/10")]],},fn="ProjectDIR/rt/hierarchy/mf3/Core/gcc/10.0.lua",fullName="gcc/10.0",loadOrder=1,propT={},stackDepth=0,status="active",userName="gcc/10.0",wV="000000010.*zfinal",},},mpathA={"ProjectDIR/rt/hierarchy/mf3/Compiler/gcc/10","ProjectDIR/rt/hierarchy/mf3/Core",},systemBaseMPATH="ProjectDIR/rt/hierarchy/mf3/Core",}';
+export _ModuleTable_;
+===========================
+step 28
+lua ProjectDIR/src/lmod.in.lua shell --regression_testing purge
+===========================
+unset LOADEDMODULES;
+__LMOD_REF_COUNT_MODULEPATH=ProjectDIR/rt/hierarchy/mf3/Core:1;
+export __LMOD_REF_COUNT_MODULEPATH;
+MODULEPATH=ProjectDIR/rt/hierarchy/mf3/Core;
+export MODULEPATH;
+unset VERSION;
+unset _LMFILES_;
+_ModuleTable_='_ModuleTable_={MTversion=3,depthT={},family={},mT={},mpathA={"ProjectDIR/rt/hierarchy/mf3/Core",},systemBaseMPATH="ProjectDIR/rt/hierarchy/mf3/Core",}';
+export _ModuleTable_;
+===========================
+step 29
+lua ProjectDIR/src/lmod.in.lua shell --regression_testing load meta/10 gcc/10 CMake
+===========================
+__LMOD_REF_COUNT_CMAKE_LIBRARY_PATH=/software/rome/r25.06/OpenSSL/3/lib64:1;
+export __LMOD_REF_COUNT_CMAKE_LIBRARY_PATH;
+CMAKE_LIBRARY_PATH=/software/rome/r25.06/OpenSSL/3/lib64;
+export CMAKE_LIBRARY_PATH;
+__LMOD_REF_COUNT_CMAKE_PREFIX_PATH=/software/rome/r25.06/OpenSSL/3:1;
+export __LMOD_REF_COUNT_CMAKE_PREFIX_PATH;
+CMAKE_PREFIX_PATH=/software/rome/r25.06/OpenSSL/3;
+export CMAKE_PREFIX_PATH;
+__LMOD_REF_COUNT_CPATH=/software/rome/r25.06/OpenSSL/3/include:1;
+export __LMOD_REF_COUNT_CPATH;
+CPATH=/software/rome/r25.06/OpenSSL/3/include;
+export CPATH;
+EBDEVELOPENSSL=/software/rome/r25.06/OpenSSL/3/easybuild/Core-OpenSSL-3-easybuild-devel;
+export EBDEVELOPENSSL;
+EBROOTOPENSSL=/software/rome/r25.06/OpenSSL/3;
+export EBROOTOPENSSL;
+EBVERSIONOPENSSL=3;
+export EBVERSIONOPENSSL;
+EBVERSIONZLIB=1.3.1;
+export EBVERSIONZLIB;
+__LMOD_REF_COUNT_LD_LIBRARY_PATH=/software/rome/r25.06/OpenSSL/3/lib64:1;
+export __LMOD_REF_COUNT_LD_LIBRARY_PATH;
+LD_LIBRARY_PATH=/software/rome/r25.06/OpenSSL/3/lib64;
+export LD_LIBRARY_PATH;
+__LMOD_REF_COUNT_LIBRARY_PATH=/software/rome/r25.06/OpenSSL/3/lib64:1;
+export __LMOD_REF_COUNT_LIBRARY_PATH;
+LIBRARY_PATH=/software/rome/r25.06/OpenSSL/3/lib64;
+export LIBRARY_PATH;
+LOADEDMODULES=meta/10.0:gcc/10.0:OpenSSL/3:zlib/1.3.1:CMake/3.29.3;
+export LOADEDMODULES;
+__LMOD_REF_COUNT_MANPATH=/software/rome/r25.06/OpenSSL/3/share/man:1;
+export __LMOD_REF_COUNT_MANPATH;
+MANPATH=/software/rome/r25.06/OpenSSL/3/share/man;
+export MANPATH;
+__LMOD_REF_COUNT_MODULEPATH=ProjectDIR/rt/hierarchy/mf4/Compiler/gcc/10:1\;ProjectDIR/rt/hierarchy/mf4/Core:1\;ProjectDIR/rt/hierarchy/mf4/base:1;
+export __LMOD_REF_COUNT_MODULEPATH;
+MODULEPATH=ProjectDIR/rt/hierarchy/mf4/Compiler/gcc/10:ProjectDIR/rt/hierarchy/mf4/Core:ProjectDIR/rt/hierarchy/mf4/base;
+export MODULEPATH;
+__LMOD_REF_COUNT_PATH=/software/rome/r25.06/OpenSSL/3/bin:1\;ProjectDIR/proj_mgmt:1\;PATH_to_TM:1;
+export __LMOD_REF_COUNT_PATH;
+PATH=/software/rome/r25.06/OpenSSL/3/bin:ProjectDIR/proj_mgmt:PATH_to_TM;
+export PATH;
+__LMOD_REF_COUNT_PKG_CONFIG_PATH=/software/rome/r25.06/OpenSSL/3/lib64/pkgconfig:1;
+export __LMOD_REF_COUNT_PKG_CONFIG_PATH;
+PKG_CONFIG_PATH=/software/rome/r25.06/OpenSSL/3/lib64/pkgconfig;
+export PKG_CONFIG_PATH;
+__LMOD_REF_COUNT_XDG_DATA_DIRS=/software/rome/r25.06/OpenSSL/3/share:1;
+export __LMOD_REF_COUNT_XDG_DATA_DIRS;
+XDG_DATA_DIRS=/software/rome/r25.06/OpenSSL/3/share;
+export XDG_DATA_DIRS;
+_LMFILES_=ProjectDIR/rt/hierarchy/mf4/base/meta/10.0.lua:ProjectDIR/rt/hierarchy/mf4/Core/gcc/10.0.lua:ProjectDIR/rt/hierarchy/mf4/Core/OpenSSL/3.lua:ProjectDIR/rt/hierarchy/mf4/Compiler/gcc/10/zlib/1.3.1.lua:ProjectDIR/rt/hierarchy/mf4/Compiler/gcc/10/CMake/3.29.3.lua;
+export _LMFILES_;
+_ModuleTable_='_ModuleTable_={MTversion=3,depthT={},family={},mT={CMake={depT={depA={{sn="zlib",version={kind="fixed",value="1.3.1",},},},},fn="ProjectDIR/rt/hierarchy/mf4/Compiler/gcc/10/CMake/3.29.3.lua",fullName="CMake/3.29.3",loadOrder=5,propT={},stackDepth=0,status="active",userName="CMake",wV="000000003.000000029.000000003.*zfinal",},OpenSSL={fn="ProjectDIR/rt/hierarchy/mf4/Core/OpenSSL/3.lua",fullName="OpenSSL/3",loadOrder=3,propT={},ref_count=1,stackDepth=2,status="active",userName="OpenSSL/3",wV="000000003.*zfinal",},gcc={actionA={[[prepend_path("MODULEPATH","ProjectDIR/rt/hierarchy/mf4/Compiler/gcc/10")]],},fn="ProjectDIR/rt/hierarchy/mf4/Core/gcc/10.0.lua",fullName="gcc/10.0",loadOrder=2,propT={},stackDepth=0,status="active",userName="gcc/10.0",wV="000000010.*zfinal",},meta={actionA={[[prepend_path("MODULEPATH","ProjectDIR/rt/hierarchy/mf4/Core")]],},fn="ProjectDIR/rt/hierarchy/mf4/base/meta/10.0.lua",fullName="meta/10.0",loadOrder=1,propT={},stackDepth=0,status="active",userName="meta/10.0",wV="000000010.*zfinal",},zlib={depT={depA={{sn="OpenSSL",version={kind="fixed",value="3",},},},},fn="ProjectDIR/rt/hierarchy/mf4/Compiler/gcc/10/zlib/1.3.1.lua",fullName="zlib/1.3.1",loadOrder=4,propT={},ref_count=1,stackDepth=1,status="active",userName="zlib/1.3.1",wV="000000001.000000003.000000001.*zfinal",},},mpathA={"ProjectDIR/rt/hierarchy/mf4/Compiler/gcc/10","ProjectDIR/rt/hierarchy/mf4/Core","ProjectDIR/rt/hierarchy/mf4/base",},systemBaseMPATH="ProjectDIR/rt/hierarchy/mf4/base",}';
+export _ModuleTable_;
+===========================
+step 30
+lua ProjectDIR/src/lmod.in.lua shell --regression_testing list
+===========================
+MODULEPATH=ProjectDIR/rt/hierarchy/mf4/Compiler/gcc/10:ProjectDIR/rt/hierarchy/mf4/Core:ProjectDIR/rt/hierarchy/mf4/base;
+export MODULEPATH;
+_ModuleTable_='_ModuleTable_={MTversion=3,depthT={},family={},mT={CMake={depT={depA={{sn="zlib",version={kind="fixed",value="1.3.1",},},},},fn="ProjectDIR/rt/hierarchy/mf4/Compiler/gcc/10/CMake/3.29.3.lua",fullName="CMake/3.29.3",loadOrder=5,propT={},stackDepth=0,status="active",userName="CMake",wV="000000003.000000029.000000003.*zfinal",},OpenSSL={fn="ProjectDIR/rt/hierarchy/mf4/Core/OpenSSL/3.lua",fullName="OpenSSL/3",loadOrder=3,propT={},ref_count=1,stackDepth=2,status="active",userName="OpenSSL/3",wV="000000003.*zfinal",},gcc={actionA={[[prepend_path("MODULEPATH","ProjectDIR/rt/hierarchy/mf4/Compiler/gcc/10")]],},fn="ProjectDIR/rt/hierarchy/mf4/Core/gcc/10.0.lua",fullName="gcc/10.0",loadOrder=2,propT={},stackDepth=0,status="active",userName="gcc/10.0",wV="000000010.*zfinal",},meta={actionA={[[prepend_path("MODULEPATH","ProjectDIR/rt/hierarchy/mf4/Core")]],},fn="ProjectDIR/rt/hierarchy/mf4/base/meta/10.0.lua",fullName="meta/10.0",loadOrder=1,propT={},stackDepth=0,status="active",userName="meta/10.0",wV="000000010.*zfinal",},zlib={depT={depA={{sn="OpenSSL",version={kind="fixed",value="3",},},},},fn="ProjectDIR/rt/hierarchy/mf4/Compiler/gcc/10/zlib/1.3.1.lua",fullName="zlib/1.3.1",loadOrder=4,propT={},ref_count=1,stackDepth=1,status="active",userName="zlib/1.3.1",wV="000000001.000000003.000000001.*zfinal",},},mpathA={"ProjectDIR/rt/hierarchy/mf4/Compiler/gcc/10","ProjectDIR/rt/hierarchy/mf4/Core","ProjectDIR/rt/hierarchy/mf4/base",},systemBaseMPATH="ProjectDIR/rt/hierarchy/mf4/base",}';
+export _ModuleTable_;
+===========================
+step 31
+lua ProjectDIR/src/lmod.in.lua shell --regression_testing load meta/10 gcc/11 CMake
+===========================
+false
+===========================
+step 32
+lua ProjectDIR/src/lmod.in.lua shell --regression_testing purge
+===========================
+unset __LMOD_REF_COUNT_CMAKE_LIBRARY_PATH;
+unset CMAKE_LIBRARY_PATH;
+unset __LMOD_REF_COUNT_CMAKE_PREFIX_PATH;
+unset CMAKE_PREFIX_PATH;
+unset __LMOD_REF_COUNT_CPATH;
+unset CPATH;
+unset EBDEVELOPENSSL;
+unset EBROOTOPENSSL;
+unset EBVERSIONOPENSSL;
+unset EBVERSIONZLIB;
+unset __LMOD_REF_COUNT_LD_LIBRARY_PATH;
+unset LD_LIBRARY_PATH;
+unset __LMOD_REF_COUNT_LIBRARY_PATH;
+unset LIBRARY_PATH;
+unset LOADEDMODULES;
+unset __LMOD_REF_COUNT_MANPATH;
+unset MANPATH;
+__LMOD_REF_COUNT_MODULEPATH=ProjectDIR/rt/hierarchy/mf4/base:1;
+export __LMOD_REF_COUNT_MODULEPATH;
+MODULEPATH=ProjectDIR/rt/hierarchy/mf4/base;
+export MODULEPATH;
+__LMOD_REF_COUNT_PATH=ProjectDIR/proj_mgmt:1\;PATH_to_TM:1;
+export __LMOD_REF_COUNT_PATH;
+PATH=ProjectDIR/proj_mgmt:PATH_to_TM;
+export PATH;
+unset __LMOD_REF_COUNT_PKG_CONFIG_PATH;
+unset PKG_CONFIG_PATH;
+unset __LMOD_REF_COUNT_XDG_DATA_DIRS;
+unset XDG_DATA_DIRS;
+unset _LMFILES_;
+_ModuleTable_='_ModuleTable_={MTversion=3,depthT={},family={},mT={},mpathA={"ProjectDIR/rt/hierarchy/mf4/base",},systemBaseMPATH="ProjectDIR/rt/hierarchy/mf4/base",}';
+export _ModuleTable_;
+===========================
+step 33
+lua ProjectDIR/src/lmod.in.lua shell --regression_testing load meta/10 gcc/10 CMake
+===========================
+__LMOD_REF_COUNT_CMAKE_LIBRARY_PATH=/software/rome/r25.06/OpenSSL/3/lib64:1;
+export __LMOD_REF_COUNT_CMAKE_LIBRARY_PATH;
+CMAKE_LIBRARY_PATH=/software/rome/r25.06/OpenSSL/3/lib64;
+export CMAKE_LIBRARY_PATH;
+__LMOD_REF_COUNT_CMAKE_PREFIX_PATH=/software/rome/r25.06/OpenSSL/3:1;
+export __LMOD_REF_COUNT_CMAKE_PREFIX_PATH;
+CMAKE_PREFIX_PATH=/software/rome/r25.06/OpenSSL/3;
+export CMAKE_PREFIX_PATH;
+__LMOD_REF_COUNT_CPATH=/software/rome/r25.06/OpenSSL/3/include:1;
+export __LMOD_REF_COUNT_CPATH;
+CPATH=/software/rome/r25.06/OpenSSL/3/include;
+export CPATH;
+EBDEVELOPENSSL=/software/rome/r25.06/OpenSSL/3/easybuild/Core-OpenSSL-3-easybuild-devel;
+export EBDEVELOPENSSL;
+EBROOTOPENSSL=/software/rome/r25.06/OpenSSL/3;
+export EBROOTOPENSSL;
+EBVERSIONOPENSSL=3;
+export EBVERSIONOPENSSL;
+EBVERSIONZLIB=1.3.1;
+export EBVERSIONZLIB;
+__LMOD_REF_COUNT_LD_LIBRARY_PATH=/software/rome/r25.06/OpenSSL/3/lib64:1;
+export __LMOD_REF_COUNT_LD_LIBRARY_PATH;
+LD_LIBRARY_PATH=/software/rome/r25.06/OpenSSL/3/lib64;
+export LD_LIBRARY_PATH;
+__LMOD_REF_COUNT_LIBRARY_PATH=/software/rome/r25.06/OpenSSL/3/lib64:1;
+export __LMOD_REF_COUNT_LIBRARY_PATH;
+LIBRARY_PATH=/software/rome/r25.06/OpenSSL/3/lib64;
+export LIBRARY_PATH;
+LOADEDMODULES=meta/10.0:GCCcore/10.0:gcc/10.0:OpenSSL/3:zlib/1.3.1:CMake/3.29.3;
+export LOADEDMODULES;
+__LMOD_REF_COUNT_MANPATH=/software/rome/r25.06/OpenSSL/3/share/man:1;
+export __LMOD_REF_COUNT_MANPATH;
+MANPATH=/software/rome/r25.06/OpenSSL/3/share/man;
+export MANPATH;
+__LMOD_REF_COUNT_MODULEPATH=ProjectDIR/rt/hierarchy/mf5/Compiler/gcc/10:1\;ProjectDIR/rt/hierarchy/mf5/Compiler/GCCcore/10:1\;ProjectDIR/rt/hierarchy/mf5/Core:1\;ProjectDIR/rt/hierarchy/mf5/base:1;
+export __LMOD_REF_COUNT_MODULEPATH;
+MODULEPATH=ProjectDIR/rt/hierarchy/mf5/Compiler/gcc/10:ProjectDIR/rt/hierarchy/mf5/Compiler/GCCcore/10:ProjectDIR/rt/hierarchy/mf5/Core:ProjectDIR/rt/hierarchy/mf5/base;
+export MODULEPATH;
+__LMOD_REF_COUNT_PATH=/software/rome/r25.06/OpenSSL/3/bin:1\;ProjectDIR/proj_mgmt:1\;PATH_to_TM:1;
+export __LMOD_REF_COUNT_PATH;
+PATH=/software/rome/r25.06/OpenSSL/3/bin:ProjectDIR/proj_mgmt:PATH_to_TM;
+export PATH;
+__LMOD_REF_COUNT_PKG_CONFIG_PATH=/software/rome/r25.06/OpenSSL/3/lib64/pkgconfig:1;
+export __LMOD_REF_COUNT_PKG_CONFIG_PATH;
+PKG_CONFIG_PATH=/software/rome/r25.06/OpenSSL/3/lib64/pkgconfig;
+export PKG_CONFIG_PATH;
+__LMOD_REF_COUNT_XDG_DATA_DIRS=/software/rome/r25.06/OpenSSL/3/share:1;
+export __LMOD_REF_COUNT_XDG_DATA_DIRS;
+XDG_DATA_DIRS=/software/rome/r25.06/OpenSSL/3/share;
+export XDG_DATA_DIRS;
+_LMFILES_=ProjectDIR/rt/hierarchy/mf5/base/meta/10.0.lua:ProjectDIR/rt/hierarchy/mf5/Core/GCCcore/10.0.lua:ProjectDIR/rt/hierarchy/mf5/Core/gcc/10.0.lua:ProjectDIR/rt/hierarchy/mf5/Core/OpenSSL/3.lua:ProjectDIR/rt/hierarchy/mf5/Compiler/GCCcore/10/zlib/1.3.1.lua:ProjectDIR/rt/hierarchy/mf5/Compiler/gcc/10/CMake/3.29.3.lua;
+export _LMFILES_;
+_ModuleTable_='_ModuleTable_={MTversion=3,depthT={},family={},mT={CMake={depT={depA={{sn="zlib",version={kind="fixed",value="1.3.1",},},},},fn="ProjectDIR/rt/hierarchy/mf5/Compiler/gcc/10/CMake/3.29.3.lua",fullName="CMake/3.29.3",loadOrder=6,propT={},stackDepth=0,status="active",userName="CMake",wV="000000003.000000029.000000003.*zfinal",},GCCcore={actionA={[[prepend_path("MODULEPATH","ProjectDIR/rt/hierarchy/mf5/Compiler/GCCcore/10")]],},fn="ProjectDIR/rt/hierarchy/mf5/Core/GCCcore/10.0.lua",fullName="GCCcore/10.0",loadOrder=2,propT={},ref_count=1,stackDepth=1,status="active",userName="GCCcore/10.0",wV="000000010.*zfinal",},OpenSSL={fn="ProjectDIR/rt/hierarchy/mf5/Core/OpenSSL/3.lua",fullName="OpenSSL/3",loadOrder=4,propT={},ref_count=1,stackDepth=2,status="active",userName="OpenSSL/3",wV="000000003.*zfinal",},gcc={actionA={[[prepend_path("MODULEPATH","ProjectDIR/rt/hierarchy/mf5/Compiler/gcc/10")]],},depT={depA={{sn="GCCcore",version={kind="fixed",value="10.0",},},},},fn="ProjectDIR/rt/hierarchy/mf5/Core/gcc/10.0.lua",fullName="gcc/10.0",loadOrder=3,propT={},stackDepth=0,status="active",userName="gcc/10.0",wV="000000010.*zfinal",},meta={actionA={[[prepend_path("MODULEPATH","ProjectDIR/rt/hierarchy/mf5/Core")]],},fn="ProjectDIR/rt/hierarchy/mf5/base/meta/10.0.lua",fullName="meta/10.0",loadOrder=1,propT={},stackDepth=0,status="active",userName="meta/10.0",wV="000000010.*zfinal",},zlib={depT={depA={{sn="OpenSSL",version={kind="fixed",value="3",},},},},fn="ProjectDIR/rt/hierarchy/mf5/Compiler/GCCcore/10/zlib/1.3.1.lua",fullName="zlib/1.3.1",loadOrder=5,propT={},ref_count=1,stackDepth=1,status="active",userName="zlib/1.3.1",wV="000000001.000000003.000000001.*zfinal",},},mpathA={"ProjectDIR/rt/hierarchy/mf5/Compiler/gcc/10","ProjectDIR/rt/hierarchy/mf5/Compiler/GCCcore/10","ProjectDIR/rt/hierarchy/mf5/Core","ProjectDIR/rt/hierarchy/mf5/base",},systemBaseMPATH="ProjectDIR/rt/hierarchy/mf5/base",}';
+export _ModuleTable_;
+===========================
+step 34
+lua ProjectDIR/src/lmod.in.lua shell --regression_testing list
+===========================
+MODULEPATH=ProjectDIR/rt/hierarchy/mf5/Compiler/gcc/10:ProjectDIR/rt/hierarchy/mf5/Compiler/GCCcore/10:ProjectDIR/rt/hierarchy/mf5/Core:ProjectDIR/rt/hierarchy/mf5/base;
+export MODULEPATH;
+_ModuleTable_='_ModuleTable_={MTversion=3,depthT={},family={},mT={CMake={depT={depA={{sn="zlib",version={kind="fixed",value="1.3.1",},},},},fn="ProjectDIR/rt/hierarchy/mf5/Compiler/gcc/10/CMake/3.29.3.lua",fullName="CMake/3.29.3",loadOrder=6,propT={},stackDepth=0,status="active",userName="CMake",wV="000000003.000000029.000000003.*zfinal",},GCCcore={actionA={[[prepend_path("MODULEPATH","ProjectDIR/rt/hierarchy/mf5/Compiler/GCCcore/10")]],},fn="ProjectDIR/rt/hierarchy/mf5/Core/GCCcore/10.0.lua",fullName="GCCcore/10.0",loadOrder=2,propT={},ref_count=1,stackDepth=1,status="active",userName="GCCcore/10.0",wV="000000010.*zfinal",},OpenSSL={fn="ProjectDIR/rt/hierarchy/mf5/Core/OpenSSL/3.lua",fullName="OpenSSL/3",loadOrder=4,propT={},ref_count=1,stackDepth=2,status="active",userName="OpenSSL/3",wV="000000003.*zfinal",},gcc={actionA={[[prepend_path("MODULEPATH","ProjectDIR/rt/hierarchy/mf5/Compiler/gcc/10")]],},depT={depA={{sn="GCCcore",version={kind="fixed",value="10.0",},},},},fn="ProjectDIR/rt/hierarchy/mf5/Core/gcc/10.0.lua",fullName="gcc/10.0",loadOrder=3,propT={},stackDepth=0,status="active",userName="gcc/10.0",wV="000000010.*zfinal",},meta={actionA={[[prepend_path("MODULEPATH","ProjectDIR/rt/hierarchy/mf5/Core")]],},fn="ProjectDIR/rt/hierarchy/mf5/base/meta/10.0.lua",fullName="meta/10.0",loadOrder=1,propT={},stackDepth=0,status="active",userName="meta/10.0",wV="000000010.*zfinal",},zlib={depT={depA={{sn="OpenSSL",version={kind="fixed",value="3",},},},},fn="ProjectDIR/rt/hierarchy/mf5/Compiler/GCCcore/10/zlib/1.3.1.lua",fullName="zlib/1.3.1",loadOrder=5,propT={},ref_count=1,stackDepth=1,status="active",userName="zlib/1.3.1",wV="000000001.000000003.000000001.*zfinal",},},mpathA={"ProjectDIR/rt/hierarchy/mf5/Compiler/gcc/10","ProjectDIR/rt/hierarchy/mf5/Compiler/GCCcore/10","ProjectDIR/rt/hierarchy/mf5/Core","ProjectDIR/rt/hierarchy/mf5/base",},systemBaseMPATH="ProjectDIR/rt/hierarchy/mf5/base",}';
+export _ModuleTable_;
+===========================
+step 35
+lua ProjectDIR/src/lmod.in.lua shell --regression_testing load meta/10 gcc/11 CMake
+===========================
+false

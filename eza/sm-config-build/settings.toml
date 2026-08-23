@@ -1,0 +1,25 @@
+[env]
+CARGO_HOME = "{SITE_DESTINATION}/{STAGE_DIR}/cargo"
+VERSION    = "{INSTALL_VERSION}"
+NPROCS     = 16
+
+[install]
+versions = ["stable", "0.23.5"]
+prefix = "{SITE_DESTINATION}/{STAGE_DIR}/cargo"
+# note: this is Lua regex: you will need to escape - and + (using %)
+format = "^bin$"
+# (optional) relocate after install
+destination = "{SITE_DESTINATION}/{INSTALL_VERSION_VARIANT}"
+stage = true
+
+[module]
+PATH = "{INSTALL_DIR}"
+LD_LIBRARY_PATH = "{INSTALL_DIR}"
+INSTALL_VERSION = "{INSTALL_VERSION}"
+
+[post]
+# toggles mandatory relocate if `stage` and `clean` are true. If the install
+# script already relocates the package, then we can set `safe = false`
+safe = true
+# delete staging aread after successful install
+clean = true
