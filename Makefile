@@ -26,6 +26,17 @@ ML_INIT      ?= source $(MKFILE_DIR)/opt/share/env.sh
 RUN_CMD       = $(MKFILE_DIR)/run.sh
 BUILD_CMD     = opt/bin/build.sh
 RENDER_CMD    = opt/bin/render.sh
+CHECK_CMD     = opt/bin/check_versions.nu
+
+# `check` is a nushell script -- override NU to point at an interpreter that is
+# not on PATH (e.g. NU=$(MODULE_PATH)/nu/<version>/nu)
+NU ?= nu
+CHECK_ARGS := -m $(MODULE_PATH) --variant $(VARIANT)
+ifeq ($(MODE),build)
+CHECK_ARGS += --mode build
+else
+CHECK_ARGS += --mode default
+endif
 
 TARGETS := rust eza bat nu fish neovim uv zig ncdu
 # Heavyweight / opt-in targets: valid for `clean` and `make <target>`, but
@@ -33,7 +44,7 @@ TARGETS := rust eza bat nu fish neovim uv zig ncdu
 AUX_TARGETS := cmake llvm zig-bootstrap
 
 # Build steps
-.PHONY: all install update bootstrap clean realclean $(TARGETS) $(AUX_TARGETS)
+.PHONY: all install update bootstrap check clean realclean $(TARGETS) $(AUX_TARGETS)
 
 # Guard against incorrect targets
 ifneq ($(filter $(TARGET),$(TARGETS) $(AUX_TARGETS)),$(TARGET))
@@ -96,6 +107,10 @@ help:
 	$(info                                                                   )
 	$(info Auxilliary make targets:                                          )
 	$(info ├── help [print this help prompt]                                 )
+	$(info ├── check [does the installer need re-running?]                    )
+	$(info │    ├── compares settings.toml versions against MODULE_PATH       )
+	$(info │    ├── honours MODE and VARIANT; set TARGET to check one module  )
+	$(info │    └── exits non-zero if anything is missing/partial/stale       )
 	$(info ├── realclean [deletes ALL installed modules]                     )
 	$(info │    └── must set MODULE_PATH to the location to be cleaned       )
 	$(info ├── clean [clean module specified by TARGET]                      )
@@ -125,6 +140,20 @@ all:
 		$(MAKE) $$target;         \
 	done
 endif
+#------------------------------------------------------------------------------
+
+#______________________________________________________________________________
+# Check whether the installed tree still matches the recipes -- i.e. whether
+# the installer has to be re-run. Exits non-zero if it does, so this can gate
+# a build.
+#
+check:
+	@command -v $(NU) >/dev/null 2>&1 || {                                     \
+	    echo "check needs nushell: install it ('make nu') and 'module load nu',"; \
+	    echo "or point NU at an interpreter, e.g. make check NU=/path/to/nu";  \
+	    exit 1;                                                               \
+	}
+	@$(NU) $(MKFILE_DIR)/$(CHECK_CMD) --prefix $(MKFILE_DIR) $(CHECK_ARGS) $(TARGET)
 #------------------------------------------------------------------------------
 
 #______________________________________________________________________________
