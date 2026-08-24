@@ -136,6 +136,66 @@ render a second, version-independent `rustup` modulefile via
 under `MODE=build`, where the toolchain is compiled and there is no rustup to
 point at.
 
+## Checking whether the installer has to be re-run
+
+[opt/bin/check_versions.nu](opt/bin/check_versions.nu) answers the question
+"did someone bump a `versions` list since this tree was installed?" without
+running an installer. For every version in a recipe's `[install].versions` it
+reconstructs the two artefacts `simple-modules` would have produced —
+
+* the modulefile `<modules>/<name>/<version>[-<variant>].lua`, and
+* the install tree `[install].destination`, with `{SITE_DESTINATION}`,
+  `{INSTALL_VERSION}`, `{INSTALL_VERSION_VARIANT}` and `{STAGE_DIR}` expanded
+  the way `simple-modules` expands them,
+
+taking `name`, `variant`, `modules` and `destination` from
+`local_settings.toml` (with `{SM_ROOT}` := the install root, and `variant`
+overridden by `musl` in default mode, exactly as `render.sh` does) — and checks
+whether both are on disk:
+
+| Status | Meaning |
+| --- | --- |
+| `ok` | both artefacts present, neither older than the recipe |
+| `missing` | neither present — this version was never installed |
+| `partial` | only one present — an interrupted or half-cleaned install |
+| `stale` | present, but a file in the recipe directory was modified afterwards |
+| `rolling` | present and current, but the version is a moving target (`stable`, `nightly`, `master`, …) so presence proves nothing about freshness |
+
+It also lists modulefiles that are on disk but that **no** recipe for that name
+declares any more — the leftovers of a `versions` list that has since been
+edited. Those do not need an installer run, only a `make clean`.
+
+The exit code is 0 when nothing needs doing and 1 as soon as any version is
+`missing`, `partial` or `stale`, so it can gate a build. `make check` wraps it
+and honours the same `MODULE_PATH`, `MODE` and `VARIANT` knobs as the install
+rules, with `TARGET` narrowing it to one module:
+
+```bash
+make check                                  # every default-mode recipe
+make check MODE=build                       # every source-build recipe
+make check TARGET=nu MODULE_PATH=$HOME/local
+```
+
+`check` needs a nushell — it is the one target that does, which is a little
+circular given that `nu` is one of the modules here. Any `nu` on `PATH` will
+do (`make nu && module load nu`, or a system one); point `NU` at an interpreter
+that is not on `PATH`.
+
+Called directly it takes recipe directories as positional arguments and has a
+few knobs `make` does not expose:
+
+```bash
+nu opt/bin/check_versions.nu --mode all              # both recipes per target
+nu opt/bin/check_versions.nu --json rust zig         # machine-readable report
+nu opt/bin/check_versions.nu --quiet && echo current # exit code only
+nu opt/bin/check_versions.nu --ignore-mtime          # presence only, never `stale`
+```
+
+Without `--module-path`/`--prefix` it falls back to `$__MODULE_PATH__` /
+`$__PREFIX__` if it was launched through the harness, and otherwise to
+`<repo>/usr` and its own location — so it works both inside a `run.sh` chain
+and standalone.
+
 ## Makefile knobs
 
 | Variable | Default | Meaning |
@@ -145,7 +205,8 @@ point at.
 | `MODE` | *(empty)* | `build` selects `sm-config-build` recipes |
 | `ML_INIT_FILE` | `<repo>/opt/lmod/lmod/init` | Lmod init directory baked into the generated `env.*` files |
 | `ML_INIT` | `source <repo>/opt/share/env.sh` | Prelude for each install shell; set `ML_INIT=` to skip Lmod init |
-| `TARGET` | — | Required by `clean`; must be one of `TARGETS` or `AUX_TARGETS` |
+| `TARGET` | — | Required by `clean`; narrows `check`; must be one of `TARGETS` or `AUX_TARGETS` |
+| `NU` | `nu` | The nushell interpreter `check` runs |
 
 `VARIANT=musl` and `MODE=build` cannot be combined — `build.sh` rejects it.
 
@@ -338,6 +399,7 @@ run.sh                __PREFIX__ bootstrap + portable physical-path helpers
 opt/
   update_bin.sh       curls the standalone simple-modules / simple-templates
   bin/                simple-modules.ex, simple-templates.ex, lua, luac, build.sh, render.sh
+    check_versions.nu declared-vs-installed version check (see above)
   lmod/
     bootstrap.sh      installs lua-regolith + Lmod, writes opt/share/env.*
     github.com/…/Lmod vendored Lmod source
