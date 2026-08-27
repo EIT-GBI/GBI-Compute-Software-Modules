@@ -1,0 +1,5 @@
+name = "parallel-tar"
+
+relocate = true
+destination = "{SM_ROOT}/parallel-tar"
+modules = "{SM_ROOT}/modules"
