@@ -3,6 +3,7 @@ SOURCE_NAME   = "parallel-tar-v{INSTALL_VERSION}-{RUNTIME_TARGET_TRIPLE}"
 SOURCE_PREFIX = "https://github.com/JBlaschke/parallel-tar/releases"
 VERSION       = "{INSTALL_VERSION}"
 VARIANT       = "{INSTALL_VERSION_VARIANT}"
+RUNTIME_OS    = "{RUNTIME_OS}"
 
 [install]
 versions = ["4.2.1"]

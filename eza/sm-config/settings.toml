@@ -3,6 +3,7 @@ SOURCE_NAME   = "eza_{RUNTIME_TARGET_TRIPLE}"
 SOURCE_PREFIX = "https://github.com/eza-community/eza/releases"
 VERSION       = "{INSTALL_VERSION}"
 VARIANT       = "{INSTALL_VERSION_VARIANT}"
+RUNTIME_OS    = "{RUNTIME_OS}"
 
 [install]
 versions = ["0.23.5"]
