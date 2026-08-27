@@ -12,7 +12,7 @@ prefix = "{SITE_DESTINATION}/{STAGE_DIR}"
 # note: this is Lua regex: you will need to escape - and + (using %)
 format = "^downloaded$"
 # (optional) relocate after install
-destination = "{SITE_DESTINATION}/{INSTALL_VERSION_VARIANT}/bin"
+destination = "{SITE_DESTINATION}/{INSTALL_VERSION_VARIANT}"
 stage = true
 
 [module]
