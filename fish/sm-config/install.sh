@@ -16,7 +16,7 @@ mkdir -p downloaded
 if [[ $OS == "linux" ]]
 then
     mkdir -p bin
-    tar xf $TARGET -C downloaded --strip-components=0 -C bin/
+    tar xf $TARGET -C downloaded --strip-components=0
 elif [[ $OS == "darwin" ]]
 then
     unzip $TARGET -d downloaded
