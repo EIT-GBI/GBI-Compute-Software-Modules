@@ -223,6 +223,7 @@ and standalone.
 | `uv` | a better way to manage Python | yes, needs `rust` |
 | `zig` | the Zig language, and `zig cc` — a drop-in C/C++ cross compiler | yes, needs `cmake` + a **source-built** `llvm` |
 | `ncdu` | `du`, but with a text-mode user interface | yes, needs `zig` |
+| `parallel-tar` | multi-threaded archival tools: compress large data sets, and validate their quality | yes, needs `rust` |
 
 Three more targets are **opt-in** — valid for `make <target>` and `make clean`,
 but skipped by `make all`, since they are either large or only interesting as
@@ -345,12 +346,12 @@ make MODULE_PATH=$HOME/local neovim
 make MODULE_PATH=$HOME/local MODE=build neovim
 ```
 
-`make all` walks `TARGETS` (`rust eza bat nu fish neovim uv zig ncdu`) —
-`cmake`, `llvm` and `zig-bootstrap` are in `AUX_TARGETS` instead, so ask for
-them by name. Under `MODE=build`, `all` installs `rust` and `zig` in default
-mode first — both *can* be built from source, but only against the opt-in
-`llvm` module, and everything else needs them — and then builds
-`eza bat nu neovim ncdu`.
+`make all` walks `TARGETS` (`rust eza bat nu fish neovim uv zig ncdu
+parallel-tar`) — `cmake`, `llvm` and `zig-bootstrap` are in `AUX_TARGETS`
+instead, so ask for them by name. Under `MODE=build`, `all` installs `rust`
+and `zig` in default mode first — both *can* be built from source, but only
+against the opt-in `llvm` module, and everything else needs them — and then
+builds `eza bat nu neovim ncdu parallel-tar`.
 
 ## Adding a module
 

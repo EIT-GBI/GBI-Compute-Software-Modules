@@ -4291,6 +4291,28 @@ local stack    = require "stack"
 
 local SM_PRE_INSTALL_VERSION = "SM-PRE-INSTALL"
 
+local function canonicalize_os(os)
+    local os_canonical
+    if "darwin" == os then
+        os_canonical = "apple-darwin"
+    elseif "linux" == os then
+        os_canonical = "unknown-linux"
+    elseif os:match("^msys") or os:match("^mingw") then
+        os_canonical = "pc-windows"
+    end
+    return os_canonical
+end
+
+local function canonicalize_arch(arch)
+    local arch_canonical
+    if "amd64" == arch or "x86_64" == arch then
+        arch_canonical = "x86_64"
+    elseif "arm64" == arch or "aarch64" == arch then
+        arch_canonical = "aarch64"
+    end
+    return arch_canonical
+end
+
 local subsitutions = {
     SITE_DESTINATION = {
         check = function(_, _)
@@ -4385,6 +4407,16 @@ local subsitutions = {
             return state.machine.os
         end
     },
+    RUNTIME_OS_CANONICAL = {
+        check = function ()
+            -- system ALWAYS has an OS
+            return true
+        end,
+        get = function (_, state)
+            local os = state.machine.os:lower()
+            return canonicalize_os(os)
+        end
+    },
     RUNTIME_ARCH = {
         check = function ()
             -- system ALWAYS has an Arch
@@ -4394,6 +4426,16 @@ local subsitutions = {
             return state.machine.arch
         end
     },
+    RUNTIME_ARCH_CANONICAL = {
+        check = function ()
+            -- system ALWAYS has an Arch
+            return true
+        end,
+        get = function (_, state)
+            local arch = state.machine.arch:lower()
+            return canonicalize_arch(arch)
+        end
+    },
     RUNTIME_TARGET_TRIPLE = {
         check = function ()
             -- system ALWAYS has GNU target triple
@@ -4401,22 +4443,10 @@ local subsitutions = {
         end,
         get = function (_, state)
             local os = state.machine.os:lower()
-            local os_canonical
-            if "darwin" == os then
-                os_canonical = "apple-darwin"
-            elseif "linux" == os then
-                os_canonical = "unknown-linux"
-            elseif os:match("^msys") or os:match("^mingw") then
-                os_canonical = "pc-windows"
-            end
+            local os_canonical = canonicalize_os(os)
 
             local arch = state.machine.arch:lower()
-            local arch_canonical
-            if "amd64" == arch or "x86_64" == arch then
-                arch_canonical = "x68_64"
-            elseif "arm64" == arch or "aarch64" == arch then
-                arch_canonical = "aarch64"
-            end
+            local arch_canonical = canonicalize_arch(arch)
 
             return arch_canonical .. "-" .. os_canonical
         end

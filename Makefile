@@ -38,7 +38,7 @@ else
 CHECK_ARGS += --mode default
 endif
 
-TARGETS := rust eza bat nu fish neovim uv zig ncdu
+TARGETS := rust eza bat nu fish neovim uv zig ncdu parallel-tar
 # Heavyweight / opt-in targets: valid for `clean` and `make <target>`, but
 # deliberately not walked by `all`
 AUX_TARGETS := cmake llvm zig-bootstrap
@@ -88,9 +88,11 @@ help:
 	$(info │    └── If MODE=build requires 'rust'                            )
 	$(info ├── zig [the zig language + a drop-in C/C++ cross compiler]       )
 	$(info │    └── MODE=build requires 'cmake' + 'llvm MODE=build' [~2h]    )
-	$(info └── ncdu [du, but with a text-mode user interface]                )
-	$(info $(NULL)     ├── binary releases are linux-only, use MODE=build elsewhere )
-	$(info $(NULL)     └── MODE=build requires 'zig'                          )
+	$(info ├── ncdu [du, but with a text-mode user interface]                )
+	$(info │    ├── binary releases are linux-only, use MODE=build elsewhere )
+	$(info │    └── MODE=build requires 'zig'                                )
+	$(info └── parallel-tar [multi-threaded archival tools]                  )
+	$(info $(NULL)     └── MODE=build requires 'rust'                        )
 	$(info                                                                   )
 	$(info Opt-in targets [NOT built by 'all', ask for them by name]:        )
 	$(info ├── cmake [the cmake build system]                                )
@@ -126,7 +128,7 @@ help:
 # recursively. Note: environment variables are inherited (apparently)
 #
 ifeq ($(MODE),build)
-all: NTARGETS := eza bat nu neovim ncdu
+all: NTARGETS := eza bat nu neovim ncdu parallel-tar
 all:
 	$(warn Building all targets using MODE=build! Omitting all targes that don't allow for build. Installing rust and zig in default mode -- both can be built from source, but only against the opt-in llvm module, and they are needed by many builds.)
 	$(MAKE) rust MODE=
@@ -308,6 +310,18 @@ ncdu: BUILD_DEPS=$(MODULE_PATH)/modules/zig
 endif
 ncdu: TARGET=ncdu
 ncdu: install
+#------------------------------------------------------------------------------
+
+#______________________________________________________________________________
+# PARALLEL-TAR Module
+#
+# Not on crates.io, so MODE=build installs straight from the GitHub repo.
+#
+ifeq ($(MODE),build)
+parallel-tar: BUILD_DEPS=$(MODULE_PATH)/modules/rust
+endif
+parallel-tar: TARGET=parallel-tar
+parallel-tar: install
 #------------------------------------------------------------------------------
 
 #______________________________________________________________________________

@@ -29,6 +29,8 @@ make MODULE_PATH=${__PREFIX__}/test/usr MODE=build uv
 make MODULE_PATH=${__PREFIX__}/test/usr            zig
 # NO NCDU binary releases for macOS -- upstream ships linux static builds only
 make MODULE_PATH=${__PREFIX__}/test/usr MODE=build ncdu
+make MODULE_PATH=${__PREFIX__}/test/usr            parallel-tar
+make MODULE_PATH=${__PREFIX__}/test/usr MODE=build parallel-tar
 
 # The infrastructure targets are opt-in: llvm alone is a >1GB download (or a
 # ~16min source build), and `zig MODE=build` runs for ~2h on top of it.
