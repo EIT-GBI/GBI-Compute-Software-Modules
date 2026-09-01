@@ -1,6 +1,7 @@
 [env]
 SOURCE_NAME   = "nu-{INSTALL_VERSION}-{RUNTIME_TARGET_TRIPLE}"
 SOURCE_PREFIX = "https://github.com/nushell/nushell/releases/download/{INSTALL_VERSION}"
+RUNTIME_OS    = "{RUNTIME_OS}"
 VERSION       = "{INSTALL_VERSION}"
 VARIANT       = "{INSTALL_VERSION_VARIANT}"
 
