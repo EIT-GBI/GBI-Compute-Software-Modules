@@ -3,7 +3,7 @@ set -euo pipefail
 
 # Renders `make help`. Run through run.sh (which sets __PREFIX__); the
 # Makefile hands over the discovered target lists and current settings via the
-# environment: TARGETS, AUX_TARGETS, VARIANTS, VARIANT, MODE, MODULE_PATH.
+# environment: TARGETS, AUX_TARGETS, VARIANTS, VARIANT, MODE, GBI_MODULE_PATH.
 #
 # Everything shown per target is read from the recipe directory itself:
 #   <name>/sm-help                          line 1: summary, rest: notes
@@ -16,7 +16,7 @@ AUX_TARGETS=${AUX_TARGETS:-}
 VARIANTS=${VARIANTS:-gnu musl}
 VARIANT=${VARIANT:-gnu}
 MODE=${MODE:-}
-MODULE_PATH=${MODULE_PATH:-${ROOT}/usr}
+GBI_MODULE_PATH=${GBI_MODULE_PATH:-${ROOT}/usr}
 
 
 # --- per-recipe metadata readers -----------------------------------------
@@ -128,7 +128,7 @@ modules
 Environment variables:
 ├── VARIANT [must be one of: '${VARIANTS}'; current: '${VARIANT}']
 │      └── Specify which glibc variant to use
-├── MODULE_PATH [can be any valid path; current: '${MODULE_PATH}']
+├── GBI_MODULE_PATH [can be any valid path; current: '${GBI_MODULE_PATH}']
 │      └── Specify where to install local modules to
 ├── ML_INIT_FILE [default: ${ROOT}/opt/lmod/lmod/init/bash]
 │      └── Path of the LMod init file, use ML_INIT= to stop lmod initialization
@@ -158,13 +158,13 @@ sm-opt-in marker file to keep it out of 'make all'.
 Auxilliary make targets:
 ├── help [print this help prompt]
 ├── check [does the installer need re-running?]
-│    ├── compares settings.toml versions against MODULE_PATH
+│    ├── compares settings.toml versions against GBI_MODULE_PATH
 │    ├── honours MODE and VARIANT; set TARGET to check one module
 │    └── exits non-zero if anything is missing/partial/stale
 ├── realclean [deletes ALL installed modules]
-│    └── must set MODULE_PATH to the location to be cleaned
+│    └── must set GBI_MODULE_PATH to the location to be cleaned
 ├── clean [clean module specified by TARGET]
-│    ├── must set MODULE_PATH to the location of the target module
+│    ├── must set GBI_MODULE_PATH to the location of the target module
 │    └── must set TARGET to the name of the module to be cleaned
 ├── bootstrap [bootstraps a Lua and LMod install to /opt/lmod]
 └── update [updates this project's dependencies]

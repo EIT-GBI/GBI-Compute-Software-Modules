@@ -15,9 +15,9 @@ of Bash and Lua pieces that
    `simple-modules`, driven by declarative TOML recipes.
 
 No root, no system package manager, no Python. Everything is self-contained
-under this checkout (or wherever you point `MODULE_PATH`). The single exception
-is `rust MODE=build` — rustc's own build system is driven by `x.py`, so that
-one recipe needs a `python3` on `PATH`.
+under this checkout (or wherever you point `GBI_MODULE_PATH`). The single
+exception is `rust MODE=build` — rustc's own build system is driven by `x.py`,
+so that one recipe needs a `python3` on `PATH`.
 
 ## Quick start
 
@@ -65,7 +65,7 @@ make <target>
                     └── opt/bin/simple-modules.ex sm-config[-build] --sm-root=…
                           ├── runs pre_install.sh / install.sh
                           ├── relocates the install tree
-                          └── renders module_template.lua → <MODULE_PATH>/modules/<name>/<version>.lua
+                          └── renders module_template.lua → <GBI_MODULE_PATH>/modules/<name>/<version>.lua
 ```
 
 * [run.sh](run.sh) — resolves its own *physical* directory (symlinks and `..`
@@ -174,13 +174,13 @@ edited. Those do not need an installer run, only a `make clean`.
 
 The exit code is 0 when nothing needs doing and 1 as soon as any version is
 `missing`, `partial` or `stale`, so it can gate a build. `make check` wraps it
-and honours the same `MODULE_PATH`, `MODE` and `VARIANT` knobs as the install
-rules, with `TARGET` narrowing it to one module:
+and honours the same `GBI_MODULE_PATH`, `MODE` and `VARIANT` knobs as the
+install rules, with `TARGET` narrowing it to one module:
 
 ```bash
 make check                                  # every default-mode recipe
 make check MODE=build                       # every source-build recipe
-make check TARGET=nu MODULE_PATH=$HOME/local
+make check TARGET=nu GBI_MODULE_PATH=$HOME/local
 ```
 
 `check` needs a nushell — it is the one target that does, which is a little
@@ -207,7 +207,7 @@ and standalone.
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `MODULE_PATH` | `<repo>/usr` | Install root: software in `$MODULE_PATH/<name>`, modulefiles in `$MODULE_PATH/modules` |
+| `GBI_MODULE_PATH` | `<repo>/usr` | Install root: software in `$GBI_MODULE_PATH/<name>`, modulefiles in `$GBI_MODULE_PATH/modules` |
 | `VARIANT` | `gnu` | `gnu` or `musl`; `musl` passes `-g` → `--variant=musl` |
 | `MODE` | *(empty)* | `build` selects `sm-config-build` recipes |
 | `ML_INIT_FILE` | `<repo>/opt/lmod/lmod/init` | Lmod init directory baked into the generated `env.*` files |
@@ -353,8 +353,8 @@ the build on top, deleted once the install lands.
 Individual targets are just `make <target>`, e.g.:
 
 ```bash
-make MODULE_PATH=$HOME/local neovim
-make MODULE_PATH=$HOME/local MODE=build neovim
+make GBI_MODULE_PATH=$HOME/local neovim
+make GBI_MODULE_PATH=$HOME/local MODE=build neovim
 ```
 
 `make all` walks every discovered target without an `sm-opt-in` marker

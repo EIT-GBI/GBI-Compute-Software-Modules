@@ -6,8 +6,8 @@
 # in GNUMake
 MKFILE_DIR := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
 
-MODULE_PATH ?= $(MKFILE_DIR)/usr
-EP_ARG      := -m $(MODULE_PATH)
+GBI_MODULE_PATH ?= $(MKFILE_DIR)/usr
+EP_ARG          := -m $(GBI_MODULE_PATH)
 
 VARIANT ?= gnu
 
@@ -30,9 +30,9 @@ CHECK_CMD     = opt/bin/check_versions.nu
 HELP_CMD      = opt/bin/help.sh
 
 # `check` is a nushell script -- override NU to point at an interpreter that is
-# not on PATH (e.g. NU=$(MODULE_PATH)/nu/<version>/nu)
+# not on PATH (e.g. NU=$(GBI_MODULE_PATH)/nu/<version>/nu)
 NU ?= nu
-CHECK_ARGS := -m $(MODULE_PATH) --variant $(VARIANT)
+CHECK_ARGS := -m $(GBI_MODULE_PATH) --variant $(VARIANT)
 ifeq ($(MODE),build)
 CHECK_ARGS += --mode build
 else
@@ -40,11 +40,12 @@ CHECK_ARGS += --mode default
 endif
 
 #______________________________________________________________________________
-# Target discovery -- a make target is any directory in the project root that
-# contains an sm-config/ (default mode) and/or sm-config-build/ (MODE=build)
-# recipe. Nothing is registered here by hand: drop a new recipe directory into
-# the repo and it becomes a target, is walked by `all`, and shows up in
-# `make help`. Per-recipe metadata (all optional except settings.toml):
+# Target discovery
+# A make target is any directory in the project root that contains an
+# sm-config/ (default mode) and/or sm-config-build/ (MODE=build) recipe.
+# Nothing is registered here by hand: drop a new recipe directory into the repo
+# and it becomes a target, is walked by `all`, and shows up in `make help`.
+# Per-recipe metadata (all optional except settings.toml):
 #
 #   <name>/sm-config/settings.toml        -> `make <name>` works
 #   <name>/sm-config-build/settings.toml  -> `make <name> MODE=build` works
@@ -87,7 +88,7 @@ endif
 #
 help:
 	@MODE="$(MODE)" VARIANT="$(VARIANT)" VARIANTS="$(VARIANTS)"    \
-	    MODULE_PATH="$(MODULE_PATH)" TARGETS="$(TARGETS)"          \
+	    GBI_MODULE_PATH="$(GBI_MODULE_PATH)" TARGETS="$(TARGETS)"          \
 	    AUX_TARGETS="$(AUX_TARGETS)" $(RUN_CMD) $(HELP_CMD)
 #------------------------------------------------------------------------------
 
@@ -142,7 +143,7 @@ check:
 #
 realclean:
 	$(info Running realclean => deleting entire install)
-	rm -rf $(MODULE_PATH)
+	rm -rf $(GBI_MODULE_PATH)
 	rm -rf $(MKFILE_DIR)/opt/share/*
 	rm -rf $(MKFILE_DIR)/opt/bin/lua
 	rm -rf $(MKFILE_DIR)/opt/bin/lua-static
@@ -150,8 +151,8 @@ realclean:
 
 clean:
 	$(info Running clean on target: '$(TARGET)')
-	rm -rf $(MODULE_PATH)/$(TARGET)
-	rm -rf $(MODULE_PATH)/modules/$(TARGET)
+	rm -rf $(GBI_MODULE_PATH)/$(TARGET)
+	rm -rf $(GBI_MODULE_PATH)/modules/$(TARGET)
 #------------------------------------------------------------------------------
 
 #______________________________________________________________________________
@@ -165,7 +166,7 @@ update:
 # Bootstrap LMOD dependencies and install
 #
 bootstrap:
-	$(RUN_CMD) opt/lmod/bootstrap.sh v1.5.0 $(MODULE_PATH)/modules $(ML_INIT_FILE)
+	$(RUN_CMD) opt/lmod/bootstrap.sh v1.5.0 $(GBI_MODULE_PATH)/modules $(ML_INIT_FILE)
 #------------------------------------------------------------------------------
 
 #______________________________________________________________________________
