@@ -1,0 +1,25 @@
+# Parameters of the `targz` template: curl one tarball URL and unpack it. The
+# URL is the same on every platform, so this fits platform-independent bundles
+# (script collections, noarch releases) and hosts whose per-platform naming
+# needs hand-written logic anyway (see zig/sm-config for such an install.sh --
+# the rendered recipe exports RUNTIME_OS / RUNTIME_ARCH ready for that).
+#
+# Required (no default below => rendering fails without them):
+#   name      module name (positional argument 2 of templates/render.sh)
+#   version   initial entry of [install].versions (positional argument 3)
+#   source    tarball URL, without the .tar.<ext> suffix. Single-braced
+#             simple-modules placeholders pass through template expansion, so
+#             this can reference {INSTALL_VERSION}, e.g.
+#             source=https://github.com/EIT-GBI/tool/releases/download/v{INSTALL_VERSION}/tool
+
+[constant]
+# Compression suffix of the tarball: <source>.tar.<ext>
+ext = "gz"
+
+# One-line description, shown by `make help` (or edit the rendered sm-help)
+summary = "installed from a tarball release"
+
+# Re-emit these simple-modules placeholders verbatim, so that `{{{...}}}`
+# survives template expansion and is filled in later by simple-modules.
+INSTALL_VERSION = "{{{INSTALL_VERSION}}}"
+PATH = "{{{PATH}}}"

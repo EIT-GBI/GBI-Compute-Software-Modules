@@ -382,35 +382,65 @@ are not declared anywhere extra — they are read from the `module load` lines
 of `install.sh`.
 
 **From a template:** [templates/](templates/) holds parameterised recipes that
-`simple-templates` expands into a complete `sm-config` directory. Two shapes
-ship today:
+`simple-templates` renders into a complete recipe directory — `sm-config/` plus
+an `sm-help` — one per common install strategy:
 
 | Template | Install strategy |
 | --- | --- |
-| [templates/targz](templates/targz) | `curl` a `.tar.<ext>` from a URL and unpack it |
-| [templates/cargo](templates/cargo) | `module load rust; cargo install <name>` |
+| [templates/github](templates/github) | download a per-platform binary from a GitHub release — the [eza](eza/sm-config/settings.toml) pattern, with `resolve_archive_name` picking the artifact for this OS/arch/libc |
+| [templates/targz](templates/targz) | `curl` one fixed tarball URL and unpack it — for non-GitHub hosts, and for platform-independent bundles such as script collections |
+| [templates/cargo](templates/cargo) | `module load rust; cargo install <name> --version <version> --locked` |
+| [templates/uv](templates/uv) | `module load uv; uv tool install <name>==<version>`, with a uv-managed python kept inside the module tree |
 
-[templates/render.sh](templates/render.sh) takes the template directory plus the
-four parameters declared in [templates/settings.toml](templates/settings.toml):
+The last two render `sm-config/` (not `sm-config-build/`) deliberately: for a
+tool that only exists on crates.io or PyPI, the package-manager install *is*
+the default mode — not everything needs a `-build` recipe, and not everything
+has a binary release.
+
+[templates/render.sh](templates/render.sh) takes the template, the module name
+and the first version, plus template-specific `key=value` parameters:
 
 ```
-templates/render.sh <template> <name> <version> <source> <ext>
+templates/render.sh <template> <name> <version> [key=value ...]
 ```
 
-and writes the expanded recipe to `templates/rendered/<name>/` (gitignored).
-It renders the whole directory (`--dir`) and treats the nested `render.sh` as a
-verbatim resource rather than a template, so each rendered recipe ships with its
-own standalone installer. Because the templated `settings.toml` re-emits
-`{{{INSTALL_VERSION}}}`, `{{{PATH}}}` and `{{{LD_LIBRARY_PATH}}}` untouched,
-those placeholders survive template expansion and are filled in later by
-`simple-modules`.
+Each template documents its parameters in `templates/<template>/settings.toml`.
+A parameter listed there has a default and may be omitted; the others are
+required, and rendering stops with `Variable '<key>' needed but not defined`
+when one is missing. Because that settings file re-emits
+`{{{INSTALL_VERSION}}}` and `{{{PATH}}}` untouched, those placeholders survive
+template expansion and are filled in later by `simple-modules` — and
+single-braced `{NAMES}` pass through Mustache anyway, so parameter values can
+use simple-modules substitutions directly: an `asset` of
+`eza_{RUNTIME_TARGET_TRIPLE}`, a `source` of
+`https://…/v{INSTALL_VERSION}/tool`.
 
 Run it through the same harness so `__PREFIX__` and friends are set:
 
 ```bash
-./run.sh opt/bin/build.sh -m ./usr templates/render.sh targz mytool 1.2.3 https://example.com/mytool.tar.gz gz
-./run.sh opt/bin/build.sh -m ./usr opt/bin/render.sh templates/rendered/mytool
+./run.sh opt/bin/build.sh -m ./usr templates/render.sh github dust 1.2.5 \
+    repo=https://github.com/bootandy/dust \
+    'asset=dust-v{INSTALL_VERSION}-{RUNTIME_TARGET_TRIPLE}'
+./run.sh opt/bin/build.sh -m ./usr templates/render.sh cargo tokei 12.1.2
+./run.sh opt/bin/build.sh -m ./usr templates/render.sh uv ruff 0.13.0
 ```
+
+The expanded recipe lands in `templates/rendered/<name>/` (gitignored) — a
+staging area the Makefile deliberately does not see. Test-install it from
+there, then promote it to the repo root, where target discovery takes over:
+
+```bash
+./run.sh opt/bin/build.sh -m ./usr opt/bin/render.sh templates/rendered/dust
+mv templates/rendered/dust ./dust      # now a make target, walked by `all`
+```
+
+A rendered recipe is a starting point like any hand-copied one: edit the
+summary in its `sm-help` (or set it at render time, `summary='…'`), drop in an
+`sm-opt-in` marker if `make all` should skip it, and adjust `install.sh` where
+upstream naming is unusual — [neovim](neovim/sm-config/install.sh),
+[fish](fish/sm-config/install.sh) and
+[parallel-tar](parallel-tar/sm-config/install.sh) show what those tweaks tend
+to look like.
 
 ## Repository layout
 
