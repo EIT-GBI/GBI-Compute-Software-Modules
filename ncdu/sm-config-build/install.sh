@@ -30,7 +30,7 @@ fi
 #______________________________________________________________________________
 # libzstd -- built static, straight into ${DEPS}
 #
-curl --output zstd.tar.gz -L \
+curl --fail --output zstd.tar.gz -L \
     ${ZSTD_PREFIX}/v${ZSTD_VERSION}/zstd-${ZSTD_VERSION}.tar.gz
 mkdir -p zstd
 tar xf zstd.tar.gz -C zstd --strip-components=1
@@ -63,7 +63,7 @@ fi
 #______________________________________________________________________________
 # ncdu itself
 #
-curl --output ncdu.tar.gz -L \
+curl --fail --output ncdu.tar.gz -L \
     ${SOURCE_PREFIX}/${SOURCE_NAME}-${INSTALL_VERSION}.tar.gz
 mkdir -p ncdu-src
 tar xf ncdu.tar.gz -C ncdu-src --strip-components=1

@@ -10,7 +10,7 @@ module load cmake
 # over-parallelising LLVM is the machine swapping itself to death rather than a
 # tidy build error. Raise them if you have the headroom.
 
-curl --output llvm-src.tar.xz -L \
+curl --fail --output llvm-src.tar.xz -L \
     ${SOURCE_PREFIX}/llvmorg-${INSTALL_VERSION}/${SOURCE_NAME}-${INSTALL_VERSION}.src.tar.xz
 mkdir -p llvm-src
 tar xf llvm-src.tar.xz -C llvm-src --strip-components=1

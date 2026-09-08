@@ -15,8 +15,8 @@ pushd $(__get_script_dir ${BASH_SOURCE[0]})
 mkdir -p bin
 pushd bin
 
-curl --output simple-templates.ex ${STSRC}
-curl --output simple-modules.ex ${SMSRC}
+curl --fail --output simple-templates.ex ${STSRC}
+curl --fail --output simple-modules.ex ${SMSRC}
 
 chmod u+x,o+x,g+x simple-templates.ex
 chmod u+x,o+x,g+x simple-modules.ex

@@ -4,6 +4,6 @@
 # neovim/sm-config for examples of that kind of install.sh.
 echo "Downloading ${SOURCE}"
 
-curl --output downloaded.tar.{{{ext}}} -L ${SOURCE}
+curl --fail --output downloaded.tar.{{{ext}}} -L ${SOURCE}
 mkdir -p downloaded
 tar xf downloaded.tar.{{{ext}}} -C downloaded --strip-components=1
