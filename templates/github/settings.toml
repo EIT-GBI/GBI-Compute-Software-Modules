@@ -1,0 +1,32 @@
+# Parameters of the `github` template: download a per-platform binary from a
+# GitHub release, resolving the artifact name for this OS/arch/libc the way
+# eza/ and nu/ do.
+#
+# Required (no default below => rendering fails without them):
+#   name      module name (positional argument 2 of templates/render.sh)
+#   version   initial entry of [install].versions (positional argument 3);
+#             `latest` tracks the newest release
+#   repo      project URL, e.g. repo=https://github.com/eza-community/eza
+#   asset     release asset name, without the .tar.<ext> suffix. Single-braced
+#             simple-modules placeholders pass through template expansion, so
+#             this can (and usually should) reference {INSTALL_VERSION} and
+#             {RUNTIME_TARGET_TRIPLE}, e.g.
+#             asset=eza_{RUNTIME_TARGET_TRIPLE}
+#             asset=dust-v{INSTALL_VERSION}-{RUNTIME_TARGET_TRIPLE}
+
+[constant]
+# Release tag, rendered into the download URL as
+# <repo>/releases/download/<tag>/<asset>.tar.<ext>. {INSTALL_VERSION} is
+# expanded by simple-modules at install time, once per version.
+tag = "v{INSTALL_VERSION}"
+
+# Compression suffix of the release asset: <asset>.tar.<ext>
+ext = "gz"
+
+# One-line description, shown by `make help` (or edit the rendered sm-help)
+summary = "installed from GitHub release binaries"
+
+# Re-emit these simple-modules placeholders verbatim, so that `{{{...}}}`
+# survives template expansion and is filled in later by simple-modules.
+INSTALL_VERSION = "{{{INSTALL_VERSION}}}"
+PATH = "{{{PATH}}}"

@@ -1,0 +1,19 @@
+# Parameters of the `cargo` template: `module load rust; cargo install` from
+# crates.io. This is the default-mode recipe for tools that have no binary
+# release -- installing through the package manager is the only route, so no
+# separate sm-config-build is rendered.
+#
+# Required (no default below => rendering fails without them):
+#   name      module name and crate name (positional argument 2 of
+#             templates/render.sh)
+#   version   initial entry of [install].versions (positional argument 3);
+#             `stable` installs whatever the latest crates.io release is
+
+[constant]
+# One-line description, shown by `make help` (or edit the rendered sm-help)
+summary = "installed with cargo from crates.io"
+
+# Re-emit these simple-modules placeholders verbatim, so that `{{{...}}}`
+# survives template expansion and is filled in later by simple-modules.
+INSTALL_VERSION = "{{{INSTALL_VERSION}}}"
+PATH = "{{{PATH}}}"

@@ -77,7 +77,9 @@ print_target() {
         bullets+=("binary release only -- MODE=build is not supported")
     fi
 
-    while IFS= read -r notes_line; do
+    # `|| [ -n ... ]` keeps a final line that has no trailing newline (e.g.
+    # sm-help files rendered by simple-templates, which strips it)
+    while IFS= read -r notes_line || [ -n "$notes_line" ]; do
         [ -n "$notes_line" ] && bullets+=("$notes_line")
     done < <(sm_notes "$t")
 

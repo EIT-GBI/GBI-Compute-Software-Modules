@@ -42,7 +42,9 @@ then
 fi
 
 # Export context variable to sub-processes, __PREFIX__,  __realpath, and
-# __script_dir inherited from run.sh
+# __script_dir inherited from run.sh. __realpath only resolves existing paths,
+# so make sure the module path exists before canonicalizing it
+mkdir -p ${__MODULE_PATH__}
 export __PREFIX__
 export __MODULE_PATH__=$(__realpath ${__MODULE_PATH__})
 export __MODE__
