@@ -27,6 +27,7 @@ RUN_CMD       = $(MKFILE_DIR)/run.sh
 BUILD_CMD     = opt/bin/build.sh
 RENDER_CMD    = opt/bin/render.sh
 CHECK_CMD     = opt/bin/check_versions.nu
+HELP_CMD      = opt/bin/help.sh
 
 # `check` is a nushell script -- override NU to point at an interpreter that is
 # not on PATH (e.g. NU=$(MODULE_PATH)/nu/<version>/nu)
@@ -38,89 +39,57 @@ else
 CHECK_ARGS += --mode default
 endif
 
-TARGETS := rust eza bat nu fish neovim uv zig ncdu parallel-tar
-# Heavyweight / opt-in targets: valid for `clean` and `make <target>`, but
-# deliberately not walked by `all`
-AUX_TARGETS := cmake llvm zig-bootstrap
+#______________________________________________________________________________
+# Target discovery -- a make target is any directory in the project root that
+# contains an sm-config/ (default mode) and/or sm-config-build/ (MODE=build)
+# recipe. Nothing is registered here by hand: drop a new recipe directory into
+# the repo and it becomes a target, is walked by `all`, and shows up in
+# `make help`. Per-recipe metadata (all optional except settings.toml):
+#
+#   <name>/sm-config/settings.toml        -> `make <name>` works
+#   <name>/sm-config-build/settings.toml  -> `make <name> MODE=build` works
+#   <name>/sm-opt-in                      -> `make all` skips it (opt-in)
+#   <name>/sm-help                        -> description shown by `make help`
+#                                            (line 1: summary; rest: notes)
+#
+DEFAULT_TARGETS := $(sort $(notdir $(patsubst %/sm-config/settings.toml,%,\
+                       $(wildcard $(MKFILE_DIR)*/sm-config/settings.toml))))
+BUILD_TARGETS   := $(sort $(notdir $(patsubst %/sm-config-build/settings.toml,%,\
+                       $(wildcard $(MKFILE_DIR)*/sm-config-build/settings.toml))))
+ALL_RECIPES     := $(sort $(DEFAULT_TARGETS) $(BUILD_TARGETS))
+
+# Heavyweight / opt-in targets (marked by an sm-opt-in file in the recipe):
+# valid for `clean` and `make <target>`, but deliberately not walked by `all`
+AUX_TARGETS := $(filter $(ALL_RECIPES),$(sort $(notdir $(patsubst %/sm-opt-in,%,\
+                   $(wildcard $(MKFILE_DIR)*/sm-opt-in)))))
+TARGETS     := $(filter-out $(AUX_TARGETS),$(ALL_RECIPES))
+
+# Build-mode module dependencies of a target, read from the `module load`
+# lines of its install script -- the recipe itself is the source of truth, so
+# this cannot drift. Version suffixes (e.g. zig/0.16.0) are stripped.
+sm_deps = $(sort $(foreach w,\
+              $(shell sed -n 's,^[[:space:]]*module load[[:space:]]*,,p' \
+                  $(MKFILE_DIR)$(1)/sm-config-build/install.sh 2>/dev/null),\
+              $(firstword $(subst /, ,$(w)))))
 
 # Build steps
-.PHONY: all install update bootstrap check clean realclean $(TARGETS) $(AUX_TARGETS)
+.PHONY: all install update bootstrap check clean realclean help $(ALL_RECIPES)
 
 # Guard against incorrect targets
-ifneq ($(filter $(TARGET),$(TARGETS) $(AUX_TARGETS)),$(TARGET))
-    $(error TARGET must be one of: '$(TARGETS) $(AUX_TARGETS)')
+ifneq ($(filter $(TARGET),$(ALL_RECIPES)),$(TARGET))
+    $(error TARGET must be one of: '$(ALL_RECIPES)')
 endif
 
-NULL :=
+#______________________________________________________________________________
+# Help is rendered by a helper script (same pattern as build/render): it walks
+# the discovered recipes and prints each target's summary (from sm-help), its
+# versions (from settings.toml) and its build deps (from install.sh)
+#
 help:
-	$(info  ----------------- install local modules ---------------------    )
-	$(info Sometimes Spack is just too much of a headache -- also how do you )
-	$(info use spack without a local python? -- anyway, this is a collection )
-	$(info of bash a lua scripts to generate a bare-bones set of LMod        )
-	$(info modules                                                           )
-	$(info                                                                   )
-	$(info Environment variables:                                            )
-	$(info ├── VARIANT [must be one of: '$(VARIANTS)']                       )
-	$(info │      └── Specify which glibc variant to use                     )
-	$(info ├── MODULE_PATH [can be any valid path]                           )
-	$(info │      └── Specify where to install local modules to              )
-	$(info ├── ML_INIT_FILE [default: $(MKFILE_DIR)/opt/lmod/lmod/init/bash] )
-	$(info │      └── Path of the LMod init file, use ML_INIT= to stop lmod initialization )
-	$(info └── MODE [default '']                                             )
-	$(info $(NULL)       ├── If MODE=build, this will build the module from source )
-	$(info $(NULL)       └── WARNING: VARIANT=musl is not permitted with MODE=build )
-	$(info                                                                   )
-	$(info Available make targets that generate modules:                     )
-	$(info ├── rust [the Rust compiler]                                      )
-	$(info │    ├── default mode installs a rustup-managed toolchain         )
-	$(info │    └── MODE=build requires 'llvm MODE=build' + a python3        )
-	$(info ├── eza [ls but better]                                           )
-	$(info │    └── MODE=build requires 'rust'                               )
-	$(info ├── bat [cat but better]                                          )
-	$(info │    └── MODE=build requires 'rust'                               )
-	$(info ├── nu [a completely new way to think of a shell]                 )
-	$(info │    └── MODE=build requires 'rust'                               )
-	$(info ├── fish [the friendly interactive shell]                         )
-	$(info │    └── MODE=build reuqires 'rust' and 'cmake'                   )
-	$(info ├── neovim [the neovim editor]                                    )
-	$(info │    └── MODE=build has no dependencies                           )
-	$(info ├── uv [a better way to manage python]                            )
-	$(info │    └── If MODE=build requires 'rust'                            )
-	$(info ├── zig [the zig language + a drop-in C/C++ cross compiler]       )
-	$(info │    └── MODE=build requires 'cmake' + 'llvm MODE=build' [~2h]    )
-	$(info ├── ncdu [du, but with a text-mode user interface]                )
-	$(info │    ├── binary releases are linux-only, use MODE=build elsewhere )
-	$(info │    └── MODE=build requires 'zig'                                )
-	$(info └── parallel-tar [multi-threaded archival tools]                  )
-	$(info $(NULL)     └── MODE=build requires 'rust'                        )
-	$(info                                                                   )
-	$(info Opt-in targets [NOT built by 'all', ask for them by name]:        )
-	$(info ├── cmake [the cmake build system]                                )
-	$(info │    └── MODE=build has no dependencies                           )
-	$(info ├── llvm [clang/lld + the LLVM development libraries]             )
-	$(info │    ├── default mode downloads a >1GB upstream release           )
-	$(info │    │    └── NOTE: an LTO build, so it CANNOT compile zig         )
-	$(info │    └── MODE=build requires 'cmake' [~15min]                     )
-	$(info │         └── needed by 'zig MODE=build' and 'rust MODE=build'    )
-	$(info └── zig-bootstrap [zig via bootstrap.c, installs as zig/<ver>-bootstrap] )
-	$(info $(NULL)     ├── source build only, needs nothing but a C compiler [~36min] )
-	$(info $(NULL)     └── for porting, provenance and compiler hacking -- stops at )
-	$(info $(NULL)          zig's intermediate 'zig2', so not a usable toolchain )
-	$(info                                                                   )
-	$(info Auxilliary make targets:                                          )
-	$(info ├── help [print this help prompt]                                 )
-	$(info ├── check [does the installer need re-running?]                    )
-	$(info │    ├── compares settings.toml versions against MODULE_PATH       )
-	$(info │    ├── honours MODE and VARIANT; set TARGET to check one module  )
-	$(info │    └── exits non-zero if anything is missing/partial/stale       )
-	$(info ├── realclean [deletes ALL installed modules]                     )
-	$(info │    └── must set MODULE_PATH to the location to be cleaned       )
-	$(info ├── clean [clean module specified by TARGET]                      )
-	$(info │    ├── must set MODULE_PATH to the location of the target module)
-	$(info │    └── must set TARGET to the name of the module to be cleaned  )
-	$(info ├── bootstrap [bootstraps a Lua and LMod install to /opt/lmod]    )
-	$(info └── update [updates this project's dependencies]                  )
-
+	@MODE="$(MODE)" VARIANT="$(VARIANT)" VARIANTS="$(VARIANTS)"    \
+	    MODULE_PATH="$(MODULE_PATH)" TARGETS="$(TARGETS)"          \
+	    AUX_TARGETS="$(AUX_TARGETS)" $(RUN_CMD) $(HELP_CMD)
+#------------------------------------------------------------------------------
 
 #______________________________________________________________________________
 # Rule to build all targets, note: since we define the install rules the way we
@@ -128,13 +97,23 @@ help:
 # recursively. Note: environment variables are inherited (apparently)
 #
 ifeq ($(MODE),build)
-all: NTARGETS := eza bat nu neovim ncdu parallel-tar
+# `all` first installs the toolchain targets below in default mode -- both can
+# be built from source, but only against the opt-in llvm module, and they are
+# needed by many builds -- and then builds every non-opt-in target whose
+# `module load` dependencies those toolchains cover. Anything with other deps
+# (e.g. on the opt-in cmake) is skipped and reported.
+ALL_PROVIDES := $(filter rust zig,$(DEFAULT_TARGETS))
+NTARGETS := $(strip $(foreach t,\
+                $(filter-out $(ALL_PROVIDES),$(filter $(BUILD_TARGETS),$(TARGETS))),\
+                $(if $(filter-out $(ALL_PROVIDES),$(call sm_deps,$(t))),,$(t))))
+NSKIPPED := $(filter-out $(ALL_PROVIDES) $(NTARGETS),$(TARGETS))
 all:
-	$(warn Building all targets using MODE=build! Omitting all targes that don't allow for build. Installing rust and zig in default mode -- both can be built from source, but only against the opt-in llvm module, and they are needed by many builds.)
-	$(MAKE) rust MODE=
-	$(MAKE) zig MODE=
+	$(warning Building all targets using MODE=build! Installing '$(ALL_PROVIDES)' in default mode first, then building: '$(NTARGETS)'. Omitting targets whose build dependencies 'all' does not provide: '$(NSKIPPED)')
+	@for target in $(ALL_PROVIDES); do \
+		$(MAKE) $$target MODE= ;      \
+	done
 	@for target in $(NTARGETS); do \
-		$(MAKE) $$target;         \
+		$(MAKE) $$target;          \
 	done
 else
 all:
@@ -190,162 +169,48 @@ bootstrap:
 #------------------------------------------------------------------------------
 
 #______________________________________________________________________________
-# Main rule to install targets -- this rule is invoked by the install rules
-# below
+# Main rule to install targets -- this rule is invoked by the generated
+# per-module rules below
 #
 ifeq ($(MODE),build)
-install: $(BUILD_DEPS)
+# BUILD_DEPS is informational: the `module load` calls in the recipe's own
+# install.sh (where these names are read from) are what actually enforces them
+BUILD_DEPS = $(call sm_deps,$(TARGET))
+install:
 	$(info Running build-mode install for '$(TARGET)' with dependencies: '$(BUILD_DEPS)')
 	bash -c "$(ML_INIT); $(RUN_CMD) $(BUILD_CMD) -b $(EP_ARG) $(RENDER_CMD) $(TARGET)"
 else
 install:
-	$(info Running default-mode install for '$(TARGET)' with dependencies: '$(BUILD_DEPS)')
+	$(info Running default-mode install for '$(TARGET)')
 	bash -c "$(ML_INIT); $(RUN_CMD) $(BUILD_CMD) $(EP_ARG) $(RENDER_CMD) $(TARGET)"
 endif
 #------------------------------------------------------------------------------
 
-
 #______________________________________________________________________________
-# CMAKE Module
+# Per-module rules, generated for every discovered recipe. A target whose
+# recipe does not exist in the current MODE gets an error stub instead: e.g.
+# zig-bootstrap is a source-only build, so without MODE=build it errors out.
 #
 ifeq ($(MODE),build)
-cmake: BUILD_DEPS=
-endif
-cmake: TARGET=cmake
-cmake: install
-#------------------------------------------------------------------------------
-
-#______________________________________________________________________________
-# RUST Module
-#
-# Default mode installs a rustup-managed toolchain. MODE=build compiles the
-# official source tarball against the `llvm` module -- which, as for zig, has
-# to be the source-built one (`make llvm MODE=build`).
-#
-ifeq ($(MODE),build)
-rust: BUILD_DEPS=$(MODULE_PATH)/modules/llvm
-endif
-rust: TARGET=rust
-rust: install
-#------------------------------------------------------------------------------
-
-#______________________________________________________________________________
-# EZA Module
-#
-ifeq ($(MODE),build)
-eza: BUILD_DEPS=$(MODULE_PATH)/modules/rust
-endif
-eza: TARGET=eza
-eza: install
-#------------------------------------------------------------------------------
-
-#______________________________________________________________________________
-# BAT Module
-#
-ifeq ($(MODE),build)
-bat: BUILD_DEPS=$(MODULE_PATH)/modules/rust
-endif
-bat: TARGET=bat
-bat: install
-#------------------------------------------------------------------------------
-
-#______________________________________________________________________________
-# NU Module
-#
-ifeq ($(MODE),build)
-nu: BUILD_DEPS=$(MODULE_PATH)/modules/rust
-endif
-nu: TARGET=nu
-nu: install
-#------------------------------------------------------------------------------
-
-#______________________________________________________________________________
-# FISH Module
-#
-ifeq ($(MODE),build)
-fish: BUILD_DEPS="$(MODULE_PATH)/modules/rust $(MODULE_PATH)/modules/cmake"
-endif
-fish: TARGET=fish
-fish: install
-#------------------------------------------------------------------------------
-
-#______________________________________________________________________________
-# NEOVIM Module
-#
-ifeq ($(MODE),build)
-neovim: BUILD_DEPS=$(MODULE_PATH)/modules/cmake
-endif
-neovim: TARGET=neovim
-neovim: install
-#------------------------------------------------------------------------------
-
-#______________________________________________________________________________
-# UV Module
-#
-ifeq ($(MODE),build)
-uv: BUILD_DEPS=$(MODULE_PATH)/modules/rust
-endif
-uv: TARGET=uv
-uv: install
-#------------------------------------------------------------------------------
-
-#______________________________________________________________________________
-# ZIG Module
-#
-# MODE=build is the full CMake build against the `llvm` module. For a build
-# with no dependencies at all (but a reduced compiler) see `zig-bootstrap`.
-#
-ifeq ($(MODE),build)
-zig: BUILD_DEPS="$(MODULE_PATH)/modules/cmake $(MODULE_PATH)/modules/llvm"
-endif
-zig: TARGET=zig
-zig: install
-#------------------------------------------------------------------------------
-
-#______________________________________________________________________________
-# NCDU Module
-#
-ifeq ($(MODE),build)
-ncdu: BUILD_DEPS=$(MODULE_PATH)/modules/zig
-endif
-ncdu: TARGET=ncdu
-ncdu: install
-#------------------------------------------------------------------------------
-
-#______________________________________________________________________________
-# PARALLEL-TAR Module
-#
-# Not on crates.io, so MODE=build installs straight from the GitHub repo.
-#
-ifeq ($(MODE),build)
-parallel-tar: BUILD_DEPS=$(MODULE_PATH)/modules/rust
-endif
-parallel-tar: TARGET=parallel-tar
-parallel-tar: install
-#------------------------------------------------------------------------------
-
-#______________________________________________________________________________
-# LLVM Module -- needed to build zig from source
-#
-ifeq ($(MODE),build)
-llvm: BUILD_DEPS=$(MODULE_PATH)/modules/cmake
-endif
-llvm: TARGET=llvm
-llvm: install
-#------------------------------------------------------------------------------
-
-#______________________________________________________________________________
-# ZIG-BOOTSTRAP Module -- installs as `zig/<version>-bootstrap`
-#
-# This is zig's own bootstrap.c path: the only dependency is a C compiler, but
-# the resulting compiler is missing LLVM-backed features. Source build only.
-#
-ifeq ($(MODE),build)
-zig-bootstrap: BUILD_DEPS=
-zig-bootstrap: TARGET=zig-bootstrap
-zig-bootstrap: install
+RUNNABLE      := $(BUILD_TARGETS)
+MISSING_DIR   := sm-config-build
+NO_RECIPE_MSG := does not support MODE=build
 else
-zig-bootstrap:
-	$(error zig-bootstrap is a source build, use MODE=build)
+RUNNABLE      := $(DEFAULT_TARGETS)
+MISSING_DIR   := sm-config
+NO_RECIPE_MSG := is a source build, use MODE=build
 endif
+
+define RECIPE_template
+$(1): TARGET=$(1)
+$(1): install
+endef
+
+define NO_RECIPE_template
+$(1):
+	$$(error '$(1)' $(NO_RECIPE_MSG) ['$(1)/$(MISSING_DIR)/' does not exist])
+endef
+
+$(foreach t,$(RUNNABLE),$(eval $(call RECIPE_template,$(t))))
+$(foreach t,$(filter-out $(RUNNABLE),$(ALL_RECIPES)),$(eval $(call NO_RECIPE_template,$(t))))
 #------------------------------------------------------------------------------

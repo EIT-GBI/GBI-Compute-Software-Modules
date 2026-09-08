@@ -1,0 +1,2 @@
+multi-threaded archival tools
+not on crates.io, so MODE=build installs straight from the GitHub repo

@@ -1,0 +1,2 @@
+the zig language + a drop-in C/C++ cross compiler
+MODE=build needs the source-built llvm ('make llvm MODE=build') [~2h]

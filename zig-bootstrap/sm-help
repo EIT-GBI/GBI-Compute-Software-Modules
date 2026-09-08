@@ -1,0 +1,3 @@
+zig via bootstrap.c, installs as zig/<ver>-bootstrap
+needs nothing but a C compiler [~36min]
+for porting, provenance and compiler hacking -- stops at zig's intermediate 'zig2', so not a usable toolchain

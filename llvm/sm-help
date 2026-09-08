@@ -1,0 +1,3 @@
+clang/lld + the LLVM development libraries
+default mode downloads a >1GB upstream release -- an LTO build, so it CANNOT compile zig
+MODE=build takes ~15min; needed by 'zig MODE=build' and 'rust MODE=build'

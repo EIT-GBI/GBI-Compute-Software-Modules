@@ -1,0 +1,3 @@
+the Rust compiler
+default mode installs a rustup-managed toolchain
+MODE=build needs the source-built llvm ('make llvm MODE=build') + a python3

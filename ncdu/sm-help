@@ -1,0 +1,2 @@
+du, but with a text-mode user interface
+binary releases are linux-only, use MODE=build elsewhere

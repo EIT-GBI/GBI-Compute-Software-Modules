@@ -95,6 +95,13 @@ one or two `simple-modules` config directories:
 | `<target>/sm-config/` | default — install a prebuilt binary release |
 | `<target>/sm-config-build/` | `MODE=build` — compile from source |
 
+The Makefile discovers its targets from exactly this layout — any root
+directory holding one of these config dirs becomes a `make` target, with no
+Makefile edit needed. Two optional marker files round out a recipe: `sm-help`
+(line 1: a one-line summary, remaining lines: notes — shown by `make help`)
+and `sm-opt-in` (its presence keeps the target out of `make all`, like
+`cmake`, `llvm` and `zig-bootstrap`).
+
 A config directory holds up to five files:
 
 * **`settings.toml`** — the recipe proper. `[env]` variables are exported into
@@ -205,12 +212,16 @@ and standalone.
 | `MODE` | *(empty)* | `build` selects `sm-config-build` recipes |
 | `ML_INIT_FILE` | `<repo>/opt/lmod/lmod/init` | Lmod init directory baked into the generated `env.*` files |
 | `ML_INIT` | `source <repo>/opt/share/env.sh` | Prelude for each install shell; set `ML_INIT=` to skip Lmod init |
-| `TARGET` | — | Required by `clean`; narrows `check`; must be one of `TARGETS` or `AUX_TARGETS` |
+| `TARGET` | — | Required by `clean`; narrows `check`; must name a discovered recipe |
 | `NU` | `nu` | The nushell interpreter `check` runs |
 
 `VARIANT=musl` and `MODE=build` cannot be combined — `build.sh` rejects it.
 
 ## Available modules
+
+`make help` prints the live, auto-discovered version of this list — summaries
+come from each recipe's `sm-help`, versions from its `settings.toml`, and
+build dependencies from the `module load` lines of its `install.sh`.
 
 | Target | What it is | `MODE=build` |
 | --- | --- | --- |
@@ -346,20 +357,29 @@ make MODULE_PATH=$HOME/local neovim
 make MODULE_PATH=$HOME/local MODE=build neovim
 ```
 
-`make all` walks `TARGETS` (`rust eza bat nu fish neovim uv zig ncdu
-parallel-tar`) — `cmake`, `llvm` and `zig-bootstrap` are in `AUX_TARGETS`
-instead, so ask for them by name. Under `MODE=build`, `all` installs `rust`
-and `zig` in default mode first — both *can* be built from source, but only
-against the opt-in `llvm` module, and everything else needs them — and then
-builds `eza bat nu neovim ncdu parallel-tar`.
+`make all` walks every discovered target without an `sm-opt-in` marker
+(today: `bat eza fish ncdu neovim nu parallel-tar rust uv zig`) — `cmake`,
+`llvm` and `zig-bootstrap` carry the marker, so ask for them by name. Under
+`MODE=build`, `all` installs `rust` and `zig` in default mode first — both
+*can* be built from source, but only against the opt-in `llvm` module, and
+everything else needs them — and then builds every target whose `module load`
+dependencies those two cover (today: `bat eza ncdu nu parallel-tar uv`);
+targets that need anything else are skipped and reported (`fish` and `neovim`
+load the opt-in `cmake`).
 
 ## Adding a module
 
 **By hand:** copy an existing directory whose install shape matches yours
 (`eza/` for a tarball release, `uv/` for a vendor install script, `neovim/` for
 a CMake source build), adjust `settings.toml` / `local_settings.toml` /
-`install.sh` / `module_template.lua`, then add a target block to the
-[Makefile](Makefile) and its name to `TARGETS`.
+`install.sh` / `module_template.lua` — and that's it: the
+[Makefile](Makefile) discovers any root directory holding an `sm-config/` or
+`sm-config-build/` recipe, so the new name is immediately a target, walked by
+`all`, and listed by `make help`. Optionally add an `sm-help` file (line 1:
+summary, remaining lines: notes) to describe it in the help output, and an
+`sm-opt-in` marker file to keep it out of `make all`. Build-mode dependencies
+are not declared anywhere extra — they are read from the `module load` lines
+of `install.sh`.
 
 **From a template:** [templates/](templates/) holds parameterised recipes that
 `simple-templates` expands into a complete `sm-config` directory. Two shapes
@@ -395,18 +415,20 @@ Run it through the same harness so `__PREFIX__` and friends are set:
 ## Repository layout
 
 ```
-Makefile              per-target rules and the help text
+Makefile              discovers recipes and generates the per-target rules
 run.sh                __PREFIX__ bootstrap + portable physical-path helpers
 opt/
   update_bin.sh       curls the standalone simple-modules / simple-templates
   bin/                simple-modules.ex, simple-templates.ex, lua, luac, build.sh, render.sh
     check_versions.nu declared-vs-installed version check (see above)
+    help.sh           renders `make help` from the discovered recipes
   lmod/
     bootstrap.sh      installs lua-regolith + Lmod, writes opt/share/env.*
     github.com/…/Lmod vendored Lmod source
     lua-5.1.4.9/      TACC Lua fallback (see opt/lmod/README.md for the macOS patch)
   share/env.{sh,fish,nu}   generated shell init (gitignored)
-<target>/             one directory per module: sm-config/ and/or sm-config-build/
+<target>/             one directory per module: sm-config/ and/or sm-config-build/,
+                      plus optional sm-help (description) and sm-opt-in (marker)
 templates/            simple-templates recipes for generating new modules
 test/test_macos.sh    full-matrix smoke test
 usr/                  default install root (gitignored)
