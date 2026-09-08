@@ -30,7 +30,7 @@ module load llvm/${LLVM_VERSION}
 # C compiles are serial, so NPROCS does not bound the peak -- each one alone
 # peaks at tens of GB of RSS.
 
-curl --output zig-src.tar.xz -L \
+curl --fail --output zig-src.tar.xz -L \
     ${SOURCE_PREFIX}/${INSTALL_VERSION}/${SOURCE_NAME}-${INSTALL_VERSION}.tar.xz
 mkdir -p zig-src
 tar xf zig-src.tar.xz -C zig-src --strip-components=1

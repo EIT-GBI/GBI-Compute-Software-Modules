@@ -13,7 +13,7 @@
 # cc` panic and `zig build-exe` fails in compiler_rt. `make zig MODE=build`
 # builds the real thing via the `llvm` module.
 
-curl --output zig-src.tar.xz -L \
+curl --fail --output zig-src.tar.xz -L \
     ${SOURCE_PREFIX}/${INSTALL_VERSION}/${SOURCE_NAME}-${INSTALL_VERSION}.tar.xz
 mkdir -p zig-src
 tar xf zig-src.tar.xz -C zig-src --strip-components=1

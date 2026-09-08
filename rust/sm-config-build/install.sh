@@ -50,8 +50,8 @@ ARCHIVE="${SOURCE_NAME}-${INSTALL_VERSION}-src.tar.xz"
 
 echo "Downloading ${SOURCE_PREFIX}/${ARCHIVE}"
 
-curl --output ${ARCHIVE}        -L ${SOURCE_PREFIX}/${ARCHIVE}
-curl --output ${ARCHIVE}.sha256 -L ${SOURCE_PREFIX}/${ARCHIVE}.sha256
+curl --fail --output ${ARCHIVE}        -L ${SOURCE_PREFIX}/${ARCHIVE}
+curl --fail --output ${ARCHIVE}.sha256 -L ${SOURCE_PREFIX}/${ARCHIVE}.sha256
 
 # This catches a truncated or tampered-in-transit download; it is not a
 # provenance check -- the checksum comes from the same host as the tarball. The
