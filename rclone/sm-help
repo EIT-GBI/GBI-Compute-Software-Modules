@@ -1,0 +1,2 @@
+rsync for cloud storage
+upstream ships static go binaries for every platform, hence no MODE=build recipe
