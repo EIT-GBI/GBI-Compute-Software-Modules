@@ -1,5 +1,7 @@
 # Move data with `gbi data`
 
+For the execution and data paths, see the [architecture report](ARCHITECTURE.md).
+
 Load the module, give it a source and destination, and watch the transfer:
 
 ```bash
