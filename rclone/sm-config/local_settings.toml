@@ -1,0 +1,5 @@
+name = "rclone"
+
+relocate = true
+destination = "{SM_ROOT}/rclone"
+modules = "{SM_ROOT}/modules"

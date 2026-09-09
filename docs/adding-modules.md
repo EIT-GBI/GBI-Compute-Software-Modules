@@ -21,13 +21,14 @@ bash -c "source opt/share/env.sh; ./run.sh opt/bin/build.sh -m ./usr opt/bin/ren
 cat usr/modules/<name>/<version>.lua
 bash -c "source opt/share/env.sh; module use $(pwd)/usr/modules; module load <name> && <tool> --version"
 
-# 5. recipe-vs-installed consistency check (needs a nushell)
-bash -c "source opt/share/env.sh; module load nu; make check TARGET=<name> GBI_MODULE_PATH=./usr"
-
-# 6. promote -- the Makefile auto-discovers it, no Makefile edit ever
+# 5. promote -- the Makefile auto-discovers it, no Makefile edit ever
 mv templates/rendered/<name> ./<name>
 make help            # target listed, with summary + versions?
 make -n <name>       # resolves to the install rule?
+
+# 6. recipe-vs-installed consistency check (needs a nushell, and must run
+#    after promotion -- make validates TARGET against discovered recipes)
+bash -c "source opt/share/env.sh; module load nu; make check TARGET=<name> GBI_MODULE_PATH=./usr"
 ```
 
 Then update the docs (see checklist at the end).
