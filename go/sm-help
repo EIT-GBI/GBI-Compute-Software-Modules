@@ -1,0 +1,2 @@
+the Go programming language toolchain
+bootstrapping go from source needs an existing go, hence no MODE=build recipe

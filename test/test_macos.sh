@@ -26,6 +26,7 @@ make uv
 make zig
 # NO NCDU binary releases for macOS -- upstream ships linux static builds only
 make parallel-tar
+make go
 
 # Buuild tests potentially take more time => leave them as optional. Assumed to
 # be true for heavy testing

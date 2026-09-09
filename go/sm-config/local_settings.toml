@@ -1,0 +1,5 @@
+name = "go"
+
+relocate = true
+destination = "{SM_ROOT}/go"
+modules = "{SM_ROOT}/modules"
