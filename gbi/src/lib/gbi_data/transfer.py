@@ -54,7 +54,7 @@ def ensure_parent(path, root):
     check_parent(path, root)
 
 
-def copy_stream(source, target, fd, rclone, lock, progress, target_kind="fss", timings=None):
+def copy_stream(source, target, fd, rclone, lock, progress, target_kind="fss", timings=None, max_bytes=None):
     timings = timings if timings is not None else {}
     started = time.monotonic()
     environment = {key: value for key, value in os.environ.items()
@@ -67,20 +67,29 @@ def copy_stream(source, target, fd, rclone, lock, progress, target_kind="fss", t
     source_fd = os.open(source, os.O_RDONLY | os.O_NOFOLLOW)
     try:
         child = subprocess.Popen(
-            [rclone, "cat", f"/dev/fd/{source_fd}", "--copy-links", "--config", "/dev/null",
+            [rclone, "cat", "/dev/fd", "--files-from-raw", "-", "--no-traverse",
+             "--copy-links", "--config", "/dev/null",
              "--retries", "1", "--low-level-retries", "1", "--multi-thread-streams", "0"],
-            stdout=subprocess.PIPE, env=environment, pass_fds=(lock.fileno(), source_fd),
-        )
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE, env=environment, pass_fds=(lock.fileno(), source_fd),
+        ) if rclone else None
+        if child:
+            # Select the pinned handle directly, without listing transient Go
+            # runtime descriptors in /dev/fd (which can disappear mid-listing).
+            child.stdin.write(f"{source_fd}\n".encode())
+            child.stdin.close()
     except BaseException:
         os.close(source_fd)
         os.close(fd)
         raise
     # The rclone child shares this process group and inherits the lock. Killing
     # the supervising job cannot let a retry write over surviving kernel I/O.
+    reader = child.stdout if child else os.fdopen(os.dup(source_fd), "rb")
     try:
         total, last = 0, 0.0
         with os.fdopen(fd, "wb") as output:
-            for block in iter(lambda: child.stdout.read(1024 * 1024), b""):
+            for block in iter(lambda: reader.read(1024 * 1024), b""):
+                if max_bytes is not None and total + len(block) > max_bytes:
+                    raise ValueError("source grew beyond the foreground byte budget; source kept")
                 output.write(block)
                 result.update(block)
                 total += len(block)
@@ -94,12 +103,12 @@ def copy_stream(source, target, fd, rclone, lock, progress, target_kind="fss", t
             write_json(progress, {"bytes": total, "phase": "closing", "path": str(source)})
             closing = time.monotonic()
         timings["close"] = time.monotonic() - closing
-        if child.wait():
+        if child and child.wait():
             raise OSError("rclone could not read the complete source")
     finally:
         os.close(source_fd)
-        child.stdout.close()
-        if child.poll() is None:
+        reader.close()
+        if child and child.poll() is None:
             child.terminate()
             child.wait()
     write_json(progress, {"bytes": total, "phase": "verifying", "path": str(source)})
@@ -120,6 +129,10 @@ def transfer(task):
         check_parent(source, source_root)
         ensure_parent(target, target_root)
         before = fingerprint(source)
+        if task.get("expected_source") is not None and before != task["expected_source"]:
+            raise ValueError("source changed since the foreground probe; source kept; retry the command")
+        if task.get("max_bytes") is not None and before[3] > task["max_bytes"]:
+            raise ValueError("source exceeds the foreground byte budget; source kept")
         link = stat.S_ISLNK(before[2]) or task.get("decode_link", False)
         if not link and not stat.S_ISREG(before[2]):
             raise ValueError("only regular files and symlinks can be transferred")
@@ -162,7 +175,8 @@ def transfer(task):
                         stream.write(os.fsencode(link_text))
                 else:
                     expected, copied_bytes = copy_stream(source, target, fd, task["rclone"], lock,
-                                                        Path(task["progress"]), task["target_kind"], timings)
+                                                        Path(task["progress"]), task["target_kind"], timings,
+                                                        task.get("max_bytes"))
                     if copied_bytes != before[3]:
                         raise ValueError("source stream was short or grew; source kept")
         # Alluxio closes asynchronously. Only our own fresh write gets a retry
@@ -211,7 +225,8 @@ def transfer(task):
             timings["source_recheck"] = time.monotonic() - rechecking
         record = {"source": str(source), "destination": str(target), "bytes": before[3],
                   "sha256": expected, "fingerprint": before, "kind": "symlink" if link else "file",
-                  "reused": reused, "event": "verified", "time": time.time(), "timings_seconds": timings}
+                  "reused": reused, "event": "verified", "time": time.time(), "timings_seconds": timings,
+                  "reader": "rclone" if task["rclone"] else "native"}
         # An append-only, fsynced verification receipt is required before unlink.
         saved["phase"] = "verified"
         write_json(journal, saved)

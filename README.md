@@ -236,7 +236,7 @@ build dependencies from the `module load` lines of its `install.sh`.
 | `ncdu` | `du`, but with a text-mode user interface | yes, needs `zig` |
 | `parallel-tar` | multi-threaded archival tools: compress large data sets, and validate their quality | yes, needs `rust` |
 | `go` | the Go programming language toolchain | no — bootstrapping needs an existing go |
-| [`gbi`](gbi/README.md) | verified data movement between HPC filesystems, with terminal progress | no — in-tree Python source; needs Python 3.9+ and rclone |
+| [`gbi`](gbi/README.md) | verified HPC data movement; immediate foreground transfers and automatic Slurm for bulk work | no — in-tree Python source; needs Python 3.9+ and rclone |
 | `rclone` | rsync for cloud storage | no — upstream ships static go binaries for every platform |
 
 Upstream `eza` and `ncdu` ship no macOS binaries, so their default-mode recipes

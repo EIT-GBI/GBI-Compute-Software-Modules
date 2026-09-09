@@ -3,6 +3,7 @@
 import json
 import os
 from pathlib import Path
+import re
 import shlex
 import shutil
 import subprocess
@@ -56,9 +57,11 @@ def submit(run_dir, command, site):
 
 
 def locate(home, job_id, archive_root):
-    if not job_id.isdigit():
-        raise ValueError("job ID must be a number")
+    if not re.fullmatch(r"(?:[0-9]+|[0-9]{8}T[0-9]{6}Z-[0-9a-f]{12})", job_id):
+        raise ValueError("use the Slurm job ID or the foreground transfer ID printed by gbi")
     for run in (home / "runs").glob("*"):
+        if run.name == job_id:
+            return run
         try:
             if json.loads((run / "slurm.json").read_text())["job_id"] == job_id:
                 return run
@@ -66,15 +69,17 @@ def locate(home, job_id, archive_root):
             continue
     archived = archive_root / ".gbi" / "transfers" / job_id
     for run in archived.glob("*"):
-        if (run / "progress.json").is_file():
+        if (run / "progress.json").is_file() or (run / "history.json").is_file():
             return run
     raise ValueError(f"no transfer record for job {job_id} in your GBI state")
 
 
 def read_progress(run_dir):
     try:
+        if (run_dir / "history.json").is_file():
+            return json.loads((run_dir / "history.json").read_text())["progress"]
         return json.loads((run_dir / "progress.json").read_text())
-    except (OSError, ValueError):
+    except (OSError, ValueError, KeyError):
         return {"phase": "queued", "files": 0, "bytes": 0, "freed": 0, "failed": 0,
                 "elapsed": 0, "discovered_bytes": 0, "discovery_complete": False}
 
@@ -90,10 +95,12 @@ def display(progress, width=24):
         bar = "[" + "=" * filled + " " * (width - filled) + f"] {proportion:6.1%}"
     else:
         bar = "[ discovering files ]" if progress.get("phase") == "running" else "[ awaiting job ]"
+    phases = ", ".join(f"{count} {phase}" for phase, count in sorted(progress.get("phases", {}).items()))
     return (f"{bar}  {progress['files']:,} verified  {human_bytes(completed)}  "
             f"{human_bytes(speed)}/s  freed {human_bytes(progress['freed'])}  "
             f"failed {progress['failed']}  "
-            f"active {progress.get('active', 0)} ({human_bytes(progress.get('active_bytes', 0))})")
+            f"active {progress.get('active', 0)} ({human_bytes(progress.get('active_bytes', 0))})" +
+            (f" · {phases}" if phases else ""))
 
 
 def terminal_display(progress):
@@ -117,10 +124,30 @@ def terminal_display(progress):
             f"Active {progress.get('active', 0)}" + (f": {phases}" if phases else ""))
 
 
+class ProgressDisplay:
+    """Use the same compact progress display in the foreground and job viewer."""
+    def __init__(self):
+        self.terminal = sys.stdout.isatty()
+        self.last_line = ""
+
+    def update(self, progress):
+        line = terminal_display(progress) if self.terminal else display(progress)
+        if self.terminal:
+            print(("\033[3A\r\033[J" if self.last_line else "") + line, end="", flush=True)
+        elif line != self.last_line:
+            print(line, flush=True)
+        self.last_line = line
+
+    def finish(self):
+        if self.terminal and self.last_line:
+            print(flush=True)
+        self.last_line = ""
+
+
 def watch(run_dir, job_id, follow=True, archive_root=None):
-    terminal = sys.stdout.isatty()
-    last_line, last_check, state = "", 0.0, "PENDING"
-    print(f"Transfer {job_id}   Log: {run_dir / 'slurm.out'}")
+    output = ProgressDisplay()
+    last_check, state = 0.0, "PENDING"
+    print(f"Transfer {job_id}   Records: {run_dir}")
     if follow:
         print("Ctrl-C detaches this display; the transfer continues.")
     try:
@@ -128,16 +155,12 @@ def watch(run_dir, job_id, follow=True, archive_root=None):
             if not run_dir.exists() and archive_root is not None:
                 run_dir = archive_root / ".gbi" / "transfers" / job_id / run_dir.name
             progress = read_progress(run_dir)
-            line = terminal_display(progress) if terminal else display(progress)
-            if terminal:
-                print(("\033[3A\r\033[J" if last_line else "") + line, end="", flush=True)
-            elif line != last_line:
-                print(line, flush=True)
-            last_line = line
+            output.update(progress)
             if progress["phase"] in ("complete", "failed", "interrupted"):
-                print(f"\n{progress['phase'].capitalize()}. Receipts: {run_dir / 'receipts.jsonl'}")
+                receipt = run_dir / ("history.json" if (run_dir / "history.json").is_file() else "receipts.jsonl")
+                print(f"\n{progress['phase'].capitalize()}. Receipts: {receipt}")
                 return 0 if progress["phase"] == "complete" else 1
-            if time.monotonic() - last_check > 15:
+            if job_id.isdigit() and time.monotonic() - last_check > 15:
                 try:
                     state = slurm_state(job_id)
                 except (OSError, subprocess.SubprocessError):
@@ -147,7 +170,7 @@ def watch(run_dir, job_id, follow=True, archive_root=None):
                 print(f"\nSlurm: {state}. No completed transfer summary; inspect {run_dir / 'slurm.out'}.")
                 return 1
             if not follow:
-                print(f"\nSlurm: {state}")
+                print(f"\nSlurm: {state}" if job_id.isdigit() else f"\nLocal transfer: {progress['phase']}")
                 return 0
             time.sleep(1)
     except KeyboardInterrupt:

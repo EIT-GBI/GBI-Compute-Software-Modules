@@ -11,6 +11,9 @@ DEFAULTS = {
     "partition": "", "time_limit": "1-00:00:00", "cpus": "2", "mem": "4G",
     "jobs": "4", "file_timeout": "86400", "verify_settle_seconds": "1200",
     "rclone_bin": "rclone", "reserved_names": "",
+    "inline_bytes": "8589934592",
+    "native_bytes": "8388608", "native_files": "32",
+    "inline_scan_entries": "100000", "inline_probe_seconds": "5",
 }
 
 
@@ -27,9 +30,12 @@ class Site:
             if not separator or key not in DEFAULTS:
                 raise ValueError(f"{self.path}:{number}: unknown setting {key!r}")
             self.values[key] = value
-        for key in ("jobs", "cpus", "file_timeout", "verify_settle_seconds"):
+        for key in ("jobs", "cpus", "file_timeout", "verify_settle_seconds", "inline_bytes",
+                    "native_bytes", "native_files", "inline_scan_entries"):
             if int(self.values[key]) < 1:
                 raise ValueError(f"{key} must be positive")
+        if float(self.values["inline_probe_seconds"]) <= 0:
+            raise ValueError("inline_probe_seconds must be positive")
         self.user = pwd.getpwuid(os.getuid()).pw_name
         self.aliases = {Path(self.values[key]).expanduser().absolute() / self.user
                         for key in ("lustre_root", "fss_root", "bucket_root") if self.values[key]}
