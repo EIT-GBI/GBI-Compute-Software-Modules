@@ -237,6 +237,9 @@ build dependencies from the `module load` lines of its `install.sh`.
 | `parallel-tar` | multi-threaded archival tools: compress large data sets, and validate their quality | yes, needs `rust` |
 | `go` | the Go programming language toolchain | no — bootstrapping needs an existing go |
 
+Upstream `eza` and `ncdu` ship no macOS binaries, so their default-mode recipes
+fail fast on darwin with a pointer to `make <target> MODE=build`.
+
 Three more targets are **opt-in** — valid for `make <target>` and `make clean`,
 but skipped by `make all`, since they are either large or only interesting as
 build dependencies:

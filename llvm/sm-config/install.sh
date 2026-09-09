@@ -22,6 +22,6 @@ echo "Downloading ${SOURCE}"
 echo "NOTE: this archive is >1GB -- it carries the full clang/lld development"
 echo "      libraries that zig's CMake build links against"
 
-curl --output downloaded.tar.xz -L ${SOURCE}
+curl --fail --output downloaded.tar.xz -L ${SOURCE}
 mkdir -p downloaded
 tar xf downloaded.tar.xz -C downloaded --strip-components=1

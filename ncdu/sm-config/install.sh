@@ -16,7 +16,7 @@ SOURCE="${SOURCE_PREFIX}/${SOURCE_NAME}-${VERSION}-linux-${ARCH}.tar.gz"
 
 echo "Downloading ${SOURCE}"
 
-curl --output downloaded.tar.gz -L ${SOURCE}
+curl --fail --output downloaded.tar.gz -L ${SOURCE}
 mkdir -p downloaded
 # these tarballs hold a bare `ncdu` binary, so there is nothing to strip
 tar xf downloaded.tar.gz -C downloaded

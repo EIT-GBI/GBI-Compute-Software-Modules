@@ -1,1 +1,2 @@
 ls but better
+binary releases are linux-only, use MODE=build elsewhere

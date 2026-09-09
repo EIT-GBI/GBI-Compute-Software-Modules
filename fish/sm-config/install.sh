@@ -10,7 +10,7 @@ TARGET="downloaded.${EXT}"
 
 echo "Downloading ${SOURCE}"
 
-curl --output ${TARGET} -L ${SOURCE}
+curl --fail --output ${TARGET} -L ${SOURCE}
 mkdir -p downloaded
 
 if [[ $OS == "linux" ]]

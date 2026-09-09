@@ -12,6 +12,6 @@ SOURCE="${SOURCE_PREFIX}/${SOURCE_NAME}-${ARCH}-${OS}-${VERSION}.tar.xz"
 
 echo "Downloading ${SOURCE}"
 
-curl --output downloaded.tar.xz -L ${SOURCE}
+curl --fail --output downloaded.tar.xz -L ${SOURCE}
 mkdir -p downloaded
 tar xf downloaded.tar.xz -C downloaded --strip-components=1
