@@ -14,10 +14,10 @@ of Bash and Lua pieces that
 2. install software and generate the matching `.lua` modulefiles via
    `simple-modules`, driven by declarative TOML recipes.
 
-No root, no system package manager, no Python. Everything is self-contained
-under this checkout (or wherever you point `GBI_MODULE_PATH`). The single
-exception is `rust MODE=build` — rustc's own build system is driven by `x.py`,
-so that one recipe needs a `python3` on `PATH`.
+The module framework needs no root, system package manager or Python.
+Everything is self-contained under this checkout (or wherever you point
+`GBI_MODULE_PATH`). Individual tools can require Python: `rust MODE=build`
+uses `x.py`, and the `gbi` data CLI requires Python 3.9+ on execution nodes.
 
 ## Quick start
 
@@ -236,6 +236,7 @@ build dependencies from the `module load` lines of its `install.sh`.
 | `ncdu` | `du`, but with a text-mode user interface | yes, needs `zig` |
 | `parallel-tar` | multi-threaded archival tools: compress large data sets, and validate their quality | yes, needs `rust` |
 | `go` | the Go programming language toolchain | no — bootstrapping needs an existing go |
+| [`gbi`](gbi/README.md) | verified data movement between HPC filesystems, with terminal progress | no — in-tree Python source; needs Python 3.9+ and rclone |
 | `rclone` | rsync for cloud storage | no — upstream ships static go binaries for every platform |
 
 Upstream `eza` and `ncdu` ship no macOS binaries, so their default-mode recipes
@@ -363,14 +364,14 @@ make GBI_MODULE_PATH=$HOME/local MODE=build neovim
 ```
 
 `make all` walks every discovered target without an `sm-opt-in` marker
-(today: `bat eza fish go ncdu neovim nu parallel-tar rclone rust uv zig`) — `cmake`,
+(today: `bat eza fish gbi go ncdu neovim nu parallel-tar rclone rust uv zig`) — `cmake`,
 `llvm` and `zig-bootstrap` carry the marker, so ask for them by name. Under
 `MODE=build`, `all` installs `rust` and `zig` in default mode first — both
 *can* be built from source, but only against the opt-in `llvm` module, and
 everything else needs them — and then builds every target whose `module load`
 dependencies those two cover (today: `bat eza ncdu nu parallel-tar uv`);
 targets that need anything else are skipped and reported (`fish` and `neovim`
-load the opt-in `cmake`, and `go` and `rclone` have no build recipes).
+load the opt-in `cmake`, and `gbi`, `go` and `rclone` have no build recipes).
 
 ## Adding a module
 

@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+set -euo pipefail
+here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
+export PYTHONPATH="$here/../lib${PYTHONPATH:+:$PYTHONPATH}"
+exec python3 -B -m gbi_data.cli "$@"
