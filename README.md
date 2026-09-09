@@ -446,6 +446,12 @@ upstream naming is unusual — [neovim](neovim/sm-config/install.sh),
 [parallel-tar](parallel-tar/sm-config/install.sh) show what those tweaks tend
 to look like.
 
+**With an AI agent:** point it at [AGENTS.md](AGENTS.md) (repo invariants +
+condensed workflow; picked up automatically by most coding agents) and
+[docs/adding-modules.md](docs/adding-modules.md) (the full playbook, gotchas
+included). Claude Code triggers on these automatically via
+`.claude/skills/add-module/`.
+
 ## Repository layout
 
 ```
