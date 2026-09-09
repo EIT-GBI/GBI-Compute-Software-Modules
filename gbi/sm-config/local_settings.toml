@@ -1,0 +1,4 @@
+name = "gbi"
+relocate = true
+destination = "{SM_ROOT}/gbi"
+modules = "{SM_ROOT}/modules"

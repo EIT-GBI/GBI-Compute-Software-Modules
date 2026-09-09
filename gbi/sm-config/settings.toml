@@ -1,0 +1,19 @@
+[env]
+GBI_SOURCE_DIR = "{SITE_CONFIG_DIR}/../src"
+GBI_VERSION_FILE = "{SITE_CONFIG_DIR}/../VERSION"
+VERSION = "{INSTALL_VERSION}"
+
+[install]
+versions = ["0.2.0"]
+prefix = "{SITE_DESTINATION}/{STAGE_DIR}"
+format = "^downloaded$"
+destination = "{SITE_DESTINATION}/{INSTALL_VERSION_VARIANT}"
+stage = true
+
+[module]
+PATH = "{INSTALL_DIR}"
+INSTALL_VERSION = "{INSTALL_VERSION}"
+
+[post]
+safe = true
+clean = true

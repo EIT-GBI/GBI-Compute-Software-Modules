@@ -28,6 +28,7 @@ make zig
 make parallel-tar
 make go
 make rclone
+make gbi
 
 # Buuild tests potentially take more time => leave them as optional. Assumed to
 # be true for heavy testing
