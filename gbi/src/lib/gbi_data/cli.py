@@ -2,7 +2,6 @@
 
 import argparse
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
-import fnmatch
 import hashlib
 import json
 import os
@@ -17,6 +16,7 @@ import uuid
 
 from . import __version__
 from . import jobs
+from .selection import entries, probe
 from .storage import Site, overlap
 from .transfer import ensure_parent, receipt, write_json
 
@@ -35,9 +35,10 @@ def parser():
         command.add_argument("--delete-source", action="store_true",
                              help="explicitly allow source deletion when moving OUT of Alluxio/Object Storage")
         command.add_argument("--dry-run", action="store_true", help="show route and policy without writing")
-        command.add_argument("--detach", action="store_true", help="submit and return without following progress")
+        execution = command.add_mutually_exclusive_group()
+        execution.add_argument("--detach", action="store_true", help="run in the background through Slurm")
         command.add_argument("--wait", action="store_true", help="follow progress even when output is not a terminal")
-        command.add_argument("--local", action="store_true", help="execute inside an existing Slurm allocation")
+        execution.add_argument("--local", action="store_true", help="execute inside an existing Slurm allocation")
     status = verbs.add_parser("status", help="show a transfer's progress")
     status.add_argument("job_id")
     status.add_argument("--watch", action="store_true", help="follow until the transfer finishes")
@@ -70,24 +71,17 @@ def plan(options, site):
             "verb": options.verb, "uid": os.getuid(), "site": str(site.path)}
 
 
-def entries(source, site, root, patterns):
-    """Depth-first scandir iterator: no whole-tree inventory or checksum prepass."""
-    if source.is_symlink() or not source.is_dir():
-        yield source, False
-        return
-    with os.scandir(source) as children:
-        empty = True
-        for child in children:
-            empty = False
-            path = Path(child.path)
-            if site.is_reserved(path, root):
-                continue
-            if child.is_dir(follow_symlinks=False):
-                yield from entries(path, site, root, patterns)
-            elif not patterns or any(fnmatch.fnmatchcase(child.name, pattern) for pattern in patterns):
-                yield path, False
-        if empty and not patterns:
-            yield source, True
+def execution_plan(specification, site, options):
+    allocated = bool(os.environ.get("SLURM_JOB_ID"))
+    if options.local and not allocated:
+        raise ValueError("--local requires an existing Slurm allocation")
+    selected = None if options.detach else probe(specification, site)
+    mode = "slurm" if options.detach else "allocation" if allocated else "inline" if selected is not None else "slurm"
+    native = selected is not None and len(selected) <= int(site.values["native_files"]) and sum(
+        item["fingerprint"][3] for item in selected if not item["empty"]
+    ) <= int(site.values["native_bytes"])
+    return {**specification, "execution": mode, "selection": selected,
+            "reader": "native" if native else "rclone"}
 
 
 def supervise(task, timeout, stopped):
@@ -149,8 +143,11 @@ def run(run_dir, site, home):
         if (str(path), kind, str(root)) != (specification[prefix], specification[prefix + "_kind"],
                                          specification[prefix + "_root"]):
             raise ValueError("storage route changed since submission; submit again")
-    rclone = shutil.which(site.values["rclone_bin"])
-    if not rclone:
+    selected = specification.get("selection")
+    inline = specification.get("execution") == "inline"
+    native = specification.get("reader") == "native"
+    rclone = None if native else shutil.which(site.values["rclone_bin"])
+    if not native and not rclone:
         raise ValueError("rclone is unavailable; the installed gbi module must load its dependency")
     source, target = Path(specification["source"]), Path(specification["target"])
     source_root, target_root = Path(specification["source_root"]), Path(specification["target_root"])
@@ -166,9 +163,13 @@ def run(run_dir, site, home):
     progress = {"phase": "running", "files": 0, "bytes": 0, "freed": 0, "failed": 0,
                 "discovered_files": 0, "discovered_bytes": 0, "discovery_complete": False,
                 "elapsed": 0, "active": 0, "active_bytes": 0}
-    iterator = iter(entries(source, site, source_root, specification["include"]))
+    iterator = iter((Path(item["path"]), item["empty"]) for item in selected) if selected is not None else iter(
+        entries(source, site, source_root, specification["include"]))
+    snapshots = {item["path"]: item["fingerprint"] for item in selected} if selected is not None else {}
+    file_specification = {key: value for key, value in specification.items() if key != "selection"}
     pending = {}
     width = int(site.values["jobs"])
+    output = jobs.ProgressDisplay()
     try:
         with TransferPool(stopped, max_workers=width) as pool:
             while pending or not progress["discovery_complete"]:
@@ -193,12 +194,14 @@ def run(run_dir, site, home):
                     elif decode and specification["target_kind"] != "alluxio":
                         destination = destination.with_name(destination.name[:-len(".rclonelink")])
                     active = run_dir / "active" / (uuid.uuid4().hex + ".json")
-                    task = {**specification, "source": str(path), "target": str(destination),
+                    task = {**file_specification, "source": str(path), "target": str(destination),
                             "state": str(state), "progress": str(active), "rclone": rclone,
                             "receipt": str(run_dir / "receipts.jsonl"), "encode_link": encode or
                             (decode and specification["target_kind"] == "alluxio"), "decode_link": decode,
                             "selection_root": str(source if specification["directory"] else source.parent),
-                            "settle_seconds": int(site.values["verify_settle_seconds"])}
+                            "settle_seconds": int(site.values["verify_settle_seconds"]),
+                            "expected_source": snapshots.get(str(path)),
+                            "max_bytes": int(site.values["inline_bytes"]) if selected is not None else None}
                     progress["discovered_files"] += 1
                     progress["discovered_bytes"] += path.lstat().st_size
                     future = pool.submit(supervise, task, int(site.values["file_timeout"]), stopped)
@@ -214,12 +217,14 @@ def run(run_dir, site, home):
                         progress["failed"] += 1
                         record = {"event": "failed", "source": str(path), "error": outcome["error"], "time": time.time()}
                         receipt(run_dir / "receipts.jsonl", record)
+                        output.finish()
                         print(f"FAILED {path}: {outcome['error']}", flush=True)
                     else:
                         progress["files"] += 1
                         progress["bytes"] += outcome["bytes"]
                         progress["freed"] += outcome["bytes"] if outcome["deleted"] else 0
-                        print(f"VERIFIED {'MOVED' if outcome['deleted'] else 'COPIED'} {path} bytes={outcome['bytes']}", flush=True)
+                        if not output.terminal:
+                            print(f"VERIFIED {'MOVED' if outcome['deleted'] else 'COPIED'} {path} bytes={outcome['bytes']}", flush=True)
                 if time.monotonic() - last_publish >= 2:
                     progress["elapsed"] = time.monotonic() - started
                     progress["active"] = len(pending)
@@ -234,22 +239,24 @@ def run(run_dir, site, home):
                         except (OSError, ValueError, KeyError):
                             pass
                     write_json(run_dir / "progress.json", progress)
-                    print(jobs.display(progress), flush=True)
+                    output.update(progress)
                     last_publish = time.monotonic()
     except (OSError, ValueError) as error:
         stopped.set()
         progress["failed"] += 1
+        output.finish()
         print(f"FAILED discovery: {error}", flush=True)
     progress["phase"] = "interrupted" if stopped.is_set() else "failed" if progress["failed"] else "complete"
     progress["elapsed"] = time.monotonic() - started
     progress["active"] = 0
     progress["active_bytes"] = 0
     progress["phases"] = {}
-    print(jobs.display(progress), flush=True)
+    output.update(progress)
+    output.finish()
     print(f"{progress['phase'].capitalize()}. Receipts: {run_dir / 'receipts.jsonl'}", flush=True)
     write_json(run_dir / "progress.json", {**progress, "phase": "saving history"})
     try:
-        history = publish_history(run_dir, site, state, rclone, progress, stopped)
+        history = publish_history(run_dir, site, state, rclone, progress, stopped, inline)
         print(f"History: {history}", flush=True)
         # All history files passed independent readback. The open Slurm log
         # descriptor can now disappear with this temporary run directory.
@@ -261,21 +268,28 @@ def run(run_dir, site, home):
     return 0 if progress["phase"] == "complete" else 1
 
 
-def publish_history(run_dir, site, state, rclone, progress, stopped):
+def publish_history(run_dir, site, state, rclone, progress, stopped, inline=False):
     """Publish closed immutable files; never append logs through Alluxio FUSE."""
     archive_root = site.roots["alluxio"]
     site.check_root(archive_root)
-    job_id = str(os.environ.get("SLURM_JOB_ID", run_dir.name))
+    job_id = run_dir.name if inline else str(os.environ.get("SLURM_JOB_ID", run_dir.name))
     destination = archive_root / ".gbi" / "transfers" / job_id / run_dir.name
     records = run_dir / "records"
     records.mkdir(exist_ok=True)
     sys.stdout.flush()
     sys.stderr.flush()
-    for name in ("request.json", "receipts.jsonl", "slurm.out", "slurm.json"):
-        original = run_dir / name
-        if original.exists():
-            shutil.copyfile(original, records / name)
-    write_json(records / "progress.json", progress)
+    if inline:
+        receipts = run_dir / "receipts.jsonl"
+        write_json(records / "history.json", {
+            "request": json.loads((run_dir / "request.json").read_text()), "progress": progress,
+            "receipts": [json.loads(line) for line in receipts.read_text().splitlines()] if receipts.exists() else [],
+        })
+    else:
+        for name in ("request.json", "receipts.jsonl", "slurm.out", "slurm.json"):
+            original = run_dir / name
+            if original.exists():
+                shutil.copyfile(original, records / name)
+        write_json(records / "progress.json", progress)
     # The publication receipt remains temporary on scratch. The immutable
     # destination history records describe the data transfer, not themselves.
     paths = sorted(records.iterdir(), key=lambda path: path.name == "progress.json")
@@ -314,19 +328,21 @@ def main():
                               options.watch, site.roots["alluxio"])
         if options.verb == "_run":
             return run(options.run_dir.resolve(), site, home)
-        specification = plan(options, site)
-        if not options.local and not site.values["partition"]:
+        specification = execution_plan(plan(options, site), site, options)
+        if specification["execution"] == "slurm" and not site.values["partition"]:
             raise ValueError("the gbi module has no Slurm partition configured")
         print(f"{specification['source_kind']} → {specification['target_kind']}: "
               f"{specification['source']} → {specification['target']}")
         print("Sources: delete each verified file." if specification["delete"] else "Sources: keep originals.")
         if options.verb == "move" and specification["source_kind"] == "alluxio" and not specification["delete"]:
             print("Alluxio/Object Storage originals stay. Use --delete-source to explicitly remove them.")
+        mode = specification["execution"]
+        print({"inline": "Foreground transfer (" + specification["reader"] + "). Ctrl-C stops the transfer.",
+               "allocation": "Using your existing Slurm allocation.",
+               "slurm": "Submitting background work to Slurm."}[mode])
         if options.dry_run:
             print("Dry run: no job submitted and no files written.")
             return 0
-        if options.local and not os.environ.get("SLURM_JOB_ID"):
-            raise ValueError("--local runs inside an existing Slurm job; omit it to submit automatically")
         site.check_root(site.roots["lustre"])
         site.check_root(site.roots["alluxio"])
         run_dir = home / "runs" / (time.strftime("%Y%m%dT%H%M%SZ", time.gmtime()) + "-" + uuid.uuid4().hex[:12])
@@ -342,7 +358,9 @@ def main():
         specification["code_sha256"] = source_hash.hexdigest()
         specification["version"] = __version__
         write_json(run_dir / "request.json", specification)
-        if options.local:
+        if mode != "slurm":
+            if mode == "inline":
+                print(f"Transfer {run_dir.name}. History: gbi data status {run_dir.name}")
             return run(run_dir, site, home)
         command = [sys.executable, "-B", "-m", "gbi_data.cli", "data", "_run", str(run_dir)]
         job_id = jobs.submit(run_dir, command, site)

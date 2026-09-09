@@ -15,13 +15,27 @@ destination directory you name. A single file goes to the named destination
 file, or into an existing destination directory under its original name.
 Spaces and unusual file names are supported; quote paths in your shell.
 
-The command submits to Slurm as you. It chooses the configured partition and
-parallelism; there is no Prefect page, cloud login or transfer-engine choice.
-In a terminal it follows progress automatically. Ctrl-C detaches the display
-without cancelling the job. You can log out and reconnect later:
+Everyday transfers start immediately in your current shell. Up to **8 GiB**
+of selected data runs in the foreground, including Alluxio transfers, with up
+to four files copying concurrently. Tiny selections (up to 8 MiB and 32 files)
+use native I/O; larger foreground selections use parallel rclone readers.
+The tiny-selection limit chooses a reader, **not whether to queue a job**.
+Every reader uses the same checksum, receipt and source-deletion safeguards.
+
+Above 8 GiB the CLI submits to the configured Slurm partition. It also uses
+Slurm when a directory cannot be sized within a bounded metadata scan (five
+seconds or 100,000 visited entries). This avoids an unbounded login-node tree
+walk. Already inside a Slurm allocation, the CLI reuses it automatically.
+These are configurable defaults, not an estimate of completion time.
+
+Foreground progress appears immediately. Ctrl-C stops foreground work;
+unfinished files keep their sources. There is no five-minute foreground
+cutoff. Use `--detach` to request a Slurm job explicitly when work should
+survive logging out. For submitted jobs, the terminal follows progress and
+Ctrl-C detaches only the display. Reconnect using the printed transfer ID:
 
 ```bash
-gbi data status JOB_ID --watch
+gbi data status TRANSFER_ID --watch
 ```
 
 The display shows verified files and bytes, active transfer bytes, average
@@ -34,7 +48,7 @@ rechecking, so a long close does not look like a stalled copy. Receipts include
 separate timings for these operations. Close timing measures the client call;
 asynchronous completion waits are included in destination readback time.
 
-`gbi data status JOB_ID` prints one update. Slurm's usual `scancel JOB_ID`
+`gbi data status TRANSFER_ID` prints one update. Slurm's usual `scancel JOB_ID`
 cancels the transfer itself; already verified moves remain moved and incomplete
 files retain their sources.
 
@@ -99,10 +113,14 @@ the destination filesystem's timestamp precision.
 
 Live progress, retry state and the Slurm log use a private `.gbi` directory on
 Lustre scratch. No transfer history accumulates on FSS. Finished records are
-published as immutable files under your Alluxio `.gbi/transfers/JOB_ID/` tree,
+published as immutable files under your Alluxio `.gbi/transfers/TRANSFER_ID/` tree,
 independently read back, and then the temporary run directory is removed.
 `status` finds both active and archived records. If Alluxio history publication
-fails, the job reports failure and retains its scratch records for recovery.
+fails, the command reports failure and retains its scratch records for recovery.
+
+Foreground history bundles the request, final progress and receipts in one
+immutable `history.json`, avoiding multiple tiny Alluxio uploads. Slurm history
+keeps separate records including its output log.
 
 The append-only JSONL receipt records each verified source/destination,
 SHA-256, source fingerprint and subsequent deletion. The request records the
@@ -118,12 +136,17 @@ gbi data move SOURCE DESTINATION --include '*.pt' --include '*.pt.*'
 gbi data copy SOURCE DESTINATION --wait
 ```
 
-Dry-run prints paths and deletion policy without scanning the entire tree or
-writing anything. File discovery happens on the execution node and streams into
-a bounded number of workers. `--include` matches file names, not full paths.
-In scripts, submission returns immediately unless `--wait` is specified.
-`--local` executes within an existing Slurm allocation; it is refused on login
-nodes to avoid tying a transfer's lifetime to a login session.
+Dry-run prints paths, deletion policy and the selected execution mode without
+writing anything. It uses the same bounded metadata probe as a real command;
+larger tree discovery streams into the worker pool on the execution node.
+`--include` matches file names recursively, not full paths. A foreground
+selection is a metadata snapshot: files added after the probe are not included,
+and changes to selected files are rejected before copying.
+
+Foreground calls wait for completion, including in scripts. Slurm submission
+returns immediately in scripts unless `--wait` is specified. `--detach`
+explicitly submits background work. `--local` requires an existing allocation;
+allocation reuse is automatic without it too.
 
 Exit 0 means successful submission, or a fully completed transfer when waiting.
 Exit 1 means a failed/interrupted transfer or failed history publication;
@@ -146,8 +169,8 @@ GBI_SITE_PARTITION=site-partition make gbi
 
 For a shared cluster installation, run the recipe as a software maintainer
 from the reviewed release checkout and add `GBI_MODULE_PATH=/site/shared/software`
-to the `make` command. Software goes under `gbi/0.2.0` and the modulefile under
-`modules/gbi/0.2.0.lua` in that tree. Use the same install root as the cluster's
+to the `make` command. Software goes under `gbi/0.3.0` and the modulefile under
+`modules/gbi/0.3.0.lua` in that tree. Use the same install root as the cluster's
 existing rclone module. When its `modules` directory is already in the shared
 Lmod environment, users only need `module load gbi`; no per-user installation,
 container rebuild or login-node restart is required. Check `module show gbi`,
@@ -179,3 +202,8 @@ Set `PYTHONPATH` to the installed module's `lib` directory when running these
 Python tests directly. They retain fixtures and evidence for inspection.
 `tests/cluster_lock_test.py NEW_SCRATCH_DIRECTORY` runs with `srun --nodes=2
 --ntasks=2 --ntasks-per-node=1`; select Slurm nodes on distinct physical hosts.
+
+`tests/cluster_adaptive_test.py` checks fresh foreground fixtures from a login
+shell, native and parallel rclone readers, the bulk planning boundary and
+explicit background execution. Run it inside an allocation to check reuse.
+It retains fixtures and receipt-backed results for inspection.

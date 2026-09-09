@@ -1,3 +1,3 @@
-"""User-owned filesystem transfers, executed by Slurm."""
+"""User-owned filesystem transfers with bounded local and Slurm execution."""
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"

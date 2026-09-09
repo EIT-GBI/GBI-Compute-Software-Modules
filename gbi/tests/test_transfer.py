@@ -10,10 +10,12 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 import unittest
 from unittest.mock import patch
 
 from gbi_data import cli, jobs
+from gbi_data import selection
 from gbi_data.storage import Site, fingerprint
 from gbi_data.transfer import copy_stream, transfer
 
@@ -131,6 +133,30 @@ class Transfers(unittest.TestCase):
         self.assertTrue(self.source.exists())
         self.assertEqual(self.source.read_bytes(), self.target.read_bytes())
 
+    def test_native_copy_keeps_source_when_receipt_fails(self):
+        with patch("gbi_data.transfer.receipt", side_effect=OSError("scratch unavailable")):
+            with self.assertRaises(OSError):
+                transfer({**self.task, "rclone": None})
+        self.assertEqual(self.source.read_bytes(), self.target.read_bytes())
+
+    def test_changed_small_selection_cannot_start_copying(self):
+        original = fingerprint(self.source)
+        self.source.write_bytes(b"changed")
+        with self.assertRaisesRegex(ValueError, "changed since the foreground probe"):
+            transfer({**self.task, "rclone": None, "expected_source": original})
+        self.assertFalse(self.target.exists())
+        self.assertEqual(self.source.read_bytes(), b"changed")
+
+    def test_growing_native_stream_stops_at_the_small_transfer_budget(self):
+        def grow(*args):
+            self.source.write_bytes(b"x" * 2 * 1024 * 1024)
+            return copy_stream(*args)
+        with patch("gbi_data.transfer.copy_stream", side_effect=grow):
+            with self.assertRaisesRegex(ValueError, "grew beyond"):
+                transfer({**self.task, "rclone": None, "max_bytes": 1024 * 1024})
+        self.assertTrue(self.source.exists())
+        self.assertLessEqual(self.target.stat().st_size, 1024 * 1024)
+
     def test_partial_retry_replaces_only_owned_output(self):
         def partial(source, target, fd, *args):
             with os.fdopen(fd, "wb") as output:
@@ -205,6 +231,129 @@ class Interface(unittest.TestCase):
             (root / self.user).mkdir(parents=True)
         self.conf.write_text("".join(f"{name}_root = {root}\n" for name, root in roots.items()) + "partition = test\n")
         self.site = Site(self.conf)
+
+    def test_small_file_all_routes_needs_neither_slurm_nor_rclone(self):
+        environment = {**os.environ, "GBI_DATA_SITE_CONF": str(self.conf), "PATH": ""}
+        environment.pop("SLURM_JOB_ID", None)
+        for source_kind, source_root in self.site.roots.items():
+            for target_kind, target_root in self.site.roots.items():
+                if source_kind == target_kind:
+                    continue
+                source = source_root / f"small-to-{target_kind}"
+                source.write_bytes(os.urandom(5000))
+                expected = source.read_bytes()
+                target = target_root / f"small-from-{source_kind}"
+                result = subprocess.run([sys.executable, "-B", "-m", "gbi_data.cli", "data", "move",
+                                         str(source), str(target)], env=environment,
+                                        capture_output=True, text=True, timeout=10)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertIn("Foreground transfer", result.stdout)
+                self.assertNotIn("Submitted transfer", result.stdout)
+                self.assertEqual(target.read_bytes(), expected)
+                self.assertEqual(source.exists(), source_kind == "alluxio")
+        histories = list((self.site.roots["alluxio"] / ".gbi/transfers").glob("*/*/history.json"))
+        self.assertEqual(len(histories), 6)
+        for path in histories:
+            record = json.loads(path.read_text())
+            self.assertEqual(record["request"]["execution"], "inline")
+            self.assertEqual(record["progress"]["phase"], "complete")
+            self.assertEqual(record["receipts"][0]["reader"], "native")
+            status = subprocess.run([sys.executable, "-B", "-m", "gbi_data.cli", "data", "status",
+                                     path.parent.name], env=environment, capture_output=True, text=True, timeout=10)
+            self.assertEqual(status.returncode, 0, status.stdout + status.stderr)
+            self.assertIn("Complete", status.stdout)
+        self.assertEqual(list((self.site.roots["lustre"] / ".gbi/runs").iterdir()), [])
+
+    def test_large_and_explicit_background_requests_submit_without_moving(self):
+        binary = self.base / "bin"
+        binary.mkdir()
+        sbatch = binary / "sbatch"
+        sbatch.write_text("#!/bin/sh\nprintf '314159\\n'\n")
+        sbatch.chmod(0o700)
+        environment = {**os.environ, "GBI_DATA_SITE_CONF": str(self.conf), "PATH": str(binary)}
+        environment.pop("SLURM_JOB_ID", None)
+        for name, size, flags in (("large", 8589934593, []), ("background", 5000, ["--detach"])):
+            source = self.site.roots["lustre"] / name
+            with source.open("wb") as stream:
+                stream.truncate(size)
+            result = subprocess.run([sys.executable, "-B", "-m", "gbi_data.cli", "data", "move",
+                                     str(source), str(self.site.roots["alluxio"] / name), *flags],
+                                    env=environment, capture_output=True, text=True, timeout=10)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn("Submitted transfer 314159", result.stdout)
+            self.assertEqual(source.stat().st_size, size)
+        for path in (self.site.roots["lustre"] / ".gbi/runs").glob("*/request.json"):
+            record = json.loads(path.read_text())
+            self.assertEqual(record["execution"], "slurm")
+            self.assertIsNone(record["selection"])
+
+    def test_probe_bounds_file_count_and_excluded_entry_scan(self):
+        self.conf.write_text(self.conf.read_text() + "inline_scan_entries = 32\n")
+        self.site = Site(self.conf)
+        source = self.site.roots["lustre"] / "tree"
+        source.mkdir()
+        for number in range(33):
+            (source / str(number)).touch()
+        options = cli.parser().parse_args(["data", "move", str(source), str(self.site.roots["alluxio"] / "tree")])
+        specification = cli.plan(options, self.site)
+        self.assertIsNone(selection.probe(specification, self.site))
+        self.site.values["inline_scan_entries"] = "20"
+        with self.assertRaisesRegex(ValueError, "larger scan"):
+            selection.foreground_selection({**specification, "include": ["*.pt"]}, self.site)
+
+    def test_foreground_engine_and_slurm_threshold_are_independent(self):
+        source = self.site.roots["lustre"] / "file"
+        for destination_kind in ("fss", "alluxio"):
+            for size, mode, reader in ((5000, "inline", "native"),
+                                       (9 * 1024**2, "inline", "rclone"),
+                                       (2 * 1024**3, "inline", "rclone"),
+                                       (8 * 1024**3, "inline", "rclone"),
+                                       (8 * 1024**3 + 1, "slurm", "rclone")):
+                with source.open("wb") as stream:
+                    stream.truncate(size)
+                options = cli.parser().parse_args(["data", "move", str(source),
+                                                  str(self.site.roots[destination_kind] / "destination")])
+                with patch.dict(os.environ, {key: value for key, value in os.environ.items()
+                                            if key != "SLURM_JOB_ID"}, clear=True):
+                    planned = cli.execution_plan(cli.plan(options, self.site), self.site, options)
+                self.assertEqual((planned["execution"], planned["reader"]), (mode, reader))
+
+    def test_everyday_directory_uses_parallel_rclone_without_slurm(self):
+        source = self.site.roots["lustre"] / "everyday"
+        source.mkdir()
+        for number in range(40):
+            (source / str(number)).write_bytes(os.urandom(1000))
+        target = self.site.roots["alluxio"] / "everyday"
+        environment = {**os.environ, "GBI_DATA_SITE_CONF": str(self.conf)}
+        environment.pop("SLURM_JOB_ID", None)
+        result = subprocess.run([sys.executable, "-B", "-m", "gbi_data.cli", "data", "move",
+                                 str(source), str(target)], env=environment,
+                                capture_output=True, text=True, timeout=30)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("Foreground transfer (rclone", result.stdout)
+        self.assertNotIn("Submitted transfer", result.stdout)
+        history = next((self.site.roots["alluxio"] / ".gbi/transfers").glob("*/*/history.json"))
+        bundle = json.loads(history.read_text())
+        self.assertEqual(bundle["progress"]["files"], 40)
+        self.assertTrue(all(record["reader"] == "rclone" for record in bundle["receipts"]
+                            if record["event"] == "verified"))
+        self.assertEqual(len(list(target.iterdir())), 40)
+
+    def test_probe_timeout_falls_back_without_writing(self):
+        reader = self.base / "slow-probe"
+        reader.write_text("#!/bin/sh\nexec sleep 60\n")
+        reader.chmod(0o700)
+        self.site.values["inline_probe_seconds"] = "0.05"
+        started = time.monotonic()
+        with patch("gbi_data.selection.sys.executable", str(reader)):
+            self.assertIsNone(selection.probe({}, self.site))
+        self.assertLess(time.monotonic() - started, 2)
+        self.assertFalse((self.site.roots["lustre"] / ".gbi").exists())
+
+    def test_existing_allocation_does_not_submit_another_job(self):
+        options = cli.parser().parse_args(["data", "copy", "source", "destination"])
+        with patch.dict(os.environ, {"SLURM_JOB_ID": "42"}), patch("gbi_data.cli.probe", return_value=None):
+            self.assertEqual(cli.execution_plan({}, self.site, options)["execution"], "allocation")
 
     def test_all_six_directions_and_object_deletion_policy(self):
         for source_kind, source_root in self.site.roots.items():

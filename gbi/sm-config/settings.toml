@@ -4,7 +4,7 @@ GBI_VERSION_FILE = "{SITE_CONFIG_DIR}/../VERSION"
 VERSION = "{INSTALL_VERSION}"
 
 [install]
-versions = ["0.2.0"]
+versions = ["0.3.0"]
 prefix = "{SITE_DESTINATION}/{STAGE_DIR}"
 format = "^downloaded$"
 destination = "{SITE_DESTINATION}/{INSTALL_VERSION_VARIANT}"
