@@ -25,8 +25,7 @@ mount. Alluxio's storage service handles persistence to Object Storage.
 `module load gbi` loads the shared Python CLI and pinned `rclone/1.75.1`
 dependency. The CLI resolves paths using configured personal roots and the
 execution node's mount table; Unix permissions determine access to shared paths.
-It
-snapshots its Python code and site configuration onto Lustre, and chooses
+It snapshots its Python code and site configuration onto Lustre, and chooses
 foreground execution, the current allocation or `sbatch --parsable`.
 There is no identity switch or service account in the CLI.
 

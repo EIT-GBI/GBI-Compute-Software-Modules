@@ -105,7 +105,7 @@ class Transfers(unittest.TestCase):
             self.source.write_bytes(b"x" * self.source.stat().st_size)
             return value
         with patch("gbi_data.transfer.copy_stream", side_effect=change):
-            with self.assertRaisesRegex(ValueError, "source changed"):
+            with self.assertRaisesRegex(ValueError, "source (?:content )?changed"):
                 transfer(self.task)
         self.assertTrue(self.source.exists())
 
