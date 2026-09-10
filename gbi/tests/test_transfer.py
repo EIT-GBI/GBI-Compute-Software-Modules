@@ -16,7 +16,7 @@ from unittest.mock import patch
 
 from gbi_data import cli, jobs
 from gbi_data import selection
-from gbi_data.storage import Site, fingerprint
+from gbi_data.storage import Site, fingerprint, mounted_roots
 from gbi_data.transfer import copy_stream, transfer
 
 
@@ -391,11 +391,66 @@ class Interface(unittest.TestCase):
             physical = self.base / f"physical-{kind}-root"
             self.assertEqual(site.classify(alias), (physical, kind, physical))
             self.assertEqual(site.classify(alias / "data"), (physical / "data", kind, physical))
-            # A final symlink remains data; traversing it cannot escape the root.
+            # Final symlinks remain data; explicit traversal resolves normally.
             (alias / "link").symlink_to(self.base)
             self.assertEqual(site.classify(alias / "link"), (physical / "link", kind, physical))
-            with self.assertRaisesRegex(ValueError, "outside your configured storage roots"):
-                site.classify(alias / "link" / "outside")
+            self.assertEqual(site.classify(alias / "link" / "outside")[0], self.base / "outside")
+
+    def test_mount_types_include_shared_lustre_and_alluxio_nfs(self):
+        table = self.base / "mountinfo"
+        table.write_text(
+            "1 0 0:1 / /mnt/lustre rw - lustre server:/scratch rw\n"
+            "2 0 0:2 / /mnt/instrument-data/nextseq ro - nfs4 server:/nextseq-alluxio ro\n"
+            "3 0 0:3 / /mnt/personal rw - fuse.alluxio-fuse alluxio-fuse rw\n"
+            "4 0 0:4 / /mnt/shared\\040home rw - nfs server:/home rw\n")
+        self.assertEqual(mounted_roots(table), [
+            ("lustre", Path("/mnt/lustre")), ("alluxio", Path("/mnt/instrument-data/nextseq")),
+            ("alluxio", Path("/mnt/personal")), ("fss", Path("/mnt/shared home"))])
+
+    def test_shared_paths_use_unix_access_and_object_sources_stay_by_default(self):
+        instrument = self.base / "instrument"
+        shared = self.base / "shared-testbed"
+        other = self.base / "another-users-directory"
+        for path in (instrument, shared, other):
+            path.mkdir()
+        with patch("gbi_data.storage.mounted_roots", return_value=[("alluxio", instrument), ("lustre", shared)]):
+            site = Site(self.conf)
+        for source, target in ((instrument, shared), (instrument, other), (other, shared), (shared, other)):
+            options = cli.parser().parse_args(["data", "move", str(source), str(target / "new")])
+            planned = cli.plan(options, site)
+            self.assertEqual(planned["delete"], source != instrument)
+        options = cli.parser().parse_args(["data", "move", str(instrument), str(shared / "new"), "--delete-source"])
+        self.assertTrue(cli.plan(options, site)["delete"])
+
+    def test_shared_copy_and_move_use_foreground_and_slurm_snapshot(self):
+        source = self.base / "shared-source"
+        source.mkdir()
+        payload = source / "reads.dat"
+        payload.write_bytes(os.urandom(5000))
+        target = self.base / "shared-destination"
+        binary = self.base / "bin"
+        binary.mkdir()
+        sbatch = binary / "sbatch"
+        sbatch.write_text("#!/bin/sh\nprintf '314159\\n'\n")
+        sbatch.chmod(0o700)
+        environment = {**os.environ, "GBI_DATA_SITE_CONF": str(self.conf),
+                       "PATH": str(binary) + os.pathsep + os.environ["PATH"]}
+        environment.pop("SLURM_JOB_ID", None)
+        for verb, flags in (("copy", []), ("move", ["--detach"])):
+            result = subprocess.run([sys.executable, "-B", "-m", "gbi_data.cli", "data", verb,
+                                     str(source), str(target / verb), *flags],
+                                    env=environment, capture_output=True, text=True, timeout=15)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            if flags:
+                run_dir, = (self.site.roots["lustre"] / ".gbi/runs").iterdir()
+                environment.update(GBI_DATA_SITE_CONF=str(run_dir / "site.conf"),
+                                   PYTHONPATH=str(run_dir / "runtime"), SLURM_JOB_ID="314159")
+                result = subprocess.run([sys.executable, "-B", "-m", "gbi_data.cli", "data", "_run", str(run_dir)],
+                                        env=environment, capture_output=True, text=True, timeout=15)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertEqual((target / verb / "reads.dat").stat().st_size, 5000)
+            self.assertEqual(payload.exists(), verb == "copy")
+        self.assertEqual((target / "copy/reads.dat").read_bytes(), (target / "move/reads.dat").read_bytes())
 
     def test_reserved_paths_pruned_and_filters_do_not_match_ptx(self):
         root = self.site.roots["lustre"]

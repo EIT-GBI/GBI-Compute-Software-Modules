@@ -3,7 +3,9 @@
 ## User contract
 
 `gbi data copy SOURCE DESTINATION` and `gbi data move SOURCE DESTINATION` work
-between the invoking user's FSS, Lustre and personal Alluxio roots. The paths
+between filesystem paths accessible to the invoking user, including shared
+Lustre and instrument mounts. Unix permissions govern access; personal roots
+are defaults for discovery and transfer state, not an access allowlist. The paths
 select the storage route. The user does not select rclone, Prefect, a partition
 or cloud credentials. Foreground and Slurm execution use that same identity.
 
@@ -30,7 +32,7 @@ overwrite a progress file. A failed archival attempt retains temporary evidence.
 
 ## Runtime structure
 
-- `storage.py`: data-only site settings and canonical own-root checks.
+- `storage.py`: data-only site settings, mount classification and canonical path checks.
 - `selection.py`: bounded metadata probe and streaming directory selection.
 - `cli.py`: execution/reader choice, bounded worker supervision, history.
 - `transfer.py`: one-file transfer and source-deletion boundary.

@@ -4,6 +4,7 @@ import fnmatch
 import os
 from pathlib import Path
 import pwd
+import re
 
 
 DEFAULTS = {
@@ -15,6 +16,25 @@ DEFAULTS = {
     "native_bytes": "8388608", "native_files": "32",
     "inline_scan_entries": "100000", "inline_probe_seconds": "5",
 }
+
+
+def mounted_roots(path=Path("/proc/self/mountinfo")):
+    """Identify storage behavior from mounts, not an access allowlist."""
+    if not path.exists():
+        return []
+    roots = []
+    for line in path.read_text().splitlines():
+        fields, filesystem = line.split(" - ", 1)
+        mount = re.sub(r"\\([0-7]{3})", lambda match: chr(int(match[1], 8)), fields.split()[4])
+        kind, source, *_ = filesystem.split()
+        if "alluxio" in kind.lower() or "alluxio" in source.lower():
+            kind = "alluxio"
+        elif kind.startswith("nfs"):
+            kind = "fss"
+        elif kind != "lustre":
+            kind = "posix"
+        roots.append((kind, Path(mount)))
+    return roots
 
 
 class Site:
@@ -43,21 +63,22 @@ class Site:
                               ("alluxio", "bucket_root")) if self.values[key]
         }
         self.roots = {name: path.resolve() for name, path in self.root_aliases.items()}
+        self.storage_roots = sorted([*self.roots.items(), *mounted_roots()],
+                                    key=lambda item: len(item[1].parts), reverse=True)
         self.reserved = [".gbi", ".prefect-*", *self.values["reserved_names"].split()]
 
     def classify(self, path):
         # Resolve the parent, but keep a final symlink as data, not a traversal.
         path = Path(path).expanduser().absolute()
-        if path in self.root_aliases.values():
+        if path.parent in {root.parent for root in self.root_aliases.values()}:
             path = path.resolve()
         path = path.parent.resolve() / path.name
-        for kind, root in self.roots.items():
+        for kind, root in [*self.storage_roots, ("posix", Path(path.anchor))]:
             if path == root or root in path.parents:
                 self.check_root(root)
                 if self.is_reserved(path, root):
                     raise ValueError(f"reserved transfer state: {path}")
                 return path, kind, root
-        raise ValueError(f"outside your configured storage roots: {path}")
 
     def is_reserved(self, path, root):
         parts = path.relative_to(root).parts
