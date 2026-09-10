@@ -14,10 +14,10 @@ of Bash and Lua pieces that
 2. install software and generate the matching `.lua` modulefiles via
    `simple-modules`, driven by declarative TOML recipes.
 
-No root, no system package manager, no Python. Everything is self-contained
-under this checkout (or wherever you point `GBI_MODULE_PATH`). The single
-exception is `rust MODE=build` — rustc's own build system is driven by `x.py`,
-so that one recipe needs a `python3` on `PATH`.
+The module framework needs no root, system package manager or Python.
+Everything is self-contained under this checkout (or wherever you point
+`GBI_MODULE_PATH`). Individual tools can require Python: `rust MODE=build`
+uses `x.py`, and the `gbi` data CLI requires Python 3.9+ on execution nodes.
 
 ## Quick start
 
@@ -55,9 +55,40 @@ init files for bash, fish and Nushell:
 | `opt/share/env.nu` | Nushell |
 
 
-### Adding Modules
+### Building Modules on GBI's Compute Systems
 
-Please refer to the [relevant section below](#Adding-a-module).
+>[!IMPORTANT]
+> Before starting, ensure that you're a member of the `gbi-sandpit-software`
+> group in Okta PAM
+
+>[!WARNING]
+> We set the `GBI_MODULE_PATH` environment variable to "point" to the official
+> software install location on the HPC cluster. While you're testing, please
+> overwrite this to a temporary location by setting `export
+> GBI_MODULE_PATH=<temporary location>`. Note that the `export` keyword is
+> necessary for `make` to use the environment variable.
+
+Please refer to the [relevant section below](#Adding-a-module) for how to add a
+module to this repository. After you have finished creating a module recipe,
+you will need to test and deploy it.
+
+The process of testing modules is:
+1. Create a temporary workspace (this can be in your home, or in `/tmp`)
+2. Ensure that `GBI_MODULE_PATH` is either unset, or points to your temporary
+   workspace.
+3. Bootstrap: `make bootstrap`, followed by `source opt/share/env.sh`. This
+   will make sure that lmod is configured to use your temporary workspace.
+4. Build your module: `make <name of your module>`.
+5. Test your module: `ml load <name of your module>` followed by any software
+   tests you want to run.
+
+The process of deploying your module (after successful tests) is:
+1. In a fresh shell (check tat `GBI_MODULE_PATH` is
+   `/mnt/gbi-shared/software`); and that `lmod` is the GBI LMod install.
+2. Go to the main config repo: `cd
+   $GBI_MODULE_PATH/GBI-Compute-Software-Module` and pull the latest version
+   (containing your module).
+3. Build the module: `make <your module name>`
 
 ### How it is deployed at GBI
 
@@ -264,6 +295,7 @@ build dependencies from the `module load` lines of its `install.sh`.
 | `ncdu` | `du`, but with a text-mode user interface | yes, needs `zig` |
 | `parallel-tar` | multi-threaded archival tools: compress large data sets, and validate their quality | yes, needs `rust` |
 | `go` | the Go programming language toolchain | no — bootstrapping needs an existing go |
+| [`gbi`](gbi/README.md) | verified HPC data movement; immediate foreground transfers and automatic Slurm for bulk work | no — in-tree Python source; needs Python 3.9+ and rclone |
 | `rclone` | rsync for cloud storage | no — upstream ships static go binaries for every platform |
 
 Upstream `eza` and `ncdu` ship no macOS binaries, so their default-mode recipes
@@ -278,7 +310,6 @@ build dependencies:
 | `cmake` | the CMake build system | yes, no module dependencies |
 | `llvm` | clang, lld and the LLVM development libraries | yes, needs `cmake` |
 | `zig-bootstrap` | zig rebuilt with only a C compiler; installs as `zig/<version>-bootstrap` | source build only |
-
 
 ## Adding a module
 
@@ -299,6 +330,7 @@ of `make all`. Build-mode dependencies are not declared anywhere extra — they
 are read from the `module load` lines of `install.sh`.
 
 ### From a template
+
 [templates/](templates/) holds parameterised recipes that `simple-templates`
 renders into a complete recipe directory — `sm-config/` plus an `sm-help` — one
 per common install strategy:
