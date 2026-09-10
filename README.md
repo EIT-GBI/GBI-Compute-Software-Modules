@@ -86,7 +86,7 @@ The process of deploying your module (after successful tests) is:
 1. In a fresh shell (check tat `GBI_MODULE_PATH` is
    `/mnt/gbi-shared/software`); and that `lmod` is the GBI LMod install.
 2. Go to the main config repo: `cd
-   $GBI_MODULE_PATH/GBI-Compute-Software-Module` and pull the latest version
+   $GBI_MODULE_PATH/GBI-Compute-Software-Modules` and pull the latest version
    (containing your module).
 3. Build the module: `make <your module name>`
 

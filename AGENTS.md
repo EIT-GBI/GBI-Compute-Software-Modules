@@ -55,8 +55,8 @@ bash -c "source opt/share/env.sh; module use $(pwd)/usr/modules; module load <na
 mv templates/rendered/<name> ./<name>
 ```
 
-Afterwards update `README.md` (module table + the two "(today: …)" lists) and
-`test/test_macos.sh`.
+Afterwards update `README.md` (module table), `docs/appendix.md` (the two
+"(today: …)" lists) and `test/test_macos.sh`.
 
 **The full playbook — template choice, house idioms, and the gotchas that cost
 real time — is [docs/adding-modules.md](docs/adding-modules.md). Read it

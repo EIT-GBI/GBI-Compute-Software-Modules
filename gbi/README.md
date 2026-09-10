@@ -159,16 +159,26 @@ The existing module harness installs in-tree source; no image or Prefect change
 is needed. Python 3.9+ must be available on every selected node. The module loads
 the pinned rclone dependency automatically.
 
+For testing, run from the root of a private checkout and explicitly select a private
+install prefix. HPC shells inherit the shared production prefix through
+`GBI_MODULE_PATH`; override it before building. The existing initialized Lmod
+can load the test module with `module use`:
+
 ```bash
+export GBI_MODULE_PATH="$PWD/usr"
 make rclone
 GBI_SITE_LUSTRE_ROOT=/site/scratch/users \
 GBI_SITE_FSS_ROOT=/site/home/users \
 GBI_SITE_BUCKET_ROOT=/site/personal/users \
 GBI_SITE_PARTITION=site-partition make gbi
+module use "$GBI_MODULE_PATH/modules"
+module load gbi/0.3.0
+gbi --version
 ```
 
-For a shared cluster installation, run the recipe as a software maintainer
-from the reviewed release checkout and add `GBI_MODULE_PATH=/site/shared/software`
+For a shared cluster installation, use a fresh shell and run the recipe as a
+software maintainer from the reviewed release checkout. Verify the shared Lmod
+environment and add `GBI_MODULE_PATH=/site/shared/software`
 to the `make` command. Software goes under `gbi/0.3.0` and the modulefile under
 `modules/gbi/0.3.0.lua` in that tree. Use the same install root as the cluster's
 existing rclone module. When its `modules` directory is already in the shared
