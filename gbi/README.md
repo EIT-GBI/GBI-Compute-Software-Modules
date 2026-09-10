@@ -19,6 +19,23 @@ Spaces and unusual file names are supported; quote paths in your shell.
 as `/mnt/user-data/$USER` for Alluxio instead of exposing its internal shard
 directory. These paths can be used directly in copy and move commands.
 
+The printed roots are convenient starting points, not an access allowlist.
+You can copy or move shared directories, instrument data and other users' paths
+where Unix permissions allow it. The CLI runs as you and does not grant access.
+For example:
+
+```bash
+gbi data copy /mnt/instrument-data/illumina_nextseq_1/RUN \
+  /mnt/lustre/shared/instrument-data-testbed/RUN
+```
+
+On Linux, the CLI detects Lustre, FSS/NFS and Alluxio from the mounted
+filesystems, including Alluxio-backed instrument NFS exports. Instrument and
+other Object Storage originals are retained with `move` unless you explicitly
+pass `--delete-source`; Unix permissions and read-only mounts still apply.
+The same verification, overwrite protection, progress and automatic
+foreground/Slurm execution apply to shared paths.
+
 Everyday transfers start immediately in your current shell. Up to **8 GiB**
 of selected data runs in the foreground, including Alluxio transfers, with up
 to four files copying concurrently. Tiny selections (up to 8 MiB and 32 files)
@@ -173,8 +190,8 @@ GBI_SITE_PARTITION=site-partition make gbi
 
 For a shared cluster installation, run the recipe as a software maintainer
 from the reviewed release checkout and add `GBI_MODULE_PATH=/site/shared/software`
-to the `make` command. Software goes under `gbi/0.3.1` and the modulefile under
-`modules/gbi/0.3.1.lua` in that tree. Use the same install root as the cluster's
+to the `make` command. Software goes under `gbi/0.3.2` and the modulefile under
+`modules/gbi/0.3.2.lua` in that tree. Use the same install root as the cluster's
 existing rclone module. When its `modules` directory is already in the shared
 Lmod environment, users only need `module load gbi`; no per-user installation,
 container rebuild or login-node restart is required. Check `module show gbi`,
@@ -188,6 +205,13 @@ keys and defaults are in [storage.py](src/lib/gbi_data/storage.py). Defaults
 are four parallel files, two CPUs and 4 GiB, with a one-day per-file deadline
 and a 20-minute Alluxio readback settling deadline. Choose a partition with all
 three real mounts. Missing user roots are refused rather than created.
+
+Personal roots provide scratch/history locations and storage-type hints; they
+do not restrict transfer access. Shared paths use the execution node's mount
+table. Alluxio FUSE types and NFS export names containing `alluxio` identify
+Object Storage, preserving its default source-retention policy. Other mounted
+filesystems use ordinary POSIX transfer behavior. On systems without Linux
+mount information, configured personal roots provide the storage-type hints.
 
 Local tests use real rclone and fault injection. Set `TMPDIR` inside your
 workspace before running them:

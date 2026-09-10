@@ -1,6 +1,6 @@
 # GBI data CLI architecture
 
-This describes **gbi 0.3.0**, extending the verified worker introduced in [PR #7 — verified data movement with
+This describes **gbi 0.3.2**, extending the verified worker introduced in [PR #7 — verified data movement with
 Slurm and terminal progress](https://github.com/EIT-GBI/GBI-Compute-Software-Modules/pull/7).
 The deployed settings below were checked on 9 September 2026. Site paths,
 user identities and credentials are deliberately omitted from this public report.
@@ -23,10 +23,17 @@ mount. Alluxio's storage service handles persistence to Object Storage.
 ## Execution and progress
 
 `module load gbi` loads the shared Python CLI and pinned `rclone/1.75.1`
-dependency. The CLI resolves paths within the invoking user's configured roots,
-snapshots its Python code and site configuration onto Lustre, and chooses
+dependency. The CLI resolves paths using configured personal roots and the
+execution node's mount table; Unix permissions determine access to shared paths.
+It snapshots its Python code and site configuration onto Lustre, and chooses
 foreground execution, the current allocation or `sbatch --parsable`.
 There is no identity switch or service account in the CLI.
+
+Alluxio FUSE mounts and Alluxio-backed NFS exports retain Object Storage source
+protection, including the instrument mounts. They can be copied to any writable
+destination; there is no instrument-to-testbed allowlist. Ordinary filesystem
+paths use POSIX behavior. Public personal roots remain the defaults shown by
+`roots` and the locations for scratch/history.
 
 ```mermaid
 flowchart TB
