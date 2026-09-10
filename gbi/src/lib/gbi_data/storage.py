@@ -37,19 +37,18 @@ class Site:
         if float(self.values["inline_probe_seconds"]) <= 0:
             raise ValueError("inline_probe_seconds must be positive")
         self.user = pwd.getpwuid(os.getuid()).pw_name
-        self.aliases = {Path(self.values[key]).expanduser().absolute() / self.user
-                        for key in ("lustre_root", "fss_root", "bucket_root") if self.values[key]}
-        self.roots = {
-            name: (Path(self.values[key]) / self.user).resolve()
+        self.root_aliases = {
+            name: Path(self.values[key]).expanduser().absolute() / self.user
             for name, key in (("lustre", "lustre_root"), ("fss", "fss_root"),
                               ("alluxio", "bucket_root")) if self.values[key]
         }
+        self.roots = {name: path.resolve() for name, path in self.root_aliases.items()}
         self.reserved = [".gbi", ".prefect-*", *self.values["reserved_names"].split()]
 
     def classify(self, path):
         # Resolve the parent, but keep a final symlink as data, not a traversal.
         path = Path(path).expanduser().absolute()
-        if path in self.aliases:
+        if path in self.root_aliases.values():
             path = path.resolve()
         path = path.parent.resolve() / path.name
         for kind, root in self.roots.items():
