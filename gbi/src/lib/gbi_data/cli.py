@@ -320,7 +320,7 @@ def main():
             raise ValueError("the gbi module needs Lustre scratch and Alluxio archive roots")
         home = site.roots["lustre"] / ".gbi"
         if options.verb == "roots":
-            for name, root in site.roots.items():
+            for name, root in site.root_aliases.items():
                 print(f"{name:8} {root}")
             return 0
         if options.verb == "status":

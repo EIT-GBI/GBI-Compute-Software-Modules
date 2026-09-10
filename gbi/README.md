@@ -15,6 +15,10 @@ destination directory you name. A single file goes to the named destination
 file, or into an existing destination directory under its original name.
 Spaces and unusual file names are supported; quote paths in your shell.
 
+`roots` prints the configured user-facing mount paths, preserving aliases such
+as `/mnt/user-data/$USER` for Alluxio instead of exposing its internal shard
+directory. These paths can be used directly in copy and move commands.
+
 Everyday transfers start immediately in your current shell. Up to **8 GiB**
 of selected data runs in the foreground, including Alluxio transfers, with up
 to four files copying concurrently. Tiny selections (up to 8 MiB and 32 files)
@@ -169,15 +173,16 @@ GBI_SITE_PARTITION=site-partition make gbi
 
 For a shared cluster installation, run the recipe as a software maintainer
 from the reviewed release checkout and add `GBI_MODULE_PATH=/site/shared/software`
-to the `make` command. Software goes under `gbi/0.3.0` and the modulefile under
-`modules/gbi/0.3.0.lua` in that tree. Use the same install root as the cluster's
+to the `make` command. Software goes under `gbi/0.3.1` and the modulefile under
+`modules/gbi/0.3.1.lua` in that tree. Use the same install root as the cluster's
 existing rclone module. When its `modules` directory is already in the shared
 Lmod environment, users only need `module load gbi`; no per-user installation,
 container rebuild or login-node restart is required. Check `module show gbi`,
 `gbi --version` and `gbi data roots` from a normal user shell after installation.
 
 Each root is a parent directory; the authenticated local username is appended
-and its individual root alias resolved. Site settings come from `GBI_SITE_*`
+and its individual root alias resolved internally for path-safety checks.
+The `roots` command displays the alias itself. Site settings come from `GBI_SITE_*`
 environment variables at installation, never from public source code. Supported
 keys and defaults are in [storage.py](src/lib/gbi_data/storage.py). Defaults
 are four parallel files, two CPUs and 4 GiB, with a one-day per-file deadline

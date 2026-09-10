@@ -376,13 +376,26 @@ class Interface(unittest.TestCase):
             cli.plan(options, self.site)
 
     def test_individual_user_root_alias_is_resolved(self):
-        original = self.site.roots["lustre"]
-        physical = self.base / "physical-user-root"
-        original.rename(physical)
-        original.symlink_to(physical)
+        aliases = self.site.roots.copy()
+        for kind, alias in aliases.items():
+            physical = self.base / f"physical-{kind}-root"
+            alias.rename(physical)
+            alias.symlink_to(physical)
         site = Site(self.conf)
-        path, kind, root = site.classify(original / "data")
-        self.assertEqual((path, kind, root), (physical / "data", "lustre", physical))
+        result = subprocess.run([sys.executable, "-B", "-m", "gbi_data.cli", "data", "roots"],
+                                env={**os.environ, "GBI_DATA_SITE_CONF": str(self.conf)},
+                                capture_output=True, text=True, timeout=10)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, "".join(f"{kind:8} {alias}\n" for kind, alias in aliases.items()))
+        for kind, alias in aliases.items():
+            physical = self.base / f"physical-{kind}-root"
+            self.assertEqual(site.classify(alias), (physical, kind, physical))
+            self.assertEqual(site.classify(alias / "data"), (physical / "data", kind, physical))
+            # A final symlink remains data; traversing it cannot escape the root.
+            (alias / "link").symlink_to(self.base)
+            self.assertEqual(site.classify(alias / "link"), (physical / "link", kind, physical))
+            with self.assertRaisesRegex(ValueError, "outside your configured storage roots"):
+                site.classify(alias / "link" / "outside")
 
     def test_reserved_paths_pruned_and_filters_do_not_match_ptx(self):
         root = self.site.roots["lustre"]
