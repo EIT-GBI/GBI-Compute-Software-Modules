@@ -7,6 +7,11 @@
 MKFILE_DIR := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
 
 GBI_MODULE_PATH ?= $(MKFILE_DIR)/usr
+# An empty GBI_MODULE_PATH (e.g. an unset variable in a wrapper script) would
+# turn the clean/realclean deletions into absolute paths like '/modules'
+ifeq ($(strip $(GBI_MODULE_PATH)),)
+    $(error GBI_MODULE_PATH must not be empty)
+endif
 EP_ARG          := -m $(GBI_MODULE_PATH)
 
 VARIANT ?= gnu
@@ -139,17 +144,23 @@ check:
 #------------------------------------------------------------------------------
 
 #______________________________________________________________________________
-# Rules to clean installed targets
+# Rules to clean installed targets. Deletions are scoped to what the recipes
+# actually install under GBI_MODULE_PATH -- the per-recipe dirs and the
+# modules/ tree -- never GBI_MODULE_PATH itself: on shared deployments the
+# prefix holds more than the install (it can even contain this checkout).
 #
 realclean:
-	$(info Running realclean => deleting entire install)
-	rm -rf $(GBI_MODULE_PATH)
+	$(info Running realclean => deleting all installed modules and modulefiles)
+	rm -rf $(addprefix $(GBI_MODULE_PATH)/,$(ALL_RECIPES) modules)
 	rm -rf $(MKFILE_DIR)/opt/share/*
 	rm -rf $(MKFILE_DIR)/opt/bin/lua
 	rm -rf $(MKFILE_DIR)/opt/bin/lua-static
 	rm -rf $(MKFILE_DIR)/opt/bin/luac
 
 clean:
+ifeq ($(strip $(TARGET)),)
+	$(error clean needs a target: make clean TARGET=<recipe> -- use realclean to delete every installed module)
+endif
 	$(info Running clean on target: '$(TARGET)')
 	rm -rf $(GBI_MODULE_PATH)/$(TARGET)
 	rm -rf $(GBI_MODULE_PATH)/modules/$(TARGET)
