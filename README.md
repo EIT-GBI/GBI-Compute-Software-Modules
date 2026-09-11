@@ -297,9 +297,21 @@ build dependencies from the `module load` lines of its `install.sh`.
 | `go` | the Go programming language toolchain | no — bootstrapping needs an existing go |
 | [`gbi`](gbi/README.md) | verified HPC data movement; immediate foreground transfers and automatic Slurm for bulk work | no — in-tree Python source; needs Python 3.9+ and rclone |
 | `rclone` | rsync for cloud storage | no — upstream ships static go binaries for every platform |
+| `apptainer` | containers for HPC — `apptainer`/`singularity` without root | no — upstream ships a relocatable unprivileged deb |
 
 Upstream `eza` and `ncdu` ship no macOS binaries, so their default-mode recipes
 fail fast on darwin with a pointer to `make <target> MODE=build`.
+
+`apptainer` is linux x86_64 only and has no source recipe to fall back to, so it
+fails fast everywhere else. It also needs the *node* to allow unprivileged user
+namespaces and expose `/dev/fuse` — the install itself is rootless, but the
+kernel has to permit what the containers do. The recipe unpacks upstream's
+non-setuid `.deb`, which bundles the container helpers — `mksquashfs`,
+`squashfuse_ll`, `fuse-overlayfs`, `fuse2fs`, `proot` — so no `squashfs-tools`
+or `fuse-overlayfs` package is needed. Those helpers are dynamically linked
+though, so the node must still provide `libseccomp.so.2` (for `apptainer` and
+`starter`) and `libfuse3.so.3` (for anything that mounts a SIF). Unpacking
+needs `xz` on PATH, which login nodes may lack and compute nodes have.
 
 Three more targets are **opt-in** — valid for `make <target>` and `make clean`,
 but skipped by `make all`, since they are either large or only interesting as

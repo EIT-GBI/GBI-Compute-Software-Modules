@@ -1,0 +1,3 @@
+containers for hpc -- run and build images without root
+upstream's unprivileged build ships as a deb that already bundles mksquashfs, squashfuse and fuse-overlayfs, hence no MODE=build recipe
+linux x86_64 only, and the node needs unprivileged user namespaces plus /dev/fuse

@@ -1,0 +1,5 @@
+name = "apptainer"
+
+relocate = true
+destination = "{SM_ROOT}/apptainer"
+modules = "{SM_ROOT}/modules"
