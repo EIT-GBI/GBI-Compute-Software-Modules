@@ -126,8 +126,8 @@ idioms:
 
 1. `README.md` "Available modules" table — one row; the third column states
    MODE=build deps, or why there is no build mode.
-2. `README.md` — the two "(today: `...`)" target lists (alphabetical): the
-   `make all` walk list, and the MODE=build skipped/covered note.
+2. `docs/appendix.md` — the two "(today: `...`)" target lists (alphabetical):
+   the `make all` walk list, and the MODE=build skipped/covered note.
 3. `test/test_macos.sh` — hardcoded target lists: add to the default-mode
    block (with a comment if the platform lacks a binary, like eza/ncdu) and
    to the MODE=build block if a build recipe exists.
