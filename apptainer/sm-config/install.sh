@@ -30,7 +30,7 @@ then
     exit 1
 fi
 
-# `tar` shells out to `xz` for the deb payload. Login nodes may not have it
+# `tar` shells out to `xz` for the deb payloads. Login nodes may not have it
 # even though compute nodes do, so say which one to use rather than letting
 # tar fail with "Cannot exec".
 if ! command -v xz >/dev/null
@@ -40,54 +40,84 @@ then
     exit 1
 fi
 
-SOURCE="${SOURCE_PREFIX}/apptainer_${VERSION}_amd64.deb"
-
-echo "Downloading ${SOURCE}"
-
-curl --fail --output downloaded.deb -L "${SOURCE}"
-
 # A .deb is an `ar` archive, and the GBI nodes have neither `ar` nor the
 # rpm2cpio/cpio pair that upstream's tools/install-unprivileged.sh requires --
 # hence this hand-rolled reader. The format is simple: an 8-byte magic, then
 # per member a 60-byte header (name[16] mtime[12] uid[6] gid[6] mode[8]
 # size[10] magic[2]) followed by `size` bytes padded to an even boundary.
-OFFSET=8
-while :
-do
-    HEADER=$(tail -c "+$((OFFSET + 1))" downloaded.deb | head -c 60)
-    if [[ -z ${HEADER// } ]]
-    then
-        echo "no data.tar.* member found in downloaded.deb"
-        exit 1
-    fi
+#   $1 = .deb file    $2 = directory to unpack data.tar.* into
+extract_deb()
+{
+    local deb="$1" dest="$2"
+    local offset=8 header name size
 
-    NAME=${HEADER:0:16}
-    NAME=${NAME%% *}
-    NAME=${NAME%/}
-    SIZE=${HEADER:48:10}
-    SIZE=$((10#${SIZE// }))
+    while :
+    do
+        header=$(tail -c "+$((offset + 1))" "${deb}" | head -c 60)
+        if [[ -z ${header// } ]]
+        then
+            echo "no data.tar.* member found in ${deb}"
+            exit 1
+        fi
 
-    if [[ $NAME == data.tar.* ]]
-    then
-        tail -c "+$((OFFSET + 61))" downloaded.deb | head -c "${SIZE}" > payload.tar
-        break
-    fi
+        name=${header:0:16}
+        name=${name%% *}
+        name=${name%/}
+        size=${header:48:10}
+        size=$((10#${size// }))
 
-    OFFSET=$((OFFSET + 60 + SIZE + SIZE % 2))
-done
+        if [[ $name == data.tar.* ]]
+        then
+            mkdir -p "${dest}"
+            tail -c "+$((offset + 61))" "${deb}" | head -c "${size}" > payload.tar
+            tar xf payload.tar -C "${dest}"
+            rm -f payload.tar
+            return 0
+        fi
+
+        offset=$((offset + 60 + size + size % 2))
+    done
+}
+
+SOURCE="${SOURCE_PREFIX}/apptainer_${VERSION}_amd64.deb"
+
+echo "Downloading ${SOURCE}"
+curl --fail --output apptainer.deb -L "${SOURCE}"
 
 # Keep the deb's usr/ + etc/ layout intact instead of stripping it. Apptainer
 # relocates itself by applying the offset between its compiled BINDIR and
 # /proc/self/exe to every other compiled path, so flattening the tree would
 # break libexec (starter, squashfuse_ll, mksquashfs) and config lookup.
-mkdir -p downloaded
-tar xf payload.tar -C downloaded
+extract_deb apptainer.deb downloaded
+rm -f apptainer.deb
 
-rm -f downloaded.deb payload.tar
+# The deb bundles the container helpers but links them dynamically, and two of
+# their libraries are genuinely optional on a slim image -- GBI login nodes have
+# neither. Everything else they need (libseccomp, libzstd, liblzma, liblz4,
+# libz, libuuid) is present anywhere dpkg is, so only these two get vendored.
+#   libfuse3.so.3 -> squashfuse_ll, fuse-overlayfs, fuse2fs  (mounting SIFs)
+#   liblzo2.so.2  -> squashfuse_ll, mksquashfs               (LZO squashfs)
+mkdir -p downloaded/lib
+for LIB_URL in "${FUSE3_DEB}" "${LZO2_DEB}"
+do
+    echo "Downloading ${LIB_URL}"
+    curl --fail --output lib.deb -L "${LIB_URL}"
 
-# post-conditions: the modulefile puts usr/bin on PATH and apptainer resolves
-# libexec relative to its own binary, so fail here rather than installing a
-# module that points at nothing
+    rm -rf libtmp
+    extract_deb lib.deb libtmp
+    # -a keeps the soname symlink a symlink; find keeps this working whether
+    # the deb is usr-merged (./usr/lib/...) or not (./lib/...)
+    find libtmp -name 'lib*.so*' -exec cp -a {} downloaded/lib/ \;
+    rm -rf libtmp lib.deb
+done
+
+# post-conditions: the modulefile puts usr/bin on PATH and lib on
+# LD_LIBRARY_PATH, and apptainer resolves libexec relative to its own binary,
+# so fail here rather than installing a module that points at nothing.
+# -r follows the soname symlinks, so a dangling one is caught too.
 test -x downloaded/usr/bin/apptainer
 test -x downloaded/usr/libexec/apptainer/bin/starter
+test -x downloaded/usr/libexec/apptainer/bin/squashfuse_ll
 test -f downloaded/etc/apptainer/apptainer.conf
+test -r downloaded/lib/libfuse3.so.3
+test -r downloaded/lib/liblzo2.so.2

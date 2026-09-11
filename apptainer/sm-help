@@ -1,3 +1,4 @@
 containers for hpc -- run and build images without root
 upstream's unprivileged build ships as a deb that already bundles mksquashfs, squashfuse and fuse-overlayfs, hence no MODE=build recipe
-linux x86_64 only, and the node needs unprivileged user namespaces plus /dev/fuse
+linux x86_64 only, and the node needs unprivileged user namespaces, /dev/fuse and libseccomp.so.2
+vendors libfuse3 and liblzo2, which GBI login nodes do not have; install from a compute node (needs xz)
