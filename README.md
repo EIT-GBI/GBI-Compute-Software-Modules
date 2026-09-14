@@ -316,6 +316,14 @@ provide `libseccomp.so.2`, which `apptainer` and `starter` link against; the
 rest of what they need ships with `dpkg`. Unpacking needs `xz` on PATH, which
 login nodes may lack and compute nodes have.
 
+Because those constraints differ per node, `apptainer/check.sh` performs the
+same download-and-unpack the recipe does, without needing `make`, Lua or Lmod —
+useful on a node where the framework itself cannot be bootstrapped. Run
+`apptainer/check.sh fetch` somewhere with `xz`, then `apptainer/check.sh run` on
+the node you actually want to use apptainer from; it reports unresolved
+libraries, then tries a real container. It reads its pinned URLs from
+`sm-config/settings.toml`, so it cannot drift from the recipe.
+
 Three more targets are **opt-in** — valid for `make <target>` and `make clean`,
 but skipped by `make all`, since they are either large or only interesting as
 build dependencies:
