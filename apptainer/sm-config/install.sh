@@ -84,21 +84,28 @@ SOURCE="${SOURCE_PREFIX}/apptainer_${VERSION}_amd64.deb"
 echo "Downloading ${SOURCE}"
 curl --fail --output apptainer.deb -L "${SOURCE}"
 
-# Keep the deb's usr/ + etc/ layout intact instead of stripping it. Apptainer
-# relocates itself by applying the offset between its compiled BINDIR and
-# /proc/self/exe to every other compiled path, so flattening the tree would
-# break libexec (starter, squashfuse_ll, mksquashfs) and config lookup.
 extract_deb apptainer.deb downloaded
 rm -f apptainer.deb
 
-# The deb bundles the container helpers but links them dynamically, and two of
-# their libraries are genuinely optional on a slim image -- GBI login nodes have
-# neither. Everything else they need (libseccomp, libzstd, liblzma, liblz4,
-# libz, libuuid) is present anywhere dpkg is, so only these two get vendored.
-#   libfuse3.so.3 -> squashfuse_ll, fuse-overlayfs, fuse2fs  (mounting SIFs)
-#   liblzo2.so.2  -> squashfuse_ll, mksquashfs               (LZO squashfs)
+# The deb is built --prefix=/usr --sysconfdir=/etc, but apptainer relocates by
+# taking the parent of its own bin/ as ${prefix} and looking for ${prefix}/etc
+# -- it does not carry the split layout across a move. Left as unpacked it goes
+# looking for <root>/usr/etc/apptainer/apptainer.conf and dies. Lift usr/* up
+# beside etc/ and var/ so bin, libexec, share, etc and var are siblings; this
+# is exactly what upstream's tools/install-unprivileged.sh does.
+mv downloaded/usr/* downloaded/
+rmdir downloaded/usr
+
+# The deb bundles the container helpers but links them dynamically, and three
+# of their libraries are genuinely optional on a slim image -- GBI login nodes
+# have none of them. Everything else they need (libseccomp, libzstd, liblzma,
+# liblz4, libz, libuuid) is present anywhere dpkg is, so only these get
+# vendored:
+#   libfuse3.so.3       -> squashfuse_ll, fuse-overlayfs, fuse2fs (SIF mounts)
+#   liblzo2.so.2        -> squashfuse_ll, mksquashfs        (LZO squashfs)
+#   libprotobuf-c.so.1  -> proot                            (--fakeroot fallback)
 mkdir -p downloaded/lib
-for LIB_URL in "${FUSE3_DEB}" "${LZO2_DEB}"
+for LIB_URL in "${FUSE3_DEB}" "${LZO2_DEB}" "${PROTOBUF_C_DEB}"
 do
     echo "Downloading ${LIB_URL}"
     curl --fail --output lib.deb -L "${LIB_URL}"
@@ -111,13 +118,15 @@ do
     rm -rf libtmp lib.deb
 done
 
-# post-conditions: the modulefile puts usr/bin on PATH and lib on
-# LD_LIBRARY_PATH, and apptainer resolves libexec relative to its own binary,
-# so fail here rather than installing a module that points at nothing.
+# post-conditions: the modulefile puts bin on PATH and lib on LD_LIBRARY_PATH,
+# and apptainer finds libexec and etc relative to its own bin/, so fail here
+# rather than installing a module that points at nothing. The apptainer.conf
+# check is the one that catches a regression in the usr/ lift above.
 # -r follows the soname symlinks, so a dangling one is caught too.
-test -x downloaded/usr/bin/apptainer
-test -x downloaded/usr/libexec/apptainer/bin/starter
-test -x downloaded/usr/libexec/apptainer/bin/squashfuse_ll
+test -x downloaded/bin/apptainer
+test -x downloaded/libexec/apptainer/bin/starter
+test -x downloaded/libexec/apptainer/bin/squashfuse_ll
 test -f downloaded/etc/apptainer/apptainer.conf
 test -r downloaded/lib/libfuse3.so.3
 test -r downloaded/lib/liblzo2.so.2
+test -r downloaded/lib/libprotobuf-c.so.1

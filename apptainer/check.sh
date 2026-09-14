@@ -31,8 +31,9 @@ SOURCE_PREFIX=${SOURCE_PREFIX//\{INSTALL_VERSION\}/${VER}}
 APPTAINER_DEB="${SOURCE_PREFIX}/apptainer_${VER}_amd64.deb"
 FUSE3_DEB=$(toml_str FUSE3_DEB)
 LZO2_DEB=$(toml_str LZO2_DEB)
+PROTOBUF_C_DEB=$(toml_str PROTOBUF_C_DEB)
 
-for v in VER APPTAINER_DEB FUSE3_DEB LZO2_DEB; do
+for v in VER APPTAINER_DEB FUSE3_DEB LZO2_DEB PROTOBUF_C_DEB; do
     [[ -n ${!v} ]] || { echo "could not parse ${v} from ${CONF}"; exit 1; }
 done
 
@@ -74,7 +75,13 @@ fetch() {
     extract_deb a.deb tree
     rm -f a.deb
 
-    for u in "$FUSE3_DEB" "$LZO2_DEB"; do
+    # apptainer takes the parent of its own bin/ as ${prefix} and looks for
+    # ${prefix}/etc, so the deb's --prefix=/usr --sysconfdir=/etc split has to
+    # be collapsed -- same lift sm-config/install.sh performs
+    mv tree/usr/* tree/
+    rmdir tree/usr
+
+    for u in "$FUSE3_DEB" "$LZO2_DEB" "$PROTOBUF_C_DEB"; do
         echo "-- ${u##*/}"
         curl --fail -sS -L -o l.deb "$u"
         rm -rf t; extract_deb l.deb t
@@ -82,10 +89,12 @@ fetch() {
         rm -rf t l.deb
     done
 
-    test -x tree/usr/bin/apptainer
-    test -x tree/usr/libexec/apptainer/bin/squashfuse_ll
+    test -x tree/bin/apptainer
+    test -x tree/libexec/apptainer/bin/squashfuse_ll
+    test -f tree/etc/apptainer/apptainer.conf
     test -r tree/lib/libfuse3.so.3
     test -r tree/lib/liblzo2.so.2
+    test -r tree/lib/libprotobuf-c.so.1
 
     echo "== unpacked $(du -sh tree | cut -f1) into ${DEST}/tree =="
     echo "now run '$0 run' on the node you want to use apptainer from"
@@ -94,7 +103,7 @@ fetch() {
 run() {
     cd "$DEST" 2>/dev/null || { echo "no ${DEST} -- run '$0 fetch' on a compute node first"; exit 1; }
     export LD_LIBRARY_PATH="${DEST}/tree/lib${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
-    local app="${DEST}/tree/usr/bin/apptainer"
+    local app="${DEST}/tree/bin/apptainer"
 
     echo "== $(hostname): $(uname -sm) =="
     [[ $(uname -s) == Linux ]] || { echo "linux only"; exit 1; }
@@ -103,7 +112,7 @@ run() {
 
     echo; echo "== 1. unresolved libraries =="
     local found=0
-    for b in tree/usr/bin/apptainer tree/usr/libexec/apptainer/bin/*; do
+    for b in tree/bin/apptainer tree/libexec/apptainer/bin/*; do
         [[ -f $b ]] || continue
         local m
         m=$(ldd "$b" 2>/dev/null | awk '/not found/{print $1}' | tr '\n' ' ')

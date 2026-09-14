@@ -309,12 +309,20 @@ kernel has to permit what the containers do. The recipe unpacks upstream's
 non-setuid `.deb`, which bundles the container helpers — `mksquashfs`,
 `squashfuse_ll`, `fuse-overlayfs`, `fuse2fs`, `proot` — so no `squashfs-tools`
 or `fuse-overlayfs` package is needed. Those helpers are dynamically linked,
-and the two libraries that are genuinely optional on a slim image
-(`libfuse3.so.3`, `liblzo2.so.2` — GBI login nodes have neither) are vendored
-into `lib/` and put on `LD_LIBRARY_PATH` by the modulefile. The node must still
-provide `libseccomp.so.2`, which `apptainer` and `starter` link against; the
-rest of what they need ships with `dpkg`. Unpacking needs `xz` on PATH, which
-login nodes may lack and compute nodes have.
+and the three libraries that are genuinely optional on a slim image
+(`libfuse3.so.3`, `liblzo2.so.2`, `libprotobuf-c.so.1` — GBI login nodes have
+none of them) are vendored into `lib/` and put on `LD_LIBRARY_PATH` by the
+modulefile. The node must still provide `libseccomp.so.2`, which `apptainer`
+and `starter` link against; the rest of what they need ships with `dpkg`.
+Unpacking needs `xz` on PATH, which login nodes may lack and compute nodes
+have.
+
+The recipe also lifts the deb's `usr/*` up to the install root, so `bin`,
+`libexec`, `share`, `etc` and `var` end up as siblings. The deb is built
+`--prefix=/usr --sysconfdir=/etc`, but apptainer relocates by taking the parent
+of its own `bin/` as `${prefix}` and looking for `${prefix}/etc` there — left as
+unpacked it hunts for `<root>/usr/etc/apptainer/apptainer.conf` and refuses to
+start. Upstream's `tools/install-unprivileged.sh` performs the same lift.
 
 Because those constraints differ per node, `apptainer/check.sh` performs the
 same download-and-unpack the recipe does, without needing `make`, Lua or Lmod —

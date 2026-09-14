@@ -17,12 +17,12 @@ whatis("Name: apptainer")
 whatis("Version: {{{INSTALL_VERSION}}}")
 whatis("URL: https://apptainer.org/")
 
--- the deb's usr/ + etc/ pair is kept intact so apptainer can relocate itself,
--- so the binaries sit under usr/bin rather than at the tree root
-prepend_path("PATH", "{{{PATH}}}/usr/bin")
-prepend_path("MANPATH", "{{{PATH}}}/usr/share/man")
+-- install.sh lifts the deb's usr/* up to the tree root, because apptainer takes
+-- the parent of its own bin/ as ${prefix} and looks for ${prefix}/etc there
+prepend_path("PATH", "{{{PATH}}}/bin")
+prepend_path("MANPATH", "{{{PATH}}}/share/man")
 
--- libfuse3 and liblzo2 are vendored into lib/ because they are absent from the
--- GBI login nodes, and the deb's bundled squashfuse_ll / fuse-overlayfs /
--- mksquashfs are dynamically linked against them
+-- libfuse3, liblzo2 and libprotobuf-c are vendored into lib/ because they are
+-- absent from the GBI login nodes, and the deb's bundled squashfuse_ll /
+-- fuse-overlayfs / mksquashfs / proot are dynamically linked against them
 prepend_path("LD_LIBRARY_PATH", "{{{PATH}}}/lib")
