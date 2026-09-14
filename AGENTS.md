@@ -29,6 +29,14 @@ module at the repo root; the Makefile discovers them by layout.
   `module use` that path explicitly — the MODULEPATH baked into
   `opt/share/env.sh` may point at a stale tree (e.g. `test/usr/modules` after
   a smoke-test run).
+- On the GBI cluster there is **no `make` and no C toolchain** — login nodes
+  lack `make`/`cc`/`ar`/`xz`, compute nodes have `xz` but no `make`. Deploy by
+  running the command `make -n <target>` prints (`bash -c "source
+  opt/share/env.sh; ./run.sh opt/bin/build.sh -m $GBI_MODULE_PATH
+  opt/bin/render.sh <target>"`), from a compute node if the recipe needs `xz`.
+  Never bootstrap the shared tree: it is already bootstrapped, and redoing it
+  rewrites the `opt/share/env.sh` every user's shell sources. See the README
+  section "Deploying where there is no `make`".
 - Consistency check: `make check TARGET=<name> GBI_MODULE_PATH=./usr`
   (needs a nushell — `module load nu` first).
 - Destructive: `make realclean` deletes every installed module + modulefile

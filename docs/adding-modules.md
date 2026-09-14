@@ -121,6 +121,12 @@ idioms:
 - `make <name> MODE=build` on an sm-config-only recipe errors with a friendly
   stub — that's correct behavior, not a bug.
 - Cleanup of a test install: `make clean TARGET=<name> GBI_MODULE_PATH=./usr`.
+- `make: command not found` on the cluster is expected, not a broken checkout —
+  no GBI node ships `make` or a compiler. `make` is only a wrapper; run what
+  `make -n <target>` prints instead, and pick the node by what the recipe
+  needs (`apptainer` needs `xz`, so a compute node). The shared tree is already
+  bootstrapped, so the toolchain is never needed. Full instructions: README,
+  "Deploying where there is no `make`".
 
 ## Docs checklist on promote
 

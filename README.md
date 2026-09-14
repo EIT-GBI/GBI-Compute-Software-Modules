@@ -83,12 +83,48 @@ The process of testing modules is:
    tests you want to run.
 
 The process of deploying your module (after successful tests) is:
-1. In a fresh shell (check tat `GBI_MODULE_PATH` is
+1. In a fresh shell (check that `GBI_MODULE_PATH` is
    `/mnt/gbi-shared/software`); and that `lmod` is the GBI LMod install.
 2. Go to the main config repo: `cd
-   $GBI_MODULE_PATH/GBI-Compute-Software-Module` and pull the latest version
+   $GBI_MODULE_PATH/GBI-Compute-Software-Modules` and pull the latest version
    (containing your module).
 3. Build the module: `make <your module name>`
+
+### Deploying where there is no `make` — which is every GBI node today
+
+Step 3 above assumes `make`. GBI nodes do not have it: the login node has no
+`make`, `cc`, `ld`, `ar`, `xz` or `zstd` at all, and compute nodes have `xz`
+and `zstd` but still no `make`. **This does not block a deploy**, for two
+reasons:
+
+- `make` is only a wrapper around a single `bash` command.
+- The shared tree is **already bootstrapped** — `opt/bin/lua` and
+  `opt/share/env.sh` exist, which is why every login shell can source
+  `env.sh`. Bootstrapping is the only step that needs a C toolchain, and it
+  does not need doing again.
+
+So run the install step directly instead of step 3:
+
+```bash
+cd $GBI_MODULE_PATH/GBI-Compute-Software-Modules
+bash -c "source opt/share/env.sh; ./run.sh opt/bin/build.sh \
+         -m $GBI_MODULE_PATH opt/bin/render.sh <your module name>"
+```
+
+`make -n <target>` prints exactly this command, so check there first if the
+build chain ever changes rather than trusting the copy above.
+
+Two rules for that shell:
+
+- **Run it from a compute node** when the recipe needs a tool the login node
+  lacks. `apptainer` unpacks a `.deb` with `tar`, which shells out to `xz`, so
+  it can only be installed from a compute node — the resulting install is then
+  used from the login node like any other module.
+- **Never run `make bootstrap` there** (nor its underlying
+  `opt/lmod/bootstrap.sh`). It rewrites the shared `opt/share/env.sh` that
+  every user's shell sources, repointing `MODULEPATH` for the whole cluster.
+  Test installs belong in a separate clone with `GBI_MODULE_PATH` pointing
+  somewhere in `$HOME`.
 
 ### How it is deployed at GBI
 
