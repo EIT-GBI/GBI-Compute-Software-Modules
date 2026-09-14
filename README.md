@@ -311,11 +311,18 @@ non-setuid `.deb`, which bundles the container helpers — `mksquashfs`,
 or `fuse-overlayfs` package is needed. Those helpers are dynamically linked,
 and the three libraries that are genuinely optional on a slim image
 (`libfuse3.so.3`, `liblzo2.so.2`, `libprotobuf-c.so.1` — GBI login nodes have
-none of them) are vendored into `lib/` and put on `LD_LIBRARY_PATH` by the
-modulefile. The node must still provide `libseccomp.so.2`, which `apptainer`
-and `starter` link against; the rest of what they need ships with `dpkg`.
-Unpacking needs `xz` on PATH, which login nodes may lack and compute nodes
-have.
+none of them) are vendored into `lib/`. The node must still provide
+`libseccomp.so.2`, which `apptainer` links against; the rest of what it needs
+ships with `dpkg`. Unpacking needs `xz` on PATH, which login nodes may lack and
+compute nodes have.
+
+The modulefile deliberately does **not** set `LD_LIBRARY_PATH`: apptainer
+scrubs `LD_*` from the environment before launching its image drivers, so it
+would never reach `squashfuse_ll` — while still shadowing system libraries for
+every other program in the shell. Instead each helper in
+`libexec/apptainer/bin` is a symlink to a generated `.wrapper` that sets the
+path itself immediately before `exec`, with the real binaries moved to
+`libexec/apptainer/libexec`. This is upstream's mechanism, for the same reason.
 
 The recipe also lifts the deb's `usr/*` up to the install root, so `bin`,
 `libexec`, `share`, `etc` and `var` end up as siblings. The deb is built

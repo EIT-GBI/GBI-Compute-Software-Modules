@@ -89,9 +89,30 @@ fetch() {
         rm -rf t l.deb
     done
 
+    # apptainer scrubs LD_* before launching its image drivers, so the helpers
+    # have to carry their own library path -- same wrapping install.sh does
+    helpers=tree/libexec/apptainer
+    mkdir -p "$helpers/libexec"
+    for tool in "$helpers"/bin/*; do mv "$tool" "$helpers/libexec/"; done
+    cat > "$helpers/bin/.wrapper" <<'WRAPPER'
+#!/bin/bash
+BASEME=${0##*/}
+HERE="${0%/*}"
+if [ "$HERE" = "." ]; then HERE="$PWD"
+elif [[ "$HERE" != /* ]]; then HERE="$PWD/$HERE"; fi
+PARENT="${HERE%/*}"
+ROOT="${PARENT%/*/*}"
+REALME="$PARENT/libexec/$BASEME"
+export LD_LIBRARY_PATH="$ROOT/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+exec -a "$REALME" "$REALME" "$@"
+WRAPPER
+    chmod +x "$helpers/bin/.wrapper"
+    for real in "$helpers"/libexec/*; do ln -s .wrapper "$helpers/bin/${real##*/}"; done
+
     test -x tree/bin/apptainer
-    test -x tree/libexec/apptainer/bin/squashfuse_ll
     test -f tree/etc/apptainer/apptainer.conf
+    test -L tree/libexec/apptainer/bin/squashfuse_ll
+    test -x tree/libexec/apptainer/libexec/squashfuse_ll
     test -r tree/lib/libfuse3.so.3
     test -r tree/lib/liblzo2.so.2
     test -r tree/lib/libprotobuf-c.so.1
@@ -102,7 +123,6 @@ fetch() {
 
 run() {
     cd "$DEST" 2>/dev/null || { echo "no ${DEST} -- run '$0 fetch' on a compute node first"; exit 1; }
-    export LD_LIBRARY_PATH="${DEST}/tree/lib${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
     local app="${DEST}/tree/bin/apptainer"
 
     echo "== $(hostname): $(uname -sm) =="
@@ -110,12 +130,17 @@ run() {
     # without ldd the check below would silently report success
     command -v ldd >/dev/null || { echo "no ldd on PATH -- cannot verify linking"; exit 1; }
 
+    # Deliberately NOT exporting LD_LIBRARY_PATH: the module does not set it
+    # either, and doing so here would hide exactly the failure this checks for.
+    # apptainer must resolve from the host; the helpers get their path from the
+    # wrapper, so they are checked with the same value the wrapper sets.
     echo; echo "== 1. unresolved libraries =="
-    local found=0
-    for b in tree/bin/apptainer tree/libexec/apptainer/bin/*; do
+    local found=0 m
+    m=$(ldd "$app" 2>/dev/null | awk '/not found/{print $1}' | tr '\n' ' ')
+    [[ -n $m ]] && { printf '   %-16s MISSING (host): %s\n' apptainer "$m"; found=1; }
+    for b in tree/libexec/apptainer/libexec/*; do
         [[ -f $b ]] || continue
-        local m
-        m=$(ldd "$b" 2>/dev/null | awk '/not found/{print $1}' | tr '\n' ' ')
+        m=$(LD_LIBRARY_PATH="${DEST}/tree/lib" ldd "$b" 2>/dev/null | awk '/not found/{print $1}' | tr '\n' ' ')
         [[ -n $m ]] && { printf '   %-16s MISSING: %s\n' "${b##*/}" "$m"; found=1; }
     done
     [[ $found == 0 ]] && echo "   all resolved"

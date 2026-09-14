@@ -22,7 +22,10 @@ whatis("URL: https://apptainer.org/")
 prepend_path("PATH", "{{{PATH}}}/bin")
 prepend_path("MANPATH", "{{{PATH}}}/share/man")
 
--- libfuse3, liblzo2 and libprotobuf-c are vendored into lib/ because they are
--- absent from the GBI login nodes, and the deb's bundled squashfuse_ll /
--- fuse-overlayfs / mksquashfs / proot are dynamically linked against them
-prepend_path("LD_LIBRARY_PATH", "{{{PATH}}}/lib")
+-- No LD_LIBRARY_PATH here on purpose. The vendored libfuse3 / liblzo2 /
+-- libprotobuf-c in lib/ are reached by the wrapper scripts install.sh puts in
+-- libexec/apptainer/bin, because apptainer scrubs LD_* from the environment
+-- before launching its image drivers -- setting it here would be stripped
+-- before squashfuse_ll ever saw it, and would shadow system libraries for
+-- every other program in the shell meanwhile. apptainer itself needs only
+-- libseccomp, which the host provides.
