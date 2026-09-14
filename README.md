@@ -90,10 +90,10 @@ The process of deploying your module (after successful tests) is:
    (containing your module).
 3. Build the module: `make <your module name>`
 
-### Deploying where there is no `make` — which is every GBI node today
+### Deploying where there is no `make`
 
-Step 3 above assumes `make`. GBI nodes do not have it: the login node has no
-`make`, `cc`, `ld`, `ar`, `xz` or `zstd` at all, and compute nodes have `xz`
+Which is every GBI node today. Step 3 above assumes `make`; the login node has
+no `make`, `cc`, `ld`, `ar`, `xz` or `zstd` at all, and compute nodes have `xz`
 and `zstd` but still no `make`. **This does not block a deploy**, for two
 reasons:
 
@@ -333,55 +333,25 @@ build dependencies from the `module load` lines of its `install.sh`.
 | `go` | the Go programming language toolchain | no — bootstrapping needs an existing go |
 | [`gbi`](gbi/README.md) | verified HPC data movement; immediate foreground transfers and automatic Slurm for bulk work | no — in-tree Python source; needs Python 3.9+ and rclone |
 | `rclone` | rsync for cloud storage | no — upstream ships static go binaries for every platform |
-| `apptainer` | containers for HPC — `apptainer`/`singularity` without root | no — upstream ships a relocatable unprivileged deb |
+| [`apptainer`](apptainer/README.md) | containers for HPC — `apptainer`/`singularity` without root | no — upstream ships a relocatable unprivileged deb |
 
 Upstream `eza` and `ncdu` ship no macOS binaries, so their default-mode recipes
 fail fast on darwin with a pointer to `make <target> MODE=build`.
 
-`apptainer` is linux x86_64 only and has no source recipe to fall back to, so it
-fails fast everywhere else. It also needs the *node* to allow unprivileged user
-namespaces and expose `/dev/fuse` — the install itself is rootless, but the
-kernel has to permit what the containers do. The recipe unpacks upstream's
-non-setuid `.deb`, which bundles the container helpers — `mksquashfs`,
-`squashfuse_ll`, `fuse-overlayfs`, `fuse2fs`, `proot` — so no `squashfs-tools`
-or `fuse-overlayfs` package is needed. Those helpers are dynamically linked,
-and the two libraries that are genuinely optional on a slim image
-(`libfuse3.so.3`, `liblzo2.so.2` — GBI login nodes have neither) are vendored
-into `lib/`. The node must still provide `libseccomp.so.2`, which `apptainer`
-links against; the rest of what it needs ships with `dpkg`. Unpacking needs
-`xz` on PATH, which login nodes may lack and compute nodes have.
+`apptainer` is linux `x86_64` only and has no source recipe to fall back to, so
+it fails fast everywhere else. It must be **installed from a compute node** —
+it unpacks a `.deb` with `tar`, which shells out to `xz`, and login nodes have
+none. The result is then used from any node. The target node must allow
+unprivileged user namespaces and expose `/dev/fuse`: the install is rootless,
+but the kernel has to permit what the containers do. `--fakeroot` is not
+available.
 
-`proot` is deliberately deleted from the bundle, so `--fakeroot` is
-unavailable. Apptainer runs proot inside its own build namespace to emulate
-root ownership, and there it exits 1 on GBI nodes — while the same proot works
-from a plain shell, including under the exact nesting apptainer uses. Without
-it apptainer falls back to a path that builds and runs images correctly.
-Removing it makes that fallback deterministic instead of contingent on whether
-`libprotobuf-c` happens to be installed. Nothing is lost in practice: the
-subuid route needs an `/etc/subuid` entry, which cluster users do not have.
-
-The modulefile deliberately does **not** set `LD_LIBRARY_PATH`: apptainer
-scrubs `LD_*` from the environment before launching its image drivers, so it
-would never reach `squashfuse_ll` — while still shadowing system libraries for
-every other program in the shell. Instead each helper in
-`libexec/apptainer/bin` is a symlink to a generated `.wrapper` that sets the
-path itself immediately before `exec`, with the real binaries moved to
-`libexec/apptainer/libexec`. This is upstream's mechanism, for the same reason.
-
-The recipe also lifts the deb's `usr/*` up to the install root, so `bin`,
-`libexec`, `share`, `etc` and `var` end up as siblings. The deb is built
-`--prefix=/usr --sysconfdir=/etc`, but apptainer relocates by taking the parent
-of its own `bin/` as `${prefix}` and looking for `${prefix}/etc` there — left as
-unpacked it hunts for `<root>/usr/etc/apptainer/apptainer.conf` and refuses to
-start. Upstream's `tools/install-unprivileged.sh` performs the same lift.
-
-Because those constraints differ per node, `apptainer/check.sh` performs the
-same download-and-unpack the recipe does, without needing `make`, Lua or Lmod —
-useful on a node where the framework itself cannot be bootstrapped. Run
-`apptainer/check.sh fetch` somewhere with `xz`, then `apptainer/check.sh run` on
-the node you actually want to use apptainer from; it reports unresolved
-libraries, then tries a real container. It reads its pinned URLs from
-`sm-config/settings.toml`, so it cannot drift from the recipe.
+Its recipe departs from house idiom in several places — a hand-rolled `.deb`
+reader, a rewritten install layout, wrapper scripts around the bundled helpers,
+and a deliberately deleted `proot`. Each is load-bearing and each is explained
+in [apptainer/README.md](apptainer/README.md); read that before changing
+anything there. It also ships `apptainer/check.sh`, which exercises the same
+download-and-unpack without needing `make`, Lua or Lmod.
 
 Three more targets are **opt-in** — valid for `make <target>` and `make clean`,
 but skipped by `make all`, since they are either large or only interesting as
