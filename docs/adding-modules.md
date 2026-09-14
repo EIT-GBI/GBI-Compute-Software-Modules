@@ -121,13 +121,19 @@ idioms:
 - `make <name> MODE=build` on an sm-config-only recipe errors with a friendly
   stub — that's correct behavior, not a bug.
 - Cleanup of a test install: `make clean TARGET=<name> GBI_MODULE_PATH=./usr`.
+- `make: command not found` on the cluster is expected, not a broken checkout —
+  no GBI node ships `make` or a compiler. `make` is only a wrapper; run what
+  `make -n <target>` prints instead, and pick the node by what the recipe
+  needs (`apptainer` needs `xz`, so a compute node). The shared tree is already
+  bootstrapped, so the toolchain is never needed. Full instructions: README,
+  "Deploying where there is no `make`".
 
 ## Docs checklist on promote
 
 1. `README.md` "Available modules" table — one row; the third column states
    MODE=build deps, or why there is no build mode.
-2. `README.md` — the two "(today: `...`)" target lists (alphabetical): the
-   `make all` walk list, and the MODE=build skipped/covered note.
+2. `docs/appendix.md` — the two "(today: `...`)" target lists (alphabetical):
+   the `make all` walk list, and the MODE=build skipped/covered note.
 3. `test/test_macos.sh` — hardcoded target lists: add to the default-mode
    block (with a comment if the platform lacks a binary, like eza/ncdu) and
    to the MODE=build block if a build recipe exists.

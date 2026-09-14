@@ -1,0 +1,33 @@
+[env]
+SOURCE_PREFIX = "https://github.com/apptainer/apptainer/releases/download/v{INSTALL_VERSION}"
+# Vendored shared libraries: the two the apptainer deb needs that are not
+# guaranteed on a slim Ubuntu image (GBI login nodes have neither). Pinned to
+# the noble builds to match the cluster's ABI. Ubuntu prunes superseded
+# versions from the pool, so a 404 here means these need bumping -- check
+# https://archive.ubuntu.com/ubuntu/pool/main/f/fuse3/ and .../l/lzo2/
+FUSE3_DEB = "https://archive.ubuntu.com/ubuntu/pool/main/f/fuse3/libfuse3-3_3.14.0-5build1_amd64.deb"
+LZO2_DEB  = "https://archive.ubuntu.com/ubuntu/pool/main/l/lzo2/liblzo2-2_2.10-2build4_amd64.deb"
+VERSION      = "{INSTALL_VERSION}"
+VARIANT      = "{INSTALL_VERSION_VARIANT}"
+RUNTIME_OS   = "{RUNTIME_OS}"
+RUNTIME_ARCH = "{RUNTIME_ARCH}"
+
+[install]
+versions = ["1.5.3"]
+prefix = "{SITE_DESTINATION}/{STAGE_DIR}"
+# note: this is Lua regex: you will need to escape - and + (using %)
+format = "^downloaded$"
+# (optional) relocate after install
+destination = "{SITE_DESTINATION}/{INSTALL_VERSION_VARIANT}"
+stage = true
+
+[module]
+PATH = "{INSTALL_DIR}"
+INSTALL_VERSION = "{INSTALL_VERSION}"
+
+[post]
+# toggles mandatory relocate if `stage` and `clean` are true. If the install
+# script already relocates the package, then we can set `safe = false`
+safe = true
+# delete staging area after successful install
+clean = true

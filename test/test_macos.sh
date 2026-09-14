@@ -29,6 +29,8 @@ make parallel-tar
 make go
 make rclone
 make gbi
+# NO APPTAINER for macOS -- upstream ships a linux x86_64 deb only, and the
+# runtime needs unprivileged user namespaces, so there is no build fallback
 
 # Buuild tests potentially take more time => leave them as optional. Assumed to
 # be true for heavy testing

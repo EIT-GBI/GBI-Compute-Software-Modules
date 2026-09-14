@@ -83,12 +83,48 @@ The process of testing modules is:
    tests you want to run.
 
 The process of deploying your module (after successful tests) is:
-1. In a fresh shell (check tat `GBI_MODULE_PATH` is
+1. In a fresh shell (check that `GBI_MODULE_PATH` is
    `/mnt/gbi-shared/software`); and that `lmod` is the GBI LMod install.
 2. Go to the main config repo: `cd
-   $GBI_MODULE_PATH/GBI-Compute-Software-Module` and pull the latest version
+   $GBI_MODULE_PATH/GBI-Compute-Software-Modules` and pull the latest version
    (containing your module).
 3. Build the module: `make <your module name>`
+
+### Deploying where there is no `make`
+
+Which is every GBI node today. Step 3 above assumes `make`; the login node has
+no `make`, `cc`, `ld`, `ar`, `xz` or `zstd` at all, and compute nodes have `xz`
+and `zstd` but still no `make`. **This does not block a deploy**, for two
+reasons:
+
+- `make` is only a wrapper around a single `bash` command.
+- The shared tree is **already bootstrapped** — `opt/bin/lua` and
+  `opt/share/env.sh` exist, which is why every login shell can source
+  `env.sh`. Bootstrapping is the only step that needs a C toolchain, and it
+  does not need doing again.
+
+So run the install step directly instead of step 3:
+
+```bash
+cd $GBI_MODULE_PATH/GBI-Compute-Software-Modules
+bash -c "source opt/share/env.sh; ./run.sh opt/bin/build.sh \
+         -m $GBI_MODULE_PATH opt/bin/render.sh <your module name>"
+```
+
+`make -n <target>` prints exactly this command, so check there first if the
+build chain ever changes rather than trusting the copy above.
+
+Two rules for that shell:
+
+- **Run it from a compute node** when the recipe needs a tool the login node
+  lacks. `apptainer` unpacks a `.deb` with `tar`, which shells out to `xz`, so
+  it can only be installed from a compute node — the resulting install is then
+  used from the login node like any other module.
+- **Never run `make bootstrap` there** (nor its underlying
+  `opt/lmod/bootstrap.sh`). It rewrites the shared `opt/share/env.sh` that
+  every user's shell sources, repointing `MODULEPATH` for the whole cluster.
+  Test installs belong in a separate clone with `GBI_MODULE_PATH` pointing
+  somewhere in `$HOME`.
 
 ### How it is deployed at GBI
 
@@ -297,9 +333,25 @@ build dependencies from the `module load` lines of its `install.sh`.
 | `go` | the Go programming language toolchain | no — bootstrapping needs an existing go |
 | [`gbi`](gbi/README.md) | verified HPC data movement; immediate foreground transfers and automatic Slurm for bulk work | no — in-tree Python source; needs Python 3.9+ and rclone |
 | `rclone` | rsync for cloud storage | no — upstream ships static go binaries for every platform |
+| [`apptainer`](apptainer/README.md) | containers for HPC — `apptainer`/`singularity` without root | no — upstream ships a relocatable unprivileged deb |
 
 Upstream `eza` and `ncdu` ship no macOS binaries, so their default-mode recipes
 fail fast on darwin with a pointer to `make <target> MODE=build`.
+
+`apptainer` is linux `x86_64` only and has no source recipe to fall back to, so
+it fails fast everywhere else. It must be **installed from a compute node** —
+it unpacks a `.deb` with `tar`, which shells out to `xz`, and login nodes have
+none. The result is then used from any node. The target node must allow
+unprivileged user namespaces and expose `/dev/fuse`: the install is rootless,
+but the kernel has to permit what the containers do. `--fakeroot` is not
+available.
+
+Its recipe departs from house idiom in several places — a hand-rolled `.deb`
+reader, a rewritten install layout, wrapper scripts around the bundled helpers,
+and a deliberately deleted `proot`. Each is load-bearing and each is explained
+in [apptainer/README.md](apptainer/README.md); read that before changing
+anything there. It also ships `apptainer/check.sh`, which exercises the same
+download-and-unpack without needing `make`, Lua or Lmod.
 
 Three more targets are **opt-in** — valid for `make <target>` and `make clean`,
 but skipped by `make all`, since they are either large or only interesting as
