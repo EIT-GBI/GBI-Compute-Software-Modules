@@ -6,8 +6,11 @@ https://apptainer.org/
 
 Needs a node with unprivileged user namespaces enabled, /dev/fuse present, and
 libseccomp.so.2 installed. libfuse3 and liblzo2 are vendored with the module.
-`--fakeroot` falls back to the bundled proot: cluster users have no /etc/subuid
-entry, so the subuid-mapping path is unavailable.
+
+`--fakeroot` is not available. proot is deliberately not shipped -- apptainer
+runs it inside its own build namespace, where it fails on these nodes -- and
+the subuid path needs an /etc/subuid entry, which cluster users do not have.
+Pulling, running and building ordinary images are unaffected.
 
 Images are cached in ~/.apptainer/cache by default; set APPTAINER_CACHEDIR to
 somewhere roomier before pulling large images.
@@ -22,8 +25,8 @@ whatis("URL: https://apptainer.org/")
 prepend_path("PATH", "{{{PATH}}}/bin")
 prepend_path("MANPATH", "{{{PATH}}}/share/man")
 
--- No LD_LIBRARY_PATH here on purpose. The vendored libfuse3 / liblzo2 /
--- libprotobuf-c in lib/ are reached by the wrapper scripts install.sh puts in
+-- No LD_LIBRARY_PATH here on purpose. The vendored libfuse3 and liblzo2 in
+-- lib/ are reached by the wrapper scripts install.sh puts in
 -- libexec/apptainer/bin, because apptainer scrubs LD_* from the environment
 -- before launching its image drivers -- setting it here would be stripped
 -- before squashfuse_ll ever saw it, and would shadow system libraries for

@@ -96,16 +96,26 @@ rm -f apptainer.deb
 mv downloaded/usr/* downloaded/
 rmdir downloaded/usr
 
-# The deb bundles the container helpers but links them dynamically, and three
-# of their libraries are genuinely optional on a slim image -- GBI login nodes
-# have none of them. Everything else they need (libseccomp, libzstd, liblzma,
+# Apptainer runs proot inside its own build environment to emulate root
+# ownership when unprivileged. On GBI nodes that exits 1 while the very same
+# proot works from a plain shell, including under the exact nesting apptainer
+# uses -- ptrace from inside apptainer's user namespace appears to be blocked.
+# Apptainer falls back to building without proot, which works end to end.
+# Delete it so that fallback is taken deterministically, rather than depending
+# on whether libprotobuf-c happens to be installed on a given node. The cost is
+# --fakeroot, which is unavailable here anyway: no user has an /etc/subuid
+# entry, so the subuid path cannot work either.
+rm -f downloaded/libexec/apptainer/bin/proot
+
+# The deb bundles the container helpers but links them dynamically, and two of
+# their libraries are genuinely optional on a slim image -- GBI login nodes
+# have neither. Everything else they need (libseccomp, libzstd, liblzma,
 # liblz4, libz, libuuid) is present anywhere dpkg is, so only these get
 # vendored:
-#   libfuse3.so.3       -> squashfuse_ll, fuse-overlayfs, fuse2fs (SIF mounts)
-#   liblzo2.so.2        -> squashfuse_ll, mksquashfs        (LZO squashfs)
-#   libprotobuf-c.so.1  -> proot                            (--fakeroot fallback)
+#   libfuse3.so.3  -> squashfuse_ll, fuse-overlayfs, fuse2fs (SIF mounts)
+#   liblzo2.so.2   -> squashfuse_ll, mksquashfs             (LZO squashfs)
 mkdir -p downloaded/lib
-for LIB_URL in "${FUSE3_DEB}" "${LZO2_DEB}" "${PROTOBUF_C_DEB}"
+for LIB_URL in "${FUSE3_DEB}" "${LZO2_DEB}"
 do
     echo "Downloading ${LIB_URL}"
     curl --fail --output lib.deb -L "${LIB_URL}"
@@ -171,4 +181,6 @@ test -x downloaded/libexec/apptainer/libexec/squashfuse_ll
 test -x downloaded/libexec/apptainer/libexec/starter
 test -r downloaded/lib/libfuse3.so.3
 test -r downloaded/lib/liblzo2.so.2
-test -r downloaded/lib/libprotobuf-c.so.1
+# proot must be gone, or apptainer picks it up again and the build fails
+test ! -e downloaded/libexec/apptainer/bin/proot
+test ! -e downloaded/libexec/apptainer/libexec/proot

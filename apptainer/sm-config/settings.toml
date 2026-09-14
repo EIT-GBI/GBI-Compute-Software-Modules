@@ -7,7 +7,6 @@ SOURCE_PREFIX = "https://github.com/apptainer/apptainer/releases/download/v{INST
 # https://archive.ubuntu.com/ubuntu/pool/main/f/fuse3/ and .../l/lzo2/
 FUSE3_DEB = "https://archive.ubuntu.com/ubuntu/pool/main/f/fuse3/libfuse3-3_3.14.0-5build1_amd64.deb"
 LZO2_DEB  = "https://archive.ubuntu.com/ubuntu/pool/main/l/lzo2/liblzo2-2_2.10-2build4_amd64.deb"
-PROTOBUF_C_DEB = "https://archive.ubuntu.com/ubuntu/pool/main/p/protobuf-c/libprotobuf-c1_1.4.1-1ubuntu4_amd64.deb"
 VERSION      = "{INSTALL_VERSION}"
 VARIANT      = "{INSTALL_VERSION_VARIANT}"
 RUNTIME_OS   = "{RUNTIME_OS}"

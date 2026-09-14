@@ -309,12 +309,20 @@ kernel has to permit what the containers do. The recipe unpacks upstream's
 non-setuid `.deb`, which bundles the container helpers — `mksquashfs`,
 `squashfuse_ll`, `fuse-overlayfs`, `fuse2fs`, `proot` — so no `squashfs-tools`
 or `fuse-overlayfs` package is needed. Those helpers are dynamically linked,
-and the three libraries that are genuinely optional on a slim image
-(`libfuse3.so.3`, `liblzo2.so.2`, `libprotobuf-c.so.1` — GBI login nodes have
-none of them) are vendored into `lib/`. The node must still provide
-`libseccomp.so.2`, which `apptainer` links against; the rest of what it needs
-ships with `dpkg`. Unpacking needs `xz` on PATH, which login nodes may lack and
-compute nodes have.
+and the two libraries that are genuinely optional on a slim image
+(`libfuse3.so.3`, `liblzo2.so.2` — GBI login nodes have neither) are vendored
+into `lib/`. The node must still provide `libseccomp.so.2`, which `apptainer`
+links against; the rest of what it needs ships with `dpkg`. Unpacking needs
+`xz` on PATH, which login nodes may lack and compute nodes have.
+
+`proot` is deliberately deleted from the bundle, so `--fakeroot` is
+unavailable. Apptainer runs proot inside its own build namespace to emulate
+root ownership, and there it exits 1 on GBI nodes — while the same proot works
+from a plain shell, including under the exact nesting apptainer uses. Without
+it apptainer falls back to a path that builds and runs images correctly.
+Removing it makes that fallback deterministic instead of contingent on whether
+`libprotobuf-c` happens to be installed. Nothing is lost in practice: the
+subuid route needs an `/etc/subuid` entry, which cluster users do not have.
 
 The modulefile deliberately does **not** set `LD_LIBRARY_PATH`: apptainer
 scrubs `LD_*` from the environment before launching its image drivers, so it

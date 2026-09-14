@@ -31,9 +31,8 @@ SOURCE_PREFIX=${SOURCE_PREFIX//\{INSTALL_VERSION\}/${VER}}
 APPTAINER_DEB="${SOURCE_PREFIX}/apptainer_${VER}_amd64.deb"
 FUSE3_DEB=$(toml_str FUSE3_DEB)
 LZO2_DEB=$(toml_str LZO2_DEB)
-PROTOBUF_C_DEB=$(toml_str PROTOBUF_C_DEB)
 
-for v in VER APPTAINER_DEB FUSE3_DEB LZO2_DEB PROTOBUF_C_DEB; do
+for v in VER APPTAINER_DEB FUSE3_DEB LZO2_DEB; do
     [[ -n ${!v} ]] || { echo "could not parse ${v} from ${CONF}"; exit 1; }
 done
 
@@ -81,13 +80,18 @@ fetch() {
     mv tree/usr/* tree/
     rmdir tree/usr
 
-    for u in "$FUSE3_DEB" "$LZO2_DEB" "$PROTOBUF_C_DEB"; do
+    for u in "$FUSE3_DEB" "$LZO2_DEB"; do
         echo "-- ${u##*/}"
         curl --fail -sS -L -o l.deb "$u"
         rm -rf t; extract_deb l.deb t
         find t -name 'lib*.so*' -exec cp -a {} tree/lib/ \;
         rm -rf t l.deb
     done
+
+    # apptainer runs proot inside its build namespace, where it fails on GBI
+    # nodes; without it apptainer falls back to a path that works. Same removal
+    # sm-config/install.sh performs.
+    rm -f tree/libexec/apptainer/bin/proot
 
     # apptainer scrubs LD_* before launching its image drivers, so the helpers
     # have to carry their own library path -- same wrapping install.sh does
@@ -115,7 +119,7 @@ WRAPPER
     test -x tree/libexec/apptainer/libexec/squashfuse_ll
     test -r tree/lib/libfuse3.so.3
     test -r tree/lib/liblzo2.so.2
-    test -r tree/lib/libprotobuf-c.so.1
+    test ! -e tree/libexec/apptainer/bin/proot
 
     echo "== unpacked $(du -sh tree | cut -f1) into ${DEST}/tree =="
     echo "now run '$0 run' on the node you want to use apptainer from"
