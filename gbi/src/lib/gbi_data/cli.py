@@ -105,7 +105,8 @@ def supervise(task, timeout, stopped):
                 except subprocess.TimeoutExpired:
                     pass
             process.stdout.close()
-            return {"error": "interrupted or timed out; inspect receipts before retrying"}
+            key = "lookup_error" if task.get("operation") == "prepare" else "error"
+            return {key: "interrupted or timed out; inspect receipts before retrying"}
         try:
             process.wait(timeout=0.2)
         except subprocess.TimeoutExpired:
@@ -113,11 +114,13 @@ def supervise(task, timeout, stopped):
     output = process.stdout.read()
     process.stdout.close()
     if process.returncode:
-        return {"error": f"transfer worker exited {process.returncode}; inspect receipts"}
+        key = "lookup_error" if task.get("operation") == "prepare" else "error"
+        return {key: f"transfer worker exited {process.returncode}; inspect receipts"}
     try:
         return json.loads(output)
     except ValueError:
-        return {"error": "transfer worker returned no valid result; inspect receipts"}
+        key = "lookup_error" if task.get("operation") == "prepare" else "error"
+        return {key: "transfer worker returned no valid result; inspect receipts"}
 
 
 class TransferPool(ThreadPoolExecutor):
@@ -181,38 +184,14 @@ def run(run_dir, site, home):
 
     def schedule(entry):
         path, empty = entry
-        destination = target / path.relative_to(source) if specification["directory"] else target
-        if empty:
-            ensure_parent(destination / ".placeholder", target_root)
-            if specification["delete"] and path != source:
-                path.rmdir()
-            return
-        try:
-            encode = path.is_symlink() and specification["target_kind"] == "alluxio"
-            source_size = path.lstat().st_size
-        except OSError as error:
-            record_failure(path, f"source lookup failed: {error}")
-            return
-        decode = specification["source_kind"] == "alluxio" and path.name.endswith(".rclonelink")
-        if path.name.endswith(".rclonelink") and not decode:
-            raise ValueError(f"reserved symlink representation suffix: {path}")
-        if encode:
-            destination = destination.with_name(destination.name + ".rclonelink")
-        elif decode and specification["target_kind"] != "alluxio":
-            destination = destination.with_name(destination.name[:-len(".rclonelink")])
-        active = run_dir / "active" / (uuid.uuid4().hex + ".json")
-        task = {**file_specification, "source": str(path), "target": str(destination),
-                "state": str(state), "progress": str(active), "rclone": rclone,
-                "receipt": str(run_dir / "receipts.jsonl"), "encode_link": encode or
-                (decode and specification["target_kind"] == "alluxio"), "decode_link": decode,
-                "selection_root": str(source if specification["directory"] else source.parent),
-                "settle_seconds": int(site.values["verify_settle_seconds"]),
-                "expected_source": snapshots.get(str(path)),
-                "max_bytes": int(site.values["inline_bytes"]) if selected is not None else None}
-        progress["discovered_files"] += 1
-        progress["discovered_bytes"] += source_size
+        task = {"operation": "prepare", "source": str(path), "target": str(target),
+                "target_root": str(target_root), "selection_root": str(source if specification["directory"]
+                                                                       else source.parent),
+                "source_kind": specification["source_kind"], "target_kind": specification["target_kind"],
+                "directory": specification["directory"], "delete": specification["delete"],
+                "empty": empty}
         future = pool.submit(supervise, task, int(site.values["file_timeout"]), stopped)
-        pending[future] = (path, active)
+        pending[future] = ("prepare", path, None)
 
     try:
         with TransferPool(stopped, max_workers=width) as pool:
@@ -244,8 +223,31 @@ def run(run_dir, site, home):
                 done, _ = wait(pending, timeout=0 if event is not None else 0.5,
                                return_when=FIRST_COMPLETED)
                 for future in done:
-                    path, active = pending.pop(future)
+                    kind, path, active = pending.pop(future)
                     outcome = future.result()
+                    if kind == "prepare":
+                        if "lookup_error" in outcome:
+                            record_failure(path, f"source lookup failed: {outcome['lookup_error']}")
+                            continue
+                        if "error" in outcome:
+                            raise ValueError(outcome["error"])
+                        if outcome["empty"]:
+                            continue
+                        active = run_dir / "active" / (uuid.uuid4().hex + ".json")
+                        task = {**file_specification, "source": str(path), "target": outcome["target"],
+                                "state": str(state), "progress": str(active), "rclone": rclone,
+                                "receipt": str(run_dir / "receipts.jsonl"), "encode_link": outcome["encode"] or
+                                (outcome["decode"] and specification["target_kind"] == "alluxio"),
+                                "decode_link": outcome["decode"],
+                                "selection_root": str(source if specification["directory"] else source.parent),
+                                "settle_seconds": int(site.values["verify_settle_seconds"]),
+                                "expected_source": snapshots.get(str(path)),
+                                "max_bytes": int(site.values["inline_bytes"]) if selected is not None else None}
+                        progress["discovered_files"] += 1
+                        progress["discovered_bytes"] += outcome["source_size"]
+                        transfer = pool.submit(supervise, task, int(site.values["file_timeout"]), stopped)
+                        pending[transfer] = ("transfer", path, active)
+                        continue
                     active.unlink(missing_ok=True)
                     if "error" in outcome:
                         record_failure(path, outcome["error"])
@@ -260,7 +262,9 @@ def run(run_dir, site, home):
                     progress["active"] = len(pending)
                     progress["active_bytes"] = 0
                     progress["phases"] = {}
-                    for _, active in pending.values():
+                    for _, _, active in pending.values():
+                        if active is None:
+                            continue
                         try:
                             detail = json.loads(active.read_text())
                             progress["active_bytes"] += detail["bytes"]

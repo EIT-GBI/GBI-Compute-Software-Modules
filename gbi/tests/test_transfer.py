@@ -527,6 +527,10 @@ class Interface(unittest.TestCase):
             return done, pending
 
         def fast_supervise(task, *_args):
+            if task.get("operation") == "prepare":
+                return {"empty": False, "target": task["target"] + "/" + Path(task["source"]).name,
+                        "source_size": Path(task["source"]).stat().st_size,
+                        "encode": False, "decode": False}
             return {"bytes": Path(task["source"]).stat().st_size, "deleted": False}
 
         with patch("gbi_data.selection.entries", side_effect=slow_entries), \
@@ -564,6 +568,10 @@ class Interface(unittest.TestCase):
             return real_wait(*args, **kwargs)
 
         def fast_supervise(task, *_args):
+            if task.get("operation") == "prepare":
+                return {"empty": False, "target": task["target"] + "/" + Path(task["source"]).name,
+                        "source_size": Path(task["source"]).stat().st_size,
+                        "encode": False, "decode": False}
             return {"bytes": Path(task["source"]).stat().st_size, "deleted": False}
 
         self.site.values["jobs"] = "2"
@@ -582,6 +590,23 @@ class Interface(unittest.TestCase):
         self.addCleanup(stream.stop)
         self.assertEqual(stream.get(1)[0:2], ("entry", (empty, True)))
         self.assertEqual(stream.get(1)[0], "done")
+
+    def test_empty_directory_preparation_preserves_placeholder_and_counts_files(self):
+        source = self.site.roots["lustre"] / "with-empty"
+        source.mkdir()
+        (source / "empty").mkdir()
+        (source / "file").write_bytes(b"contents")
+        target = self.site.roots["fss"] / "with-empty"
+        environment = {**os.environ, "GBI_DATA_SITE_CONF": str(self.conf), "PATH": ""}
+        result = subprocess.run([sys.executable, "-B", "-m", "gbi_data.cli", "data", "move",
+                                 str(source), str(target)], env=environment,
+                                capture_output=True, text=True, timeout=15)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        history = next((self.site.roots["alluxio"] / ".gbi/transfers").glob("*/*/history.json"))
+        progress = json.loads(history.read_text())["progress"]
+        self.assertEqual((progress["files"], progress["bytes"]), (1, len(b"contents")))
+        self.assertTrue((target / "empty").is_dir())
+        self.assertFalse((source / "empty").exists())
 
     def test_progress_has_no_percentage_until_discovery_complete(self):
         progress = {"files": 2, "bytes": 20, "freed": 10, "failed": 0,

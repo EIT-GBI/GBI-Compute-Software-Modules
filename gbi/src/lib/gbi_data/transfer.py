@@ -115,6 +115,33 @@ def copy_stream(source, target, fd, rclone, lock, progress, target_kind="fss", t
     return result.hexdigest(), total
 
 
+def prepare(task):
+    """Resolve one discovered entry without blocking the coordinator."""
+    source = Path(task["source"])
+    selection_root = Path(task["selection_root"])
+    target = Path(task["target"])
+    destination = target / source.relative_to(selection_root) if task["directory"] else target
+    if task["empty"]:
+        ensure_parent(destination / ".placeholder", Path(task["target_root"]))
+        if task["delete"] and source != selection_root:
+            source.rmdir()
+        return {"empty": True}
+    try:
+        encode = source.is_symlink() and task["target_kind"] == "alluxio"
+        source_size = source.lstat().st_size
+    except OSError as error:
+        return {"lookup_error": str(error)}
+    decode = task["source_kind"] == "alluxio" and source.name.endswith(".rclonelink")
+    if source.name.endswith(".rclonelink") and not decode:
+        raise ValueError(f"reserved symlink representation suffix: {source}")
+    if encode:
+        destination = destination.with_name(destination.name + ".rclonelink")
+    elif decode and task["target_kind"] != "alluxio":
+        destination = destination.with_name(destination.name[:-len(".rclonelink")])
+    return {"empty": False, "target": str(destination), "source_size": source_size,
+            "encode": encode, "decode": decode}
+
+
 def transfer(task):
     timings = {}
     source, target = Path(task["source"]), Path(task["target"])
@@ -252,7 +279,7 @@ def main():
     os.umask(0o077)
     task = json.load(sys.stdin)
     try:
-        result = transfer(task)
+        result = prepare(task) if task.get("operation") == "prepare" else transfer(task)
     except (OSError, ValueError, subprocess.SubprocessError) as error:
         result = {"error": str(error), "source": task["source"]}
     print(json.dumps(result), flush=True)

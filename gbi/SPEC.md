@@ -51,8 +51,12 @@ The foreground probe retains a bounded selection of metadata (at most 100,000
 visited entries). Bulk discovery uses a depth-first scandir iterator in a
 bounded helper stream, allowing the orchestrator to collect completed files
 while discovery waits on a mount. A source lookup error is recorded for that
-entry and discovery continues. The orchestrator holds at most the configured
-file concurrency in flight. Each unfinished file has a small journal.
+entry and discovery continues. Source metadata and empty-directory preparation
+run in the same supervised worker slots as transfers, so coordinator progress
+continues while one preparation waits on filesystem I/O. The orchestrator holds
+at most the configured file concurrency in flight. Each unfinished file has a
+small journal. A kernel-stuck directory walk can still prevent final completion;
+the preparation deadline does not make that discovery operation interruptible.
 Completed journals are removed. A fixed set of cross-node lock stripes survives
 individual attempts; kernel-blocked workers and their rclone children inherit
 the lock so a new attempt cannot write over them.
