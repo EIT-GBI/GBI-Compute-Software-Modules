@@ -537,6 +537,42 @@ class Interface(unittest.TestCase):
             self.assertEqual(cli.run(run_dir, self.site, self.base / "home"), 0)
         self.assertIn(True, waited_during_slow)
 
+    def test_inline_selection_keeps_the_transfer_width_bound(self):
+        source = self.site.roots["lustre"] / "selected"
+        source.mkdir()
+        files = []
+        for number in range(3):
+            path = source / str(number)
+            path.write_bytes(str(number).encode())
+            files.append(path)
+        target = self.site.roots["fss"] / "selected"
+        run_dir = self.site.roots["lustre"] / ".gbi" / "runs" / "selected-test"
+        run_dir.mkdir(parents=True)
+        request = {"source": str(source), "target": str(target), "source_kind": "lustre",
+                   "target_kind": "fss", "source_root": str(self.site.roots["lustre"]),
+                   "target_root": str(self.site.roots["fss"]), "directory": True, "delete": False,
+                   "include": [], "verb": "copy", "uid": os.getuid(), "site": str(self.conf),
+                   "execution": "inline", "selection": [
+                       {"path": str(path), "empty": False, "fingerprint": fingerprint(path)}
+                       for path in files], "reader": "native"}
+        (run_dir / "request.json").write_text(json.dumps(request))
+        pending_sizes = []
+        real_wait = cli.wait
+
+        def observe_wait(*args, **kwargs):
+            pending_sizes.append(len(args[0]))
+            return real_wait(*args, **kwargs)
+
+        def fast_supervise(task, *_args):
+            return {"bytes": Path(task["source"]).stat().st_size, "deleted": False}
+
+        self.site.values["jobs"] = "2"
+        with patch("gbi_data.cli.wait", side_effect=observe_wait), \
+             patch("gbi_data.cli.supervise", side_effect=fast_supervise), \
+             patch("gbi_data.cli.publish_history", return_value="history"):
+            self.assertEqual(cli.run(run_dir, self.site, self.base / "home"), 0)
+        self.assertLessEqual(max(pending_sizes), 2)
+
     def test_empty_directory_is_streamed_as_work(self):
         root = self.site.roots["lustre"] / "empty"
         root.mkdir()

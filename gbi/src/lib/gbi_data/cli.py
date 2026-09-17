@@ -219,7 +219,7 @@ def run(run_dir, site, home):
             while pending or not progress["discovery_complete"]:
                 event = None
                 if not stopped.is_set() and not progress["discovery_complete"] and (
-                        selected is not None or len(pending) < width):
+                    len(pending) < width):
                     if selected is not None:
                         entry = next(iterator, None)
                         event = ("done", None, None) if entry is None else ("entry", entry, None)
@@ -276,6 +276,9 @@ def run(run_dir, site, home):
         progress["failed"] += 1
         output.finish()
         print(f"FAILED discovery: {error}", flush=True)
+    finally:
+        if discovery is not None:
+            discovery.stop()
     progress["phase"] = "interrupted" if stopped.is_set() else "failed" if progress["failed"] else "complete"
     progress["elapsed"] = time.monotonic() - started
     progress["active"] = 0
