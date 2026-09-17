@@ -48,8 +48,11 @@ whole-second Lustre timestamps can hide same-size edits. Quiescent inputs are
 still required; the CLI does not lock applications out of their source files.
 
 The foreground probe retains a bounded selection of metadata (at most 100,000
-visited entries). Bulk discovery uses a depth-first scandir iterator. The
-orchestrator holds at most the configured file concurrency in flight. Each unfinished file has a small journal.
+visited entries). Bulk discovery uses a depth-first scandir iterator in a
+bounded helper stream, allowing the orchestrator to collect completed files
+while discovery waits on a mount. A source lookup error is recorded for that
+entry and discovery continues. The orchestrator holds at most the configured
+file concurrency in flight. Each unfinished file has a small journal.
 Completed journals are removed. A fixed set of cross-node lock stripes survives
 individual attempts; kernel-blocked workers and their rclone children inherit
 the lock so a new attempt cannot write over them.

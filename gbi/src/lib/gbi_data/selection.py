@@ -4,13 +4,15 @@ import fnmatch
 import json
 import os
 from pathlib import Path
+from queue import Empty, Full, Queue
 import subprocess
 import sys
+import threading
 
 from .storage import Site, fingerprint
 
 
-def entries(source, site, root, patterns, visit=lambda: None):
+def entries(source, site, root, patterns, visit=lambda: None, on_error=None):
     if source.is_symlink() or not source.is_dir():
         visit()
         yield source, False
@@ -21,14 +23,67 @@ def entries(source, site, root, patterns, visit=lambda: None):
             visit()  # Count excluded names and directories, not just matches.
             empty = False
             path = Path(child.path)
-            if site.is_reserved(path, root):
+            try:
+                if site.is_reserved(path, root):
+                    continue
+                is_dir = child.is_dir(follow_symlinks=False)
+            except OSError as error:
+                if on_error is None:
+                    raise
+                on_error(path, error)
                 continue
-            if child.is_dir(follow_symlinks=False):
-                yield from entries(path, site, root, patterns, visit)
+            if is_dir:
+                yield from entries(path, site, root, patterns, visit, on_error)
             elif not patterns or any(fnmatch.fnmatchcase(child.name, pattern) for pattern in patterns):
                 yield path, False
         if empty and not patterns:
             yield source, True
+
+
+class EntryStream:
+    """Run blocking directory discovery without stopping transfer receipts."""
+
+    def __init__(self, source, site, root, patterns):
+        self._events = Queue(maxsize=1)
+        self._stopped = threading.Event()
+        self._iterator = entries(source, site, root, patterns, on_error=self._report_error)
+        self._thread = threading.Thread(target=self._produce, daemon=True)
+        self._thread.start()
+
+    def _put(self, event):
+        while not self._stopped.is_set():
+            try:
+                self._events.put(event, timeout=0.2)
+                return
+            except Full:
+                pass
+
+    def _report_error(self, path, error):
+        self._put(("error", path, error))
+
+    def _produce(self):
+        try:
+            for item in self._iterator:
+                if self._stopped.is_set():
+                    break
+                self._put(("entry", item, None))
+        except (OSError, ValueError, RecursionError) as error:
+            self._put(("fatal", None, error))
+        finally:
+            self._put(("done", None, None))
+
+    def get(self, timeout):
+        try:
+            return self._events.get(timeout=timeout)
+        except Empty:
+            return None
+
+    def stop(self):
+        self._stopped.set()
+
+
+def stream_entries(source, site, root, patterns):
+    return EntryStream(source, site, root, patterns)
 
 
 def foreground_selection(specification, site):
