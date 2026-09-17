@@ -201,8 +201,8 @@ GBI_SITE_PARTITION=site-partition make gbi
 
 For a shared cluster installation, run the recipe as a software maintainer
 from the reviewed release checkout and add `GBI_MODULE_PATH=/site/shared/software`
-to the `make` command. Software goes under `gbi/0.3.4` and the modulefile under
-`modules/gbi/0.3.4.lua` in that tree. Use the same install root as the cluster's
+to the `make` command. Software goes under `gbi/0.3.3` and the modulefile under
+`modules/gbi/0.3.3.lua` in that tree. Use the same install root as the cluster's
 existing rclone module. When its `modules` directory is already in the shared
 Lmod environment, users only need `module load gbi`; no per-user installation,
 container rebuild or login-node restart is required. Check `module show gbi`,

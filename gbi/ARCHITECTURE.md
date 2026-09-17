@@ -1,6 +1,6 @@
 # GBI data CLI architecture
 
-This describes **gbi 0.3.4**, extending the verified worker introduced in [PR #7 — verified data movement with
+This describes **gbi 0.3.3**, extending the verified worker introduced in [PR #7 — verified data movement with
 Slurm and terminal progress](https://github.com/EIT-GBI/GBI-Compute-Software-Modules/pull/7).
 The deployed settings below were checked on 9 September 2026. Site paths,
 user identities and credentials are deliberately omitted from this public report.

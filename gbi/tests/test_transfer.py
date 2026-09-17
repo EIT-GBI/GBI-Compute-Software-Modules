@@ -527,10 +527,6 @@ class Interface(unittest.TestCase):
             return done, pending
 
         def fast_supervise(task, *_args):
-            if task.get("operation") == "prepare":
-                return {"empty": False, "target": task["target"] + "/" + Path(task["source"]).name,
-                        "source_size": Path(task["source"]).stat().st_size,
-                        "encode": False, "decode": False}
             return {"bytes": Path(task["source"]).stat().st_size, "deleted": False}
 
         with patch("gbi_data.selection.entries", side_effect=slow_entries), \
@@ -540,6 +536,57 @@ class Interface(unittest.TestCase):
              patch("gbi_data.cli.publish_history", return_value="history"):
             self.assertEqual(cli.run(run_dir, self.site, self.base / "home"), 0)
         self.assertIn(True, waited_during_slow)
+
+    def test_coordinator_collects_second_receipt_while_first_worker_blocks(self):
+        source = self.site.roots["lustre"] / "blocked-worker"
+        source.mkdir()
+        first, second = source / "first", source / "second"
+        first.write_bytes(b"first")
+        second.write_bytes(b"second")
+        target = self.site.roots["fss"] / "blocked-worker"
+        run_dir = self.site.roots["lustre"] / ".gbi" / "runs" / "blocked-worker-test"
+        run_dir.mkdir(parents=True)
+        request = {"source": str(source), "target": str(target), "source_kind": "lustre",
+                   "target_kind": "fss", "source_root": str(self.site.roots["lustre"]),
+                   "target_root": str(self.site.roots["fss"]), "directory": True, "delete": False,
+                   "include": [], "verb": "copy", "uid": os.getuid(), "site": str(self.conf),
+                   "execution": "allocation", "selection": None, "reader": "rclone"}
+        (run_dir / "request.json").write_text(json.dumps(request))
+        first_started = threading.Event()
+        second_finished = threading.Event()
+        completed = []
+        paused = False
+
+        def entries_with_blocked_worker(*_args, **_kwargs):
+            yield first, False
+            first_started.wait(1)
+            yield second, False
+
+        def blocked_fingerprint(path):
+            nonlocal paused
+            if Path(path) == first and not paused:
+                paused = True
+                first_started.set()
+                self.assertTrue(second_finished.wait(2))
+            return fingerprint(path)
+
+        def supervised(task, *_args):
+            name = Path(task["source"]).name
+            outcome = transfer(task)
+            if name == "second":
+                second_finished.set()
+            completed.append(name)
+            return outcome
+
+        with patch("gbi_data.selection.entries", side_effect=entries_with_blocked_worker), \
+             patch("gbi_data.cli.supervise", side_effect=supervised), \
+             patch("gbi_data.transfer.fingerprint", side_effect=blocked_fingerprint), \
+             patch("gbi_data.cli.publish_history", return_value="history"), \
+             patch("gbi_data.cli.shutil.rmtree"):
+            self.assertEqual(cli.run(run_dir, self.site, self.base / "home"), 0)
+        self.assertEqual(completed, ["second", "first"])
+        receipts = [json.loads(line) for line in (run_dir / "receipts.jsonl").read_text().splitlines()]
+        self.assertEqual([Path(row["source"]).name for row in receipts], ["second", "first"])
 
     def test_inline_selection_keeps_the_transfer_width_bound(self):
         source = self.site.roots["lustre"] / "selected"
@@ -568,10 +615,6 @@ class Interface(unittest.TestCase):
             return real_wait(*args, **kwargs)
 
         def fast_supervise(task, *_args):
-            if task.get("operation") == "prepare":
-                return {"empty": False, "target": task["target"] + "/" + Path(task["source"]).name,
-                        "source_size": Path(task["source"]).stat().st_size,
-                        "encode": False, "decode": False}
             return {"bytes": Path(task["source"]).stat().st_size, "deleted": False}
 
         self.site.values["jobs"] = "2"
