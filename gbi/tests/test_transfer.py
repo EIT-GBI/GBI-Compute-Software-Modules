@@ -218,6 +218,19 @@ class Transfers(unittest.TestCase):
         self.assertTrue(stored.exists())
         self.assertEqual(os.readlink(restored), "../original")
 
+    def test_alluxio_encoded_link_does_not_duplicate_suffix(self):
+        stored = self.source.with_name("file.dat.rclonelink")
+        stored.write_text("../original")
+        task = {key: value for key, value in self.task.items()
+                if key not in ("encode_link", "decode_link")}
+        destination = self.target.with_name("file.dat.rclonelink")
+        transfer({**task, "source": str(stored), "target": str(destination),
+                  "source_kind": "alluxio", "target_kind": "alluxio", "target_base": True,
+                  "delete": False})
+        self.assertTrue(destination.exists())
+        self.assertFalse(destination.with_name("file.dat.rclonelink.rclonelink").exists())
+        self.assertEqual(destination.read_text(), "../original")
+
 
 class Interface(unittest.TestCase):
     def setUp(self):
@@ -460,6 +473,196 @@ class Interface(unittest.TestCase):
         (root / ".gbi" / "file.pt").write_text("x")
         found = list(cli.entries(root, self.site, root, ["*.pt", "*.pt.*"]))
         self.assertEqual({p.name for p, _ in found}, {"file.pt", "file.pt.ready.json"})
+
+    def test_source_lookup_failure_does_not_hide_valid_entry(self):
+        root = self.site.roots["lustre"] / "lookup"
+        root.mkdir()
+        valid = root / "valid"
+        valid.touch()
+
+        class Child:
+            def __init__(self, name, broken=False):
+                self.name = name
+                self.path = str(root / name)
+                self.broken = broken
+
+            def is_dir(self, follow_symlinks=False):
+                if self.broken:
+                    raise OSError("metadata unavailable")
+                return False
+
+        class Scanner:
+            def __enter__(self):
+                return iter((Child("broken", broken=True), Child("valid")))
+
+            def __exit__(self, *_):
+                return False
+
+        errors = []
+        with patch("gbi_data.selection.os.scandir", return_value=Scanner()):
+            found = list(selection.entries(
+                root, self.site, root, [],
+                on_error=lambda path, error: errors.append((path, error))))
+        self.assertEqual(found, [(valid, False)])
+        self.assertEqual(errors[0][0], root / "broken")
+        self.assertIn("metadata unavailable", str(errors[0][1]))
+
+    def test_stream_collects_completed_work_during_slow_discovery(self):
+        source = self.site.roots["lustre"] / "slow"
+        source.mkdir()
+        first, second = source / "first", source / "second"
+        first.write_bytes(b"first")
+        second.write_bytes(b"second")
+        target = self.site.roots["fss"] / "slow"
+        run_dir = self.site.roots["lustre"] / ".gbi" / "runs" / "slow-test"
+        run_dir.mkdir(parents=True)
+        request = {"source": str(source), "target": str(target), "source_kind": "lustre",
+                   "target_kind": "fss", "source_root": str(self.site.roots["lustre"]),
+                   "target_root": str(self.site.roots["fss"]), "directory": True, "delete": False,
+                   "include": [], "verb": "copy", "uid": os.getuid(), "site": str(self.conf),
+                   "execution": "allocation", "selection": None, "reader": "rclone"}
+        (run_dir / "request.json").write_text(json.dumps(request))
+        slow = threading.Event()
+        waited_during_slow = []
+        real_wait = cli.wait
+
+        def slow_entries(*_args, **_kwargs):
+            yield first, False
+            slow.set()
+            time.sleep(0.6)
+            slow.clear()
+            yield second, False
+
+        def observe_wait(*args, **kwargs):
+            done, pending = real_wait(*args, **kwargs)
+            if done:
+                waited_during_slow.append(slow.is_set())
+            return done, pending
+
+        def fast_supervise(task, *_args):
+            return {"bytes": Path(task["source"]).stat().st_size, "deleted": False}
+
+        with patch("gbi_data.selection.entries", side_effect=slow_entries), \
+             patch("gbi_data.cli.wait", side_effect=observe_wait), \
+             patch("gbi_data.cli.supervise", side_effect=fast_supervise), \
+             patch("gbi_data.cli.shutil.which", return_value="rclone"), \
+             patch("gbi_data.cli.publish_history", return_value="history"):
+            self.assertEqual(cli.run(run_dir, self.site, self.base / "home"), 0)
+        self.assertIn(True, waited_during_slow)
+
+    def test_coordinator_collects_second_receipt_while_first_worker_blocks(self):
+        source = self.site.roots["lustre"] / "blocked-worker"
+        source.mkdir()
+        first, second = source / "first", source / "second"
+        first.write_bytes(b"first")
+        second.write_bytes(b"second")
+        target = self.site.roots["fss"] / "blocked-worker"
+        run_dir = self.site.roots["lustre"] / ".gbi" / "runs" / "blocked-worker-test"
+        run_dir.mkdir(parents=True)
+        request = {"source": str(source), "target": str(target), "source_kind": "lustre",
+                   "target_kind": "fss", "source_root": str(self.site.roots["lustre"]),
+                   "target_root": str(self.site.roots["fss"]), "directory": True, "delete": False,
+                   "include": [], "verb": "copy", "uid": os.getuid(), "site": str(self.conf),
+                   "execution": "allocation", "selection": None, "reader": "rclone"}
+        (run_dir / "request.json").write_text(json.dumps(request))
+        first_started = threading.Event()
+        second_finished = threading.Event()
+        completed = []
+        paused = False
+
+        def entries_with_blocked_worker(*_args, **_kwargs):
+            yield first, False
+            first_started.wait(1)
+            yield second, False
+
+        def blocked_fingerprint(path):
+            nonlocal paused
+            if Path(path) == first and not paused:
+                paused = True
+                first_started.set()
+                self.assertTrue(second_finished.wait(2))
+            return fingerprint(path)
+
+        def supervised(task, *_args):
+            name = Path(task["source"]).name
+            outcome = transfer(task)
+            if name == "second":
+                second_finished.set()
+            completed.append(name)
+            return outcome
+
+        with patch("gbi_data.selection.entries", side_effect=entries_with_blocked_worker), \
+             patch("gbi_data.cli.supervise", side_effect=supervised), \
+             patch("gbi_data.transfer.fingerprint", side_effect=blocked_fingerprint), \
+             patch("gbi_data.cli.publish_history", return_value="history"), \
+             patch("gbi_data.cli.shutil.rmtree"):
+            self.assertEqual(cli.run(run_dir, self.site, self.base / "home"), 0)
+        self.assertEqual(completed, ["second", "first"])
+        receipts = [json.loads(line) for line in (run_dir / "receipts.jsonl").read_text().splitlines()]
+        self.assertEqual([Path(row["source"]).name for row in receipts], ["second", "first"])
+
+    def test_inline_selection_keeps_the_transfer_width_bound(self):
+        source = self.site.roots["lustre"] / "selected"
+        source.mkdir()
+        files = []
+        for number in range(3):
+            path = source / str(number)
+            path.write_bytes(str(number).encode())
+            files.append(path)
+        target = self.site.roots["fss"] / "selected"
+        run_dir = self.site.roots["lustre"] / ".gbi" / "runs" / "selected-test"
+        run_dir.mkdir(parents=True)
+        request = {"source": str(source), "target": str(target), "source_kind": "lustre",
+                   "target_kind": "fss", "source_root": str(self.site.roots["lustre"]),
+                   "target_root": str(self.site.roots["fss"]), "directory": True, "delete": False,
+                   "include": [], "verb": "copy", "uid": os.getuid(), "site": str(self.conf),
+                   "execution": "inline", "selection": [
+                       {"path": str(path), "empty": False, "fingerprint": fingerprint(path)}
+                       for path in files], "reader": "native"}
+        (run_dir / "request.json").write_text(json.dumps(request))
+        pending_sizes = []
+        real_wait = cli.wait
+
+        def observe_wait(*args, **kwargs):
+            pending_sizes.append(len(args[0]))
+            return real_wait(*args, **kwargs)
+
+        def fast_supervise(task, *_args):
+            return {"bytes": Path(task["source"]).stat().st_size, "deleted": False}
+
+        self.site.values["jobs"] = "2"
+        with patch("gbi_data.cli.wait", side_effect=observe_wait), \
+             patch("gbi_data.cli.supervise", side_effect=fast_supervise), \
+             patch("gbi_data.cli.publish_history", return_value="history"):
+            self.assertEqual(cli.run(run_dir, self.site, self.base / "home"), 0)
+        self.assertLessEqual(max(pending_sizes), 2)
+
+    def test_empty_directory_is_streamed_as_work(self):
+        root = self.site.roots["lustre"] / "empty"
+        root.mkdir()
+        empty = root / "child"
+        empty.mkdir()
+        stream = selection.stream_entries(root, self.site, root, [])
+        self.addCleanup(stream.stop)
+        self.assertEqual(stream.get(1)[0:2], ("entry", (empty, True)))
+        self.assertEqual(stream.get(1)[0], "done")
+
+    def test_empty_directory_preparation_preserves_placeholder_and_counts_files(self):
+        source = self.site.roots["lustre"] / "with-empty"
+        source.mkdir()
+        (source / "empty").mkdir()
+        (source / "file").write_bytes(b"contents")
+        target = self.site.roots["fss"] / "with-empty"
+        environment = {**os.environ, "GBI_DATA_SITE_CONF": str(self.conf), "PATH": ""}
+        result = subprocess.run([sys.executable, "-B", "-m", "gbi_data.cli", "data", "move",
+                                 str(source), str(target)], env=environment,
+                                capture_output=True, text=True, timeout=15)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        history = next((self.site.roots["alluxio"] / ".gbi/transfers").glob("*/*/history.json"))
+        progress = json.loads(history.read_text())["progress"]
+        self.assertEqual((progress["files"], progress["bytes"]), (1, len(b"contents")))
+        self.assertTrue((target / "empty").is_dir())
+        self.assertFalse((source / "empty").exists())
 
     def test_progress_has_no_percentage_until_discovery_complete(self):
         progress = {"files": 2, "bytes": 20, "freed": 10, "failed": 0,

@@ -49,6 +49,17 @@ seconds or 100,000 visited entries). This avoids an unbounded login-node tree
 walk. Already inside a Slurm allocation, the CLI reuses it automatically.
 These are configurable defaults, not an estimate of completion time.
 
+Bulk discovery runs independently of the file workers, so completed files can
+be receipted while a slow mounted tree is still being traversed. A source
+metadata lookup failure is recorded for that path and discovery continues with
+the remaining entries. Source metadata and empty-directory preparation run in
+the same supervised worker slots, so a slow preparation does not stop receipts
+for other entries. Source deletion still requires the usual independent
+verification receipt. Empty directories are carried through as placeholders;
+they do not inflate verified-file or byte counters. A filesystem walk that is
+stuck inside the kernel can still prevent final completion; the bounded worker
+does not repair an unresponsive mount or malformed source inode.
+
 Foreground progress appears immediately. Ctrl-C stops foreground work;
 unfinished files keep their sources. There is no five-minute foreground
 cutoff. Use `--detach` to request a Slurm job explicitly when work should
@@ -190,8 +201,8 @@ GBI_SITE_PARTITION=site-partition make gbi
 
 For a shared cluster installation, run the recipe as a software maintainer
 from the reviewed release checkout and add `GBI_MODULE_PATH=/site/shared/software`
-to the `make` command. Software goes under `gbi/0.3.2` and the modulefile under
-`modules/gbi/0.3.2.lua` in that tree. Use the same install root as the cluster's
+to the `make` command. Software goes under `gbi/0.3.3` and the modulefile under
+`modules/gbi/0.3.3.lua` in that tree. Use the same install root as the cluster's
 existing rclone module. When its `modules` directory is already in the shared
 Lmod environment, users only need `module load gbi`; no per-user installation,
 container rebuild or login-node restart is required. Check `module show gbi`,

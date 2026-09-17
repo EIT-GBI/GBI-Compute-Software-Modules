@@ -54,7 +54,8 @@ def ensure_parent(path, root):
     check_parent(path, root)
 
 
-def copy_stream(source, target, fd, rclone, lock, progress, target_kind="fss", timings=None, max_bytes=None):
+def copy_stream(source, target, fd, rclone, lock, progress, target_kind="fss", timings=None, max_bytes=None,
+                source_size=None):
     timings = timings if timings is not None else {}
     started = time.monotonic()
     environment = {key: value for key, value in os.environ.items()
@@ -94,13 +95,19 @@ def copy_stream(source, target, fd, rclone, lock, progress, target_kind="fss", t
                 result.update(block)
                 total += len(block)
                 if time.monotonic() - last >= 2:
-                    write_json(progress, {"bytes": total, "phase": "copying", "path": str(source)})
+                    detail = {"bytes": total, "phase": "copying", "path": str(source)}
+                    if source_size is not None:
+                        detail["source_size"] = source_size
+                    write_json(progress, detail)
                     last = time.monotonic()
             output.flush()
             if target_kind != "alluxio":
                 os.fsync(output.fileno())
             timings["copy"] = time.monotonic() - started
-            write_json(progress, {"bytes": total, "phase": "closing", "path": str(source)})
+            detail = {"bytes": total, "phase": "closing", "path": str(source)}
+            if source_size is not None:
+                detail["source_size"] = source_size
+            write_json(progress, detail)
             closing = time.monotonic()
         timings["close"] = time.monotonic() - closing
         if child and child.wait():
@@ -111,14 +118,38 @@ def copy_stream(source, target, fd, rclone, lock, progress, target_kind="fss", t
         if child and child.poll() is None:
             child.terminate()
             child.wait()
-    write_json(progress, {"bytes": total, "phase": "verifying", "path": str(source)})
+    detail = {"bytes": total, "phase": "verifying", "path": str(source)}
+    if source_size is not None:
+        detail["source_size"] = source_size
+    write_json(progress, detail)
     return result.hexdigest(), total
 
 
 def transfer(task):
     timings = {}
-    source, target = Path(task["source"]), Path(task["target"])
+    source = Path(task["source"])
+    selection_root = Path(task["selection_root"])
+    target = Path(task["target"])
     source_root, target_root = Path(task["source_root"]), Path(task["target_root"])
+    destination = target / source.relative_to(selection_root) if task.get("directory", False) else target
+    if task.get("empty", False):
+        ensure_parent(destination / ".placeholder", target_root)
+        if task["delete"] and source != selection_root:
+            source.rmdir()
+        return {"empty": True}
+    initial = fingerprint(source)
+    decode_link = task.get("decode_link", task.get("source_kind") == "alluxio"
+                         and source.name.endswith(".rclonelink"))
+    if source.name.endswith(".rclonelink") and not decode_link:
+        raise ValueError(f"reserved symlink representation suffix: {source}")
+    encode_link = task.get("encode_link", (stat.S_ISLNK(initial[2]) or decode_link)
+                         and task["target_kind"] == "alluxio")
+    if (encode_link and task.get("target_base", task.get("directory", False))
+            and not destination.name.endswith(".rclonelink")):
+        destination = destination.with_name(destination.name + ".rclonelink")
+    elif decode_link and task["target_kind"] != "alluxio" and task.get("target_base", task.get("directory", False)):
+        destination = destination.with_name(destination.name[:-len(".rclonelink")])
+    target = destination
     state = Path(task["state"])
     key = hashlib.sha256(os.fsencode(target)).hexdigest()
     journal = state / "pending" / (key + ".json")
@@ -129,21 +160,25 @@ def transfer(task):
         check_parent(source, source_root)
         ensure_parent(target, target_root)
         before = fingerprint(source)
+        if before != initial:
+            raise ValueError("source changed during preparation; source kept")
+        write_json(Path(task["progress"]), {"bytes": 0, "source_size": before[3],
+                                              "phase": "preparing", "path": str(source)})
         if task.get("expected_source") is not None and before != task["expected_source"]:
             raise ValueError("source changed since the foreground probe; source kept; retry the command")
         if task.get("max_bytes") is not None and before[3] > task["max_bytes"]:
             raise ValueError("source exceeds the foreground byte budget; source kept")
-        link = stat.S_ISLNK(before[2]) or task.get("decode_link", False)
+        link = stat.S_ISLNK(before[2]) or decode_link
         if not link and not stat.S_ISREG(before[2]):
             raise ValueError("only regular files and symlinks can be transferred")
-        link_text = (os.fsdecode(source.read_bytes()) if task.get("decode_link") else os.readlink(source)) if link else None
+        link_text = (os.fsdecode(source.read_bytes()) if decode_link else os.readlink(source)) if link else None
         expected = hashlib.sha256(os.fsencode(link_text)).hexdigest() if link else None
         saved = json.loads(journal.read_text()) if journal.exists() else {}
         exists = os.path.lexists(target)
         reused = False
         if exists:
             target_before = fingerprint(target)
-            if link and not task["encode_link"]:
+            if link and not encode_link:
                 reused = target.is_symlink() and os.readlink(target) == link_text
             elif stat.S_ISREG(target_before[2]) and target_before[3] == before[3]:
                 expected = expected or digest(source)
@@ -157,7 +192,7 @@ def transfer(task):
                 target.unlink()  # Never truncate an incomplete Alluxio inode.
         if not reused:
             saved = {"source": str(source), "fingerprint": before, "phase": "writing"}
-            if link and not task["encode_link"]:
+            if link and not encode_link:
                 os.symlink(link_text, target)
                 saved["target_identity"] = fingerprint(target)[:3]
                 write_json(journal, saved)
@@ -176,7 +211,7 @@ def transfer(task):
                 else:
                     expected, copied_bytes = copy_stream(source, target, fd, task["rclone"], lock,
                                                         Path(task["progress"]), task["target_kind"], timings,
-                                                        task.get("max_bytes"))
+                                                        task.get("max_bytes"), before[3])
                     if copied_bytes != before[3]:
                         raise ValueError("source stream was short or grew; source kept")
         # Alluxio closes asynchronously. Only our own fresh write gets a retry
@@ -186,7 +221,7 @@ def transfer(task):
         while True:
             try:
                 target_before = fingerprint(target)
-                if link and not task["encode_link"]:
+                if link and not encode_link:
                     matches = target.is_symlink() and os.readlink(target) == link_text
                 else:
                     matches = stat.S_ISREG(target_before[2]) and digest(target) == expected
@@ -218,7 +253,8 @@ def transfer(task):
         # Coarse filesystem timestamps can hide a same-size, same-second edit.
         # A move therefore rechecks source content before writing its receipt.
         if task["delete"] and not link:
-            write_json(Path(task["progress"]), {"bytes": before[3], "phase": "source recheck", "path": str(source)})
+            write_json(Path(task["progress"]), {"bytes": before[3], "source_size": before[3],
+                                                  "phase": "source recheck", "path": str(source)})
             rechecking = time.monotonic()
             if digest(source) != expected:
                 raise ValueError("source content changed during transfer; source kept")
@@ -245,7 +281,7 @@ def transfer(task):
                     break
                 parent = parent.parent
         journal.unlink()
-        return {"bytes": before[3], "deleted": task["delete"], "reused": reused}
+        return {"bytes": before[3], "source_size": before[3], "deleted": task["delete"], "reused": reused}
 
 
 def main():

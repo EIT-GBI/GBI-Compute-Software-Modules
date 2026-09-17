@@ -16,7 +16,7 @@ import uuid
 
 from . import __version__
 from . import jobs
-from .selection import entries, probe
+from .selection import entries, probe, stream_entries
 from .storage import Site, overlap
 from .transfer import ensure_parent, receipt, write_json
 
@@ -163,63 +163,90 @@ def run(run_dir, site, home):
     progress = {"phase": "running", "files": 0, "bytes": 0, "freed": 0, "failed": 0,
                 "discovered_files": 0, "discovered_bytes": 0, "discovery_complete": False,
                 "elapsed": 0, "active": 0, "active_bytes": 0}
-    iterator = iter((Path(item["path"]), item["empty"]) for item in selected) if selected is not None else iter(
-        entries(source, site, source_root, specification["include"]))
+    iterator = iter((Path(item["path"]), item["empty"]) for item in selected) if selected is not None else None
+    discovery = None if selected is not None else stream_entries(
+        source, site, source_root, specification["include"])
     snapshots = {item["path"]: item["fingerprint"] for item in selected} if selected is not None else {}
     file_specification = {key: value for key, value in specification.items() if key != "selection"}
     pending = {}
+    counted_bytes = set()
     width = int(site.values["jobs"])
     output = jobs.ProgressDisplay()
+
+    def record_failure(path, error):
+        progress["failed"] += 1
+        record = {"event": "failed", "source": str(path), "error": str(error), "time": time.time()}
+        receipt(run_dir / "receipts.jsonl", record)
+        output.finish()
+        print(f"FAILED {path}: {error}", flush=True)
+
+    def schedule(entry):
+        path, empty = entry
+        active = run_dir / "active" / (uuid.uuid4().hex + ".json")
+        task = {**file_specification, "source": str(path), "target": str(target),
+                "state": str(state), "progress": str(active), "rclone": rclone,
+                "receipt": str(run_dir / "receipts.jsonl"),
+                "selection_root": str(source if specification["directory"] else source.parent),
+                "settle_seconds": int(site.values["verify_settle_seconds"]),
+                "expected_source": snapshots.get(str(path)),
+                "max_bytes": int(site.values["inline_bytes"]) if selected is not None else None,
+                "target_base": True,
+                "empty": empty}
+        if not empty:
+            progress["discovered_files"] += 1
+        future = pool.submit(supervise, task, int(site.values["file_timeout"]), stopped)
+        pending[future] = (path, active, empty)
+
+    def account_source_size(active, source_size=None):
+        if active in counted_bytes:
+            return
+        if source_size is None:
+            try:
+                source_size = json.loads(active.read_text()).get("source_size")
+            except (OSError, ValueError, TypeError):
+                return
+        if isinstance(source_size, int):
+            progress["discovered_bytes"] += source_size
+            counted_bytes.add(active)
+
     try:
         with TransferPool(stopped, max_workers=width) as pool:
             while pending or not progress["discovery_complete"]:
-                while not stopped.is_set() and not progress["discovery_complete"] and len(pending) < width:
-                    entry = next(iterator, None)
-                    if entry is None:
-                        progress["discovery_complete"] = True
-                        break
-                    path, empty = entry
-                    destination = target / path.relative_to(source) if specification["directory"] else target
-                    if empty:
-                        ensure_parent(destination / ".placeholder", target_root)
-                        if specification["delete"] and path != source:
-                            path.rmdir()
-                        continue
-                    encode = path.is_symlink() and specification["target_kind"] == "alluxio"
-                    decode = specification["source_kind"] == "alluxio" and path.name.endswith(".rclonelink")
-                    if path.name.endswith(".rclonelink") and not decode:
-                        raise ValueError(f"reserved symlink representation suffix: {path}")
-                    if encode:
-                        destination = destination.with_name(destination.name + ".rclonelink")
-                    elif decode and specification["target_kind"] != "alluxio":
-                        destination = destination.with_name(destination.name[:-len(".rclonelink")])
-                    active = run_dir / "active" / (uuid.uuid4().hex + ".json")
-                    task = {**file_specification, "source": str(path), "target": str(destination),
-                            "state": str(state), "progress": str(active), "rclone": rclone,
-                            "receipt": str(run_dir / "receipts.jsonl"), "encode_link": encode or
-                            (decode and specification["target_kind"] == "alluxio"), "decode_link": decode,
-                            "selection_root": str(source if specification["directory"] else source.parent),
-                            "settle_seconds": int(site.values["verify_settle_seconds"]),
-                            "expected_source": snapshots.get(str(path)),
-                            "max_bytes": int(site.values["inline_bytes"]) if selected is not None else None}
-                    progress["discovered_files"] += 1
-                    progress["discovered_bytes"] += path.lstat().st_size
-                    future = pool.submit(supervise, task, int(site.values["file_timeout"]), stopped)
-                    pending[future] = (path, active)
+                event = None
+                if not stopped.is_set() and not progress["discovery_complete"] and (
+                    len(pending) < width):
+                    if selected is not None:
+                        entry = next(iterator, None)
+                        event = ("done", None, None) if entry is None else ("entry", entry, None)
+                    else:
+                        event = discovery.get(0.1 if pending else 0.5)
+                    if event is not None:
+                        kind, value, error = event
+                        if kind == "entry":
+                            schedule(value)
+                        elif kind == "error":
+                            record_failure(value, f"source lookup failed: {error}")
+                        else:
+                            progress["discovery_complete"] = True
+                            if kind == "fatal":
+                                record_failure(source, f"discovery failed: {error}")
+                            if discovery is not None:
+                                discovery.stop()
                 if stopped.is_set():
+                    if discovery is not None:
+                        discovery.stop()
                     progress["discovery_complete"] = True
-                done, _ = wait(pending, timeout=0.5, return_when=FIRST_COMPLETED)
+                done, _ = wait(pending, timeout=0 if event is not None else 0.5,
+                               return_when=FIRST_COMPLETED)
                 for future in done:
-                    path, active = pending.pop(future)
+                    path, active, empty = pending.pop(future)
                     outcome = future.result()
+                    if not empty:
+                        account_source_size(active, outcome.get("source_size"))
                     active.unlink(missing_ok=True)
                     if "error" in outcome:
-                        progress["failed"] += 1
-                        record = {"event": "failed", "source": str(path), "error": outcome["error"], "time": time.time()}
-                        receipt(run_dir / "receipts.jsonl", record)
-                        output.finish()
-                        print(f"FAILED {path}: {outcome['error']}", flush=True)
-                    else:
+                        record_failure(path, outcome["error"])
+                    elif not empty:
                         progress["files"] += 1
                         progress["bytes"] += outcome["bytes"]
                         progress["freed"] += outcome["bytes"] if outcome["deleted"] else 0
@@ -230,9 +257,12 @@ def run(run_dir, site, home):
                     progress["active"] = len(pending)
                     progress["active_bytes"] = 0
                     progress["phases"] = {}
-                    for _, active in pending.values():
+                    for _, active, empty in pending.values():
+                        if empty:
+                            continue
                         try:
                             detail = json.loads(active.read_text())
+                            account_source_size(active, detail.get("source_size"))
                             progress["active_bytes"] += detail["bytes"]
                             phase = detail["phase"]
                             progress["phases"][phase] = progress["phases"].get(phase, 0) + 1
@@ -246,6 +276,9 @@ def run(run_dir, site, home):
         progress["failed"] += 1
         output.finish()
         print(f"FAILED discovery: {error}", flush=True)
+    finally:
+        if discovery is not None:
+            discovery.stop()
     progress["phase"] = "interrupted" if stopped.is_set() else "failed" if progress["failed"] else "complete"
     progress["elapsed"] = time.monotonic() - started
     progress["active"] = 0

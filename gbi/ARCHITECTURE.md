@@ -1,6 +1,6 @@
 # GBI data CLI architecture
 
-This describes **gbi 0.3.2**, extending the verified worker introduced in [PR #7 — verified data movement with
+This describes **gbi 0.3.3**, extending the verified worker introduced in [PR #7 — verified data movement with
 Slurm and terminal progress](https://github.com/EIT-GBI/GBI-Compute-Software-Modules/pull/7).
 The deployed settings below were checked on 9 September 2026. Site paths,
 user identities and credentials are deliberately omitted from this public report.
@@ -71,9 +71,10 @@ into the pool. There is no short foreground duration cutoff.
 
 The Slurm request is **2 CPUs, 4 GiB and 24 hours**. Both execution paths allow
 **four concurrent files per invocation**; there is no global concurrency
-limiter. Each file has a supervised process and timeout. A single file remains
-a sequential stream: parallelism is across files, not concurrent writes into
-one Alluxio object.
+limiter. Entry preparation and each file transfer use a supervised process and
+timeout. A single file remains a sequential stream: parallelism is across files,
+not concurrent writes into one Alluxio object. A directory walk that is stuck in
+kernel I/O can still delay final completion.
 
 Progress uses structured snapshots and shows copying, closing, destination
 verification and source rechecking. Foreground calls wait and Ctrl-C stops
