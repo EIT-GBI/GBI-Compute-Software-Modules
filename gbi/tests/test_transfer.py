@@ -218,6 +218,19 @@ class Transfers(unittest.TestCase):
         self.assertTrue(stored.exists())
         self.assertEqual(os.readlink(restored), "../original")
 
+    def test_alluxio_encoded_link_does_not_duplicate_suffix(self):
+        stored = self.source.with_name("file.dat.rclonelink")
+        stored.write_text("../original")
+        task = {key: value for key, value in self.task.items()
+                if key not in ("encode_link", "decode_link")}
+        destination = self.target.with_name("file.dat.rclonelink")
+        transfer({**task, "source": str(stored), "target": str(destination),
+                  "source_kind": "alluxio", "target_kind": "alluxio", "target_base": True,
+                  "delete": False})
+        self.assertTrue(destination.exists())
+        self.assertFalse(destination.with_name("file.dat.rclonelink.rclonelink").exists())
+        self.assertEqual(destination.read_text(), "../original")
+
 
 class Interface(unittest.TestCase):
     def setUp(self):

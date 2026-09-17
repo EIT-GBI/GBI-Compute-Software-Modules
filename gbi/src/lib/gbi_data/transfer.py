@@ -144,7 +144,8 @@ def transfer(task):
         raise ValueError(f"reserved symlink representation suffix: {source}")
     encode_link = task.get("encode_link", (stat.S_ISLNK(initial[2]) or decode_link)
                          and task["target_kind"] == "alluxio")
-    if encode_link and task.get("target_base", task.get("directory", False)):
+    if (encode_link and task.get("target_base", task.get("directory", False))
+            and not destination.name.endswith(".rclonelink")):
         destination = destination.with_name(destination.name + ".rclonelink")
     elif decode_link and task["target_kind"] != "alluxio" and task.get("target_base", task.get("directory", False)):
         destination = destination.with_name(destination.name[:-len(".rclonelink")])
