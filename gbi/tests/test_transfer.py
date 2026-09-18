@@ -70,6 +70,26 @@ class Transfers(unittest.TestCase):
         self.assertTrue(outcome["reused"])
         self.assertFalse(self.source.exists())
 
+    def test_reused_destination_change_after_digest_retains_source(self):
+        shutil.copyfile(self.source, self.target)
+        target_fingerprints = 0
+        real_fingerprint = fingerprint
+
+        def change_after_final_observation(path):
+            nonlocal target_fingerprints
+            observed = real_fingerprint(path)
+            if path == self.target:
+                target_fingerprints += 1
+                if target_fingerprints == 3:
+                    self.target.write_bytes(b"changed after digest")
+            return observed
+
+        with patch("gbi_data.transfer.fingerprint", side_effect=change_after_final_observation):
+            with self.assertRaisesRegex(ValueError, "checksum"):
+                transfer({**self.task, "delete": False})
+        self.assertTrue(self.source.exists())
+        self.assertFalse(Path(self.task["receipt"]).exists())
+
     def test_corrupt_write_retains_source(self):
         def corrupt(*args):
             value = copy_stream(*args)

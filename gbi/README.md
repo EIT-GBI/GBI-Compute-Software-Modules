@@ -110,8 +110,10 @@ gbi data move /your/alluxio/experiment /your/lustre/experiment --delete-source
 
 ## Existing files and interruptions
 
-An existing identical destination is independently checked and reused. A
-different destination is preserved and reported as a failure; the CLI never
+An existing identical destination is independently checked and reused. Its
+first full destination digest is retained through the final identity check;
+any destination change before the receipt fails the transfer. A different
+destination is preserved and reported as a failure; the CLI never
 silently overwrites it. Re-run the same command after an interruption. The
 CLI can replace its own incomplete output only when the source identity is
 unchanged and the destination still has the inode recorded by that attempt.
