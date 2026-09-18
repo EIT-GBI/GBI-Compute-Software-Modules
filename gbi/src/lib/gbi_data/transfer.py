@@ -184,9 +184,12 @@ def transfer(task):
                 reused = target.is_symlink() and os.readlink(target) == link_text
             elif stat.S_ISREG(target_before[2]) and target_before[3] == before[3]:
                 expected = expected or digest(source)
-                target_digest = digest(target)
-                target_digest_fingerprint = fingerprint(target)
-                reused = target_digest == expected and target_digest_fingerprint == target_before
+                candidate_digest = digest(target)
+                candidate_fingerprint = fingerprint(target)
+                reused = candidate_digest == expected and candidate_fingerprint == target_before
+                if reused:
+                    target_digest = candidate_digest
+                    target_digest_fingerprint = candidate_fingerprint
             if not reused:
                 ours = (saved.get("source") == str(source) and saved.get("fingerprint") == before
                         and saved.get("target_identity") == target_before[:3]
