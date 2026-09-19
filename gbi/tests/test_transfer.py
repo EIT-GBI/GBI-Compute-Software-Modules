@@ -12,7 +12,7 @@ import tempfile
 import threading
 import time
 import unittest
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from gbi_data import cli, jobs
 from gbi_data import selection
@@ -711,6 +711,45 @@ class Interface(unittest.TestCase):
         self.assertIn("50.0%", jobs.display(progress))
         progress["phase"] = "saving history"
         self.assertIn("Saving history", jobs.terminal_display(progress))
+
+    def test_interruption_before_discovery_exhaustion_keeps_progress_unknown(self):
+        source = self.site.roots["lustre"] / "interrupted"
+        source.mkdir()
+        files = [source / "first", source / "second"]
+        for path in files:
+            path.write_bytes(b"contents")
+        target = self.site.roots["alluxio"] / "interrupted"
+        options = cli.parser().parse_args(["data", "copy", str(source), str(target), "--detach"])
+        specification = {**cli.plan(options, self.site), "execution": "slurm", "reader": "native"}
+        run_dir = self.base / "run"
+        run_dir.mkdir()
+        (run_dir / "request.json").write_text(json.dumps(specification))
+        self.site.values["jobs"] = "1"
+        discovery = MagicMock()
+        discovery.get.side_effect = [
+            ("entry", (files[0], False), None),
+            ("entry", (files[1], False), None),
+            ("done", None, None),
+        ]
+
+        captured = {}
+
+        def interrupted_supervise(task, _timeout, stopped):
+            stopped.set()
+            return {"bytes": Path(task["source"]).stat().st_size, "deleted": False}
+
+        def capture_history(_run_dir, _site, _state, _rclone, progress, _stopped, _inline=False):
+            captured.update(progress)
+            return "history"
+
+        with patch("gbi_data.cli.stream_entries", return_value=discovery), \
+             patch("gbi_data.cli.supervise", side_effect=interrupted_supervise), \
+             patch("gbi_data.cli.publish_history", side_effect=capture_history):
+            self.assertEqual(cli.run(run_dir, self.site, self.base / "home"), 1)
+        self.assertEqual(captured["phase"], "interrupted")
+        self.assertFalse(captured["discovery_complete"])
+        self.assertEqual(captured["files"], 1)
+        discovery.stop.assert_called()
 
     def test_full_cli_all_routes_archives_history_and_cleans_scratch(self):
         environment = {**os.environ, "GBI_DATA_SITE_CONF": str(self.conf)}
