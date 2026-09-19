@@ -211,7 +211,7 @@ def run(run_dir, site, home):
 
     try:
         with TransferPool(stopped, max_workers=width) as pool:
-            while pending or not progress["discovery_complete"]:
+            while pending or (not progress["discovery_complete"] and not stopped.is_set()):
                 event = None
                 if not stopped.is_set() and not progress["discovery_complete"] and (
                     len(pending) < width):
@@ -235,7 +235,6 @@ def run(run_dir, site, home):
                 if stopped.is_set():
                     if discovery is not None:
                         discovery.stop()
-                    progress["discovery_complete"] = True
                 done, _ = wait(pending, timeout=0 if event is not None else 0.5,
                                return_when=FIRST_COMPLETED)
                 for future in done:

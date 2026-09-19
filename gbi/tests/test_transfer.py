@@ -12,12 +12,12 @@ import tempfile
 import threading
 import time
 import unittest
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from gbi_data import cli, jobs
 from gbi_data import selection
 from gbi_data.storage import Site, fingerprint, mounted_roots
-from gbi_data.transfer import copy_stream, transfer
+from gbi_data.transfer import copy_stream, digest as transfer_digest, transfer
 
 
 class Transfers(unittest.TestCase):
@@ -65,10 +65,49 @@ class Transfers(unittest.TestCase):
 
     def test_identical_destination_reused_and_verified(self):
         shutil.copyfile(self.source, self.target)
-        with patch("gbi_data.transfer.copy_stream", side_effect=AssertionError("must not recopy")):
+        with patch("gbi_data.transfer.copy_stream", side_effect=AssertionError("must not recopy")), \
+             patch("gbi_data.transfer.digest", side_effect=transfer_digest) as hashed:
             outcome = transfer(self.task)
         self.assertTrue(outcome["reused"])
         self.assertFalse(self.source.exists())
+        self.assertEqual(sum(Path(call.args[0]) == self.target for call in hashed.call_args_list), 1)
+
+    def test_owned_same_size_partial_resume_does_not_reuse_stale_digest(self):
+        expected = hashlib.sha256(self.source.read_bytes()).hexdigest()
+        old = b"old destination"
+        self.target.write_bytes((old * ((self.source.stat().st_size // len(old)) + 1))[:self.source.stat().st_size])
+        target_identity = fingerprint(self.target)[:3]
+        key = hashlib.sha256(os.fsencode(self.target)).hexdigest()
+        (self.state / "pending" / f"{key}.json").write_text(json.dumps({
+            "source": str(self.source),
+            "fingerprint": fingerprint(self.source),
+            "target_identity": target_identity,
+            "phase": "writing",
+        }))
+        outcome = transfer({**self.task, "rclone": None})
+        self.assertFalse(outcome["reused"])
+        self.assertFalse(self.source.exists())
+        self.assertEqual(hashlib.sha256(self.target.read_bytes()).hexdigest(), expected)
+
+    def test_reused_destination_change_after_digest_retains_source(self):
+        shutil.copyfile(self.source, self.target)
+        target_fingerprints = 0
+        real_fingerprint = fingerprint
+
+        def change_after_final_observation(path):
+            nonlocal target_fingerprints
+            observed = real_fingerprint(path)
+            if path == self.target:
+                target_fingerprints += 1
+                if target_fingerprints == 3:
+                    self.target.write_bytes(b"changed after digest")
+            return observed
+
+        with patch("gbi_data.transfer.fingerprint", side_effect=change_after_final_observation):
+            with self.assertRaisesRegex(ValueError, "checksum"):
+                transfer({**self.task, "delete": False})
+        self.assertTrue(self.source.exists())
+        self.assertFalse(Path(self.task["receipt"]).exists())
 
     def test_corrupt_write_retains_source(self):
         def corrupt(*args):
@@ -672,6 +711,45 @@ class Interface(unittest.TestCase):
         self.assertIn("50.0%", jobs.display(progress))
         progress["phase"] = "saving history"
         self.assertIn("Saving history", jobs.terminal_display(progress))
+
+    def test_interruption_before_discovery_exhaustion_keeps_progress_unknown(self):
+        source = self.site.roots["lustre"] / "interrupted"
+        source.mkdir()
+        files = [source / "first", source / "second"]
+        for path in files:
+            path.write_bytes(b"contents")
+        target = self.site.roots["alluxio"] / "interrupted"
+        options = cli.parser().parse_args(["data", "copy", str(source), str(target), "--detach"])
+        specification = {**cli.plan(options, self.site), "execution": "slurm", "reader": "native"}
+        run_dir = self.base / "run"
+        run_dir.mkdir()
+        (run_dir / "request.json").write_text(json.dumps(specification))
+        self.site.values["jobs"] = "1"
+        discovery = MagicMock()
+        discovery.get.side_effect = [
+            ("entry", (files[0], False), None),
+            ("entry", (files[1], False), None),
+            ("done", None, None),
+        ]
+
+        captured = {}
+
+        def interrupted_supervise(task, _timeout, stopped):
+            stopped.set()
+            return {"bytes": Path(task["source"]).stat().st_size, "deleted": False}
+
+        def capture_history(_run_dir, _site, _state, _rclone, progress, _stopped, _inline=False):
+            captured.update(progress)
+            return "history"
+
+        with patch("gbi_data.cli.stream_entries", return_value=discovery), \
+             patch("gbi_data.cli.supervise", side_effect=interrupted_supervise), \
+             patch("gbi_data.cli.publish_history", side_effect=capture_history):
+            self.assertEqual(cli.run(run_dir, self.site, self.base / "home"), 1)
+        self.assertEqual(captured["phase"], "interrupted")
+        self.assertFalse(captured["discovery_complete"])
+        self.assertEqual(captured["files"], 1)
+        discovery.stop.assert_called()
 
     def test_full_cli_all_routes_archives_history_and_cleans_scratch(self):
         environment = {**os.environ, "GBI_DATA_SITE_CONF": str(self.conf)}

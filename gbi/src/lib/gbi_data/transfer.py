@@ -173,6 +173,8 @@ def transfer(task):
             raise ValueError("only regular files and symlinks can be transferred")
         link_text = (os.fsdecode(source.read_bytes()) if decode_link else os.readlink(source)) if link else None
         expected = hashlib.sha256(os.fsencode(link_text)).hexdigest() if link else None
+        target_digest = None
+        target_digest_fingerprint = None
         saved = json.loads(journal.read_text()) if journal.exists() else {}
         exists = os.path.lexists(target)
         reused = False
@@ -182,7 +184,12 @@ def transfer(task):
                 reused = target.is_symlink() and os.readlink(target) == link_text
             elif stat.S_ISREG(target_before[2]) and target_before[3] == before[3]:
                 expected = expected or digest(source)
-                reused = digest(target) == expected and fingerprint(target) == target_before
+                candidate_digest = digest(target)
+                candidate_fingerprint = fingerprint(target)
+                reused = candidate_digest == expected and candidate_fingerprint == target_before
+                if reused:
+                    target_digest = candidate_digest
+                    target_digest_fingerprint = candidate_fingerprint
             if not reused:
                 ours = (saved.get("source") == str(source) and saved.get("fingerprint") == before
                         and saved.get("target_identity") == target_before[:3]
@@ -223,6 +230,11 @@ def transfer(task):
                 target_before = fingerprint(target)
                 if link and not encode_link:
                     matches = target.is_symlink() and os.readlink(target) == link_text
+                elif target_digest is not None:
+                    # Reuse the first full destination digest, but require the
+                    # destination identity to remain unchanged both after that
+                    # digest and across this final receipt boundary.
+                    matches = target_digest == expected and target_before == target_digest_fingerprint
                 else:
                     matches = stat.S_ISREG(target_before[2]) and digest(target) == expected
                 if matches and fingerprint(target) == target_before:
