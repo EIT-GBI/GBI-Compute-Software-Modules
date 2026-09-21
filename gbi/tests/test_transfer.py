@@ -63,6 +63,35 @@ class Transfers(unittest.TestCase):
         self.assertTrue(self.source.exists())
         self.assertEqual(self.target.read_bytes(), b"existing research")
 
+    def test_unreadable_source_does_not_create_destination(self):
+        real_open = os.open
+
+        def fail_source(path, flags, mode=0o777, *, dir_fd=None):
+            if os.fsdecode(path) == str(self.source):
+                raise OSError(5, "Input/output error")
+            return real_open(path, flags, mode, dir_fd=dir_fd)
+
+        with patch("gbi_data.transfer.os.open", side_effect=fail_source):
+            with self.assertRaisesRegex(OSError, "Input/output error"):
+                transfer({**self.task, "rclone": None})
+        self.assertFalse(self.target.exists())
+        self.assertFalse(Path(self.task["receipt"]).exists())
+        self.assertEqual(list((self.state / "pending").iterdir()), [])
+
+    def test_source_identity_change_does_not_create_destination(self):
+        real_open = os.open
+
+        def replace_source_before_open(path, flags, mode=0o777, *, dir_fd=None):
+            if os.fsdecode(path) == str(self.source):
+                self.source.write_bytes(b"changed before the pinned open")
+            return real_open(path, flags, mode, dir_fd=dir_fd)
+
+        with patch("gbi_data.transfer.os.open", side_effect=replace_source_before_open):
+            with self.assertRaisesRegex(ValueError, "source changed during preparation"):
+                transfer({**self.task, "rclone": None})
+        self.assertFalse(self.target.exists())
+        self.assertEqual(list((self.state / "pending").iterdir()), [])
+
     def test_identical_destination_reused_and_verified(self):
         shutil.copyfile(self.source, self.target)
         with patch("gbi_data.transfer.copy_stream", side_effect=AssertionError("must not recopy")), \
