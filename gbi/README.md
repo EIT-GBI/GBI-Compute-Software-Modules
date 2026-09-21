@@ -119,6 +119,8 @@ different destination is preserved and reported as a failure; the CLI never
 silently overwrites it. Re-run the same command after an interruption. The
 CLI can replace its own incomplete output only when the source identity is
 unchanged and the destination still has the inode recorded by that attempt.
+Source-open failures happen before exclusive destination creation, so an
+unreadable source cannot leave a new empty destination behind.
 An interrupted bulk run keeps discovery incomplete if enumeration had not
 finished, so its final progress does not claim a percentage. Retrying the same command rechecks the source tree and
 reuses verified destinations.
@@ -208,8 +210,8 @@ GBI_SITE_PARTITION=site-partition make gbi
 
 For a shared cluster installation, run the recipe as a software maintainer
 from the reviewed release checkout and add `GBI_MODULE_PATH=/site/shared/software`
-to the `make` command. Software goes under `gbi/0.3.5` and the modulefile under
-`modules/gbi/0.3.5.lua` in that tree. Use the same install root as the cluster's
+to the `make` command. Software goes under `gbi/0.3.6` and the modulefile under
+`modules/gbi/0.3.6.lua` in that tree. Use the same install root as the cluster's
 existing rclone module. When its `modules` directory is already in the shared
 Lmod environment, users only need `module load gbi`; no per-user installation,
 container rebuild or login-node restart is required. Check `module show gbi`,
