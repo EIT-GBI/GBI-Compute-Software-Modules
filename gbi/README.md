@@ -194,6 +194,64 @@ allocation is reused. Progress shows packing, verification and extraction as
 separate phases. The file count treats each archive as one transfer unit, while
 verified bytes count the selected logical payload.
 
+## Call GBI from Python inside a Slurm job
+
+Load the module before starting Python, including when using your own virtual
+environment. No `pip install` or cloud credentials are needed:
+
+```bash
+module load gbi
+python train_and_archive.py
+```
+
+After training has finished writing its checkpoints, your Python script can
+archive them through the same CLI:
+
+```python
+from pathlib import Path
+from gbi import data
+
+checkpoints = Path("/your/lustre/finished-run")
+archive = Path("/your/alluxio/finished-run.gbi.tar")
+
+data.move(
+    checkpoints,
+    archive,
+    pack="tar",
+    include=["*.pt", "*.pt.*"],
+)
+# The selected originals are now verified and removed; other files remain.
+
+# Restore later to Lustre or FSS, keeping the archive:
+data.copy(archive, Path("/your/lustre/restored-run"))
+```
+
+Use `data.copy` instead of `data.move` when you want to retain filesystem
+originals. `pack="gzip"` creates a `.gbi.tar.gz` destination. `pack_small=True`,
+`chunk_size="64MiB"`, `exclude=["*.tmp"]` and `dry_run=True` map directly to the
+CLI options. A single include or exclude string is also accepted. Object
+Storage originals remain unless `data.move(..., delete_source=True)` explicitly
+allows removal; a partial archive restore always keeps its container.
+
+Both functions **wait for completion** and stream progress to your Slurm log.
+They return `subprocess.CompletedProcess` on success and raise
+`subprocess.CalledProcessError` on a nonzero CLI exit. Output is not buffered or
+parsed into a transfer ID. A missing executable raises `FileNotFoundError`.
+The SDK calls its matching installed CLI, inheriting your identity and existing
+Slurm allocation; it does not submit another Slurm job from inside that
+allocation. Outside Slurm the CLI may queue larger transfers, and Python waits
+for them too. Interrupting a wait for a submitted job does not cancel that job.
+
+Call once per job, for example on rank zero after all training workers finish
+writing, and leave enough allocation time for packing and verification. Give
+each new checkpoint snapshot a new archive name: existing differing archives
+are not overwritten. The SDK does not change verification, receipts or deletion
+behavior, and it never retries a failed command automatically.
+
+`prefect=True` selects the existing personal-file migration route and also waits
+for completion. That route does not create archives and cannot be combined with
+packing, chunks, exclusions or deletion of Object Storage originals.
+
 ## Pack small subdirectories and leave large files accessible
 
 Use `--pack-small` for mixed trees. Preview the exact proposed archive layout:
@@ -424,8 +482,8 @@ GBI_SITE_PARTITION=site-partition make gbi
 
 For a shared cluster installation, run the recipe as a software maintainer
 from the reviewed release checkout and add `GBI_MODULE_PATH=/site/shared/software`
-to the `make` command. Software goes under `gbi/0.4.1` and the modulefile under
-`modules/gbi/0.4.1.lua` in that tree. Use the same install root as the cluster's
+to the `make` command. Software goes under `gbi/0.4.2` and the modulefile under
+`modules/gbi/0.4.2.lua` in that tree. Use the same install root as the cluster's
 existing rclone module. When its `modules` directory is already in the shared
 Lmod environment, users only need `module load gbi`; no per-user installation,
 container rebuild or login-node restart is required. Check `module show gbi`,
