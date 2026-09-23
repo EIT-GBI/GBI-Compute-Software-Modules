@@ -56,6 +56,43 @@ class Transfers(unittest.TestCase):
         transfer({**self.task, "delete": False})
         self.assertEqual(self.source.read_bytes(), self.target.read_bytes())
 
+    def test_empty_source_directory_retained_if_destination_replaced(self):
+        source = self.source_root / "empty"
+        source.mkdir()
+        destination = self.target_root / "empty"
+        source_reads = 0
+
+        def observe(path):
+            nonlocal source_reads
+            result = fingerprint(path)
+            if path == source:
+                source_reads += 1
+                if source_reads == 2:
+                    destination.rename(self.target_root / "old-empty")
+                    destination.mkdir()
+            return result
+
+        with patch("gbi_data.transfer.fingerprint", side_effect=observe):
+            with self.assertRaisesRegex(ValueError, "empty directory source or destination changed"):
+                transfer({**self.task, "source": str(source), "target": str(destination), "empty": True})
+        self.assertTrue(source.is_dir())
+
+    def test_source_parent_retained_if_destination_changes_after_file_unlink(self):
+        from gbi_data.transfer import receipt
+        parent = self.source_root / "parent"
+        parent.mkdir()
+        self.source.rename(parent / "file.dat")
+
+        def receipt_then_change(path, record):
+            receipt(path, record)
+            if record["event"] == "deleted":
+                self.target.write_bytes(b"changed after file cleanup")
+
+        with patch("gbi_data.transfer.receipt", side_effect=receipt_then_change):
+            with self.assertRaisesRegex(ValueError, "destination changed during directory cleanup"):
+                transfer({**self.task, "source": str(parent / "file.dat")})
+        self.assertTrue(parent.is_dir())
+
     def test_different_destination_is_never_overwritten(self):
         self.target.write_bytes(b"existing research")
         with self.assertRaisesRegex(ValueError, "both copies kept"):
@@ -345,6 +382,36 @@ class Interface(unittest.TestCase):
             self.assertIn("Complete", status.stdout)
         self.assertEqual(list((self.site.roots["lustre"] / ".gbi/runs").iterdir()), [])
 
+    def test_submission_wait_policy_and_result(self):
+        source = self.site.roots["lustre"] / "wait-policy"
+        source.write_bytes(b"keep this source")
+        target = self.site.roots["alluxio"] / source.name
+        for flags, terminal, follows in (
+            (["--detach", "--wait"], False, True),
+            (["--detach", "--wait"], True, True),
+            (["--detach"], True, False),
+            (["--detach"], False, False),
+            (["--wait"], False, True),
+            ([], False, False),
+            ([], True, True),
+        ):
+            with self.subTest(flags=flags, terminal=terminal), \
+                 patch.dict(os.environ, {"GBI_DATA_SITE_CONF": str(self.conf), "SLURM_JOB_ID": ""}), \
+                 patch("sys.argv", ["gbi", "data", "copy", str(source), str(target), *flags]), \
+                 patch("sys.stdout.isatty", return_value=terminal), \
+                 patch("gbi_data.cli.probe", return_value=None), \
+                 patch("gbi_data.cli.jobs.submit", return_value="314159") as submit, \
+                 patch("gbi_data.cli.jobs.watch", return_value=1) as watch:
+                self.assertEqual(cli.main(), 1 if follows else 0)
+                submit.assert_called_once()
+                if follows:
+                    watch.assert_called_once_with(
+                        submit.call_args.args[0], "314159", archive_root=self.site.roots["alluxio"])
+                else:
+                    watch.assert_not_called()
+                self.assertEqual(source.read_bytes(), b"keep this source")
+                self.assertFalse(target.exists())
+
     def test_large_and_explicit_background_requests_submit_without_moving(self):
         binary = self.base / "bin"
         binary.mkdir()
@@ -358,7 +425,8 @@ class Interface(unittest.TestCase):
             with source.open("wb") as stream:
                 stream.truncate(size)
             result = subprocess.run([sys.executable, "-B", "-m", "gbi_data.cli", "data", "move",
-                                     str(source), str(self.site.roots["alluxio"] / name), *flags],
+                                     str(source), str(self.site.roots["alluxio"] / name),
+                                     "--exclude", "*.tmp", "--exclude", "scratch*", *flags],
                                     env=environment, capture_output=True, text=True, timeout=10)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             self.assertIn("Submitted transfer 314159", result.stdout)
@@ -367,6 +435,7 @@ class Interface(unittest.TestCase):
             record = json.loads(path.read_text())
             self.assertEqual(record["execution"], "slurm")
             self.assertIsNone(record["selection"])
+            self.assertEqual(record["exclude"], ["*.tmp", "scratch*"])
 
     def test_probe_bounds_file_count_and_excluded_entry_scan(self):
         self.conf.write_text(self.conf.read_text() + "inline_scan_entries = 32\n")
@@ -399,7 +468,7 @@ class Interface(unittest.TestCase):
                     planned = cli.execution_plan(cli.plan(options, self.site), self.site, options)
                 self.assertEqual((planned["execution"], planned["reader"]), (mode, reader))
 
-    def test_everyday_directory_uses_parallel_rclone_without_slurm(self):
+    def test_everyday_directory_uses_native_small_files_without_slurm(self):
         source = self.site.roots["lustre"] / "everyday"
         source.mkdir()
         for number in range(40):
@@ -416,9 +485,24 @@ class Interface(unittest.TestCase):
         history = next((self.site.roots["alluxio"] / ".gbi/transfers").glob("*/*/history.json"))
         bundle = json.loads(history.read_text())
         self.assertEqual(bundle["progress"]["files"], 40)
-        self.assertTrue(all(record["reader"] == "rclone" for record in bundle["receipts"]
+        self.assertTrue(all(record["reader"] == "native" for record in bundle["receipts"]
                             if record["event"] == "verified"))
         self.assertEqual(len(list(target.iterdir())), 40)
+
+    def test_bulk_request_still_requires_pinned_rclone(self):
+        source = self.site.roots["lustre"] / "needs-rclone"
+        source.write_bytes(b"keep")
+        target = self.site.roots["fss"] / "target"
+        options = cli.parser().parse_args(["data", "copy", str(source), str(target)])
+        request = {**cli.plan(options, self.site), "reader": "rclone", "execution": "allocation"}
+        run_dir = self.base / "run-without-rclone"
+        run_dir.mkdir()
+        (run_dir / "request.json").write_text(json.dumps(request))
+        with patch("gbi_data.cli.shutil.which", return_value=None):
+            with self.assertRaisesRegex(ValueError, "rclone is unavailable"):
+                cli.run(run_dir, self.site, self.base / "home")
+        self.assertEqual(source.read_bytes(), b"keep")
+        self.assertFalse(target.exists())
 
     def test_probe_timeout_falls_back_without_writing(self):
         reader = self.base / "slow-probe"

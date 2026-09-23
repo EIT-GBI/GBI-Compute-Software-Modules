@@ -12,9 +12,13 @@ DEFAULTS = {
     "partition": "", "time_limit": "1-00:00:00", "cpus": "2", "mem": "4G",
     "jobs": "4", "file_timeout": "86400", "verify_settle_seconds": "1200",
     "rclone_bin": "rclone", "reserved_names": "",
+    "lfs_bin": "lfs", "usage_db": "",
     "inline_bytes": "8589934592",
     "native_bytes": "8388608", "native_files": "32",
     "inline_scan_entries": "100000", "inline_probe_seconds": "5",
+    "mount_timeout": "120", "discovery_timeout": "120", "history_timeout": "1800",
+    "prefect_socket": "/run/gbi-data/prefect.sock",
+    "pack_small_bytes": "65536", "pack_min_files": "40", "pack_max_bytes": "1073741824",
 }
 
 
@@ -38,7 +42,7 @@ def mounted_roots(path=Path("/proc/self/mountinfo")):
 
 
 class Site:
-    def __init__(self, path):
+    def __init__(self, path, configured=None):
         self.path = Path(path).resolve()
         self.values = DEFAULTS.copy()
         for number, line in enumerate(self.path.read_text().splitlines(), 1):
@@ -51,11 +55,15 @@ class Site:
                 raise ValueError(f"{self.path}:{number}: unknown setting {key!r}")
             self.values[key] = value
         for key in ("jobs", "cpus", "file_timeout", "verify_settle_seconds", "inline_bytes",
-                    "native_bytes", "native_files", "inline_scan_entries"):
+                    "native_bytes", "native_files", "inline_scan_entries", "pack_small_bytes",
+                    "pack_min_files", "pack_max_bytes"):
             if int(self.values[key]) < 1:
                 raise ValueError(f"{key} must be positive")
-        if float(self.values["inline_probe_seconds"]) <= 0:
-            raise ValueError("inline_probe_seconds must be positive")
+        for key in ("inline_probe_seconds", "mount_timeout", "discovery_timeout", "history_timeout"):
+            if float(self.values[key]) <= 0:
+                raise ValueError(f"{key} must be positive")
+        if configured is not None:
+            configured(self.values)
         self.user = pwd.getpwuid(os.getuid()).pw_name
         self.root_aliases = {
             name: Path(self.values[key]).expanduser().absolute() / self.user

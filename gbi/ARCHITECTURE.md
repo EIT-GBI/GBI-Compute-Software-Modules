@@ -1,199 +1,153 @@
 # GBI data CLI architecture
 
-This describes **gbi 0.3.6**, extending the verified worker introduced in [PR #7 — verified data movement with
-Slurm and terminal progress](https://github.com/EIT-GBI/GBI-Compute-Software-Modules/pull/7).
-The deployed settings below were checked on 9 September 2026. Site paths,
-user identities and credentials are deliberately omitted from this public report.
+This describes the **0.4.0 candidate source**, not an installed release or live
+acceptance. CLI code, module installation, the optional broker deployment and
+each storage route require separate evidence. Site identities and credentials
+are omitted from this public document.
 
-## What actually moves the data?
+## Data paths and identity
 
-The CLI moves data through **mounted filesystem paths**. For a regular file,
-**native I/O or rclone reads the source; Python writes the destination and
-checks the bytes**. An Alluxio destination therefore goes through the existing Alluxio
-mount. Alluxio's storage service handles persistence to Object Storage.
-
-| Question | Current implementation |
+| Route | Payload and authority |
 | --- | --- |
-| Does it use rclone? | For everyday and bulk transfers: parallel `rclone cat` readers supply source streams. Tiny selections use native I/O. Python performs the destination write, SHA-256 verification and source deletion. |
-| Does it run on the Prefect partition? | No. Bulk/background submission uses the configured Slurm partition, currently `cpu`. |
-| Does it launch a Prefect flow for a large directory? | No. Up to 8 GiB runs immediately in the shell; bulk work uses Slurm. |
-| Does the CLI PUT directly into Object Storage? | No. It configures no cloud remote and has no direct Object Storage upload or download client. Alluxio owns that connection. |
-| Does every data transfer pass through Alluxio? | FSS/Lustre payloads go directly between those filesystems. Their completed transfer history still goes to Alluxio. |
+| Ordinary `copy` / `move` | Native I/O or rclone reads a pinned source descriptor; Python writes and independently verifies mounted filesystem paths. Alluxio persists its mounted writes to Object Storage. FSS ↔ Lustre payloads travel directly between filesystems. |
+| Explicit `--prefect` | A local broker submits an approved personal archive/stage flow. The maintained worker transfers payload directly with the Object Storage SDK, retaining existing Slurm execution, route authorization, verification and Alluxio ownership/presentation checks. |
 
-## Execution and progress
+Prefect is never selected by an automatic size threshold. The CLI has no cloud
+credentials and does not acquire them for this route. The [adapter](src/lib/gbi_data/prefect.py)
+sends a versioned request over a local Unix socket. The infrastructure-owned
+broker obtains the caller UID from the kernel, binds it to an enabled personal
+route and selects approved deployments. Users cannot choose another account,
+bucket, deployment or execution identity. API authentication stays with the
+broker; Object Storage credentials stay with the maintained flow services.
 
-`module load gbi` loads the shared Python CLI and pinned `rclone/1.75.1`
-dependency. The CLI resolves paths using configured personal roots and the
-execution node's mount table; Unix permissions determine access to shared paths.
-It snapshots its Python code and site configuration onto Lustre, and chooses
-foreground execution, the current allocation or `sbatch --parsable`.
-There is no identity switch or service account in the CLI.
+The direct SDK path was checked against the maintained transfer worker source
+on 23 September 2026. It bypasses Alluxio payload transfer, not all presentation
+dependencies. Source review does not prove broker deployment, route acceptance
+or a performance advantage.
 
-Alluxio FUSE mounts and Alluxio-backed NFS exports retain Object Storage source
-protection, including the instrument mounts. They can be copied to any writable
-destination; there is no instrument-to-testbed allowlist. Ordinary filesystem
-paths use POSIX behavior. Public personal roots remain the defaults shown by
-`roots` and the locations for scratch/history.
+## Ordinary execution
 
-```mermaid
-flowchart TB
-    U["HPC shell: gbi data move or copy"] --> D{"Explicit --detach?"}
-    D -->|Yes| S["Submit Slurm job as the same user"]
-    D -->|No| A{"Already in an allocation?"}
-    A -->|Yes| E["Reuse allocation"]
-    A -->|No| P{"Bounded selection at most 8 GiB?"}
-    P -->|Yes| F["Start immediately in this shell"]
-    P -->|No or scan budget exceeded| S
-    E --> W["Up to four concurrent file workers"]
-    F --> W
-    S --> W
-    W --> L["Lustre: active progress and receipts"]
-    L -->|Publish closed records and verify| H["Alluxio: retained history"]
-    U -. "status TRANSFER_ID --watch" .-> L
-    U -. "status after completion" .-> H
-```
+[Site settings](src/lib/gbi_data/storage.py) default to foreground execution for
+selections up to 8 GiB. Larger selections, unknown decoded archive size or a
+probe exceeding five seconds / 100,000 visited entries select Slurm. Existing
+allocations are reused; `--detach` requests a new job. Defaults remain two CPUs,
+4 GiB, 24 hours and four workers per invocation. No concurrency increase or new
+partition is introduced.
 
-Placement and reader selection are independent:
+Tiny selections (up to 8 MiB and 32 files) need no rclone. Larger requests still
+resolve the pinned dependency, but each ordinary regular file up to 8 MiB uses
+native reading after its source descriptor is pinned and checked. Larger files
+use rclone. Placement and reader selection remain independent.
 
-| Selected workload | Execution outside an allocation | Reader |
-| --- | --- | --- |
-| Up to 8 MiB and 32 files | Immediate foreground | Native I/O |
-| Larger selection, up to 8 GiB | Immediate foreground | Parallel rclone readers |
-| More than 8 GiB | Slurm | Parallel rclone readers |
-| Metadata probe exceeds 5 seconds or 100,000 visited entries | Slurm | Parallel rclone readers |
-| Explicit `--detach` | Slurm | Parallel rclone readers |
+Rclone reads the inherited source descriptor through a one-entry
+`--files-from-raw` list and `--no-traverse`, with an empty configuration.
+Python creates exclusive final-name outputs. Alluxio files are not truncated
+or renamed over existing objects. Mount readback can use cache; it is not an
+independent SDK GET. Accepted write-through persistence is a site prerequisite.
 
-The same defaults apply to all filesystem directions. Site configuration can
-change them through the module recipe. The probe reads metadata, never payload
-checksums. Its bounded foreground snapshot rejects changed selected files;
-files appearing later are not part of that request. Bulk discovery streams
-into the pool. There is no short foreground duration cutoff.
+The coordinator snapshots code and site configuration onto Lustre so queued
+jobs retain their submitted version. Unix permissions govern ordinary shared
+and instrument paths; personal roots are discovery/state defaults, not an
+ordinary-transfer allowlist.
 
-The Slurm request is **2 CPUs, 4 GiB and 24 hours**. Both execution paths allow
-**four concurrent files per invocation**; there is no global concurrency
-limiter. Entry preparation and each file transfer use a supervised process and
-timeout. A single file remains a sequential stream: parallelism is across files,
-not concurrent writes into one Alluxio object. A directory walk that is stuck in
-kernel I/O can still delay final completion.
+## Selection and portable formats
 
-Progress uses structured snapshots and shows copying, closing, destination
-verification and source rechecking. Foreground calls wait and Ctrl-C stops
-them. For submitted jobs, Ctrl-C detaches the viewer and
-`status TRANSFER_ID --watch` reconnects. `--detach` is the explicit choice
-for work that must survive a shell disconnect.
+[Selection](src/lib/gbi_data/selection.py) shares case-sensitive basename
+matching between probes and streamed work. Exclusions override includes,
+including for explicit files and symbolic links; directory names do not prune
+their descendants. Excluded sources remain untouched.
 
-## File bytes and Alluxio
+[Logical selection](src/lib/gbi_data/format_selection.py) presents each packed
+tree, recognized archive or complete chunk store as one worker unit. It does
+not copy internal chunk parts as ordinary user files. Content markers and
+validated manifests authorize decoding; suffixes alone do not.
 
-For an archive into Alluxio, the data path is:
+- `--pack tar|gzip` streams a directory to an exact `.gbi.tar` or
+  `.gbi.tar.gz` destination with a versioned member manifest.
+- `--pack-small` uses a bounded read-only planner for non-overlapping
+  subtrees, leaving other files loose. Dry-run shows the proposed layout.
+  Configurable policy defaults are implementation choices, not qualified
+  optimal throughput thresholds.
+- `--chunk-size SIZE` produces a `.gbi-chunks` store with ordered part
+  hashes, a full-payload hash and a manifest-bound completion marker.
+- Packing with chunks uses a bounded, capacity-checked Lustre archive stage.
+  Source observations/content bind stage reuse; verified output precedes
+  stage cleanup. Plain packing streams without a payload staging copy.
 
-```mermaid
-flowchart LR
-    S["FSS or Lustre source"] --> R["Native reader or rclone cat"]
-    R -->|"Pipe of bytes"| P["Python: SHA-256 and sequential write"]
-    P --> M["Personal Alluxio FUSE mount"]
-    M --> A["Alluxio services and cache"]
-    A -->|"Backend persistence"| O["Object Storage"]
-    M -. "Reopen and SHA-256 readback" .-> P
-```
+Restoration verifies the complete container, including excluded members, and
+extracts only supported entries to Lustre/FSS. Unsafe paths/parents, special
+members and conflicting destinations are refused. Archives represent modes,
+timestamps, symbolic links and hardlinks; ownership, ACLs and xattrs are not
+restored. Loose Alluxio files retain their existing metadata limits. Filtered
+restoration retains the complete source container.
 
-The CLI opens the regular source without following a symlink, then gives rclone
-an inherited file descriptor selected through a one-entry `--files-from-raw`
-list and `--no-traverse` ([rclone filtering semantics](https://rclone.org/filtering/#files-from-read-list-of-source-file-names)).
-This avoids pathname-encoding surprises and listing unrelated transient
-descriptors. Tiny selections read the same pinned descriptor natively.
-It uses an empty rclone configuration and disables multithreaded reads of that
-one file. Parallelism is across files. The writer creates the destination
-exclusively at its final name: it does not rename a large temporary object over
-it or truncate an existing Alluxio file.
+## Verification and recovery
 
-On restore, the selected reader reads the mounted Alluxio source and Python writes to Lustre
-or FSS. Alluxio may satisfy the read from cache or fetch it from Object Storage.
-The checked compute node presented a direct `fuse.alluxio-fuse` mount, as shown
-above. NFS presentations, where configured, are an infrastructure detail; the
-CLI uses the supplied POSIX path in either case.
+Ordinary movement remains source stream → independent destination SHA-256
+readback → source recheck when deleting → durable receipt → guarded unlink.
+`copy` retains sources. `move` retains Object Storage originals unless
+`--delete-source` is explicit; that option is unavailable with `--prefect`.
+Sources must remain quiescent; this is not an application write lock.
 
-Alluxio must have accepted write-through persistence; the checked deployment
-uses `CACHE_THROUGH`. A successful client `close()` is insufficient evidence
-on its own: completion can be asynchronous, so the CLI waits for a successful
-full destination readback. **That readback is through the mount and can use
-cache. It is not an independent Object Storage GET or proof that the CLI has
-inspected backend multipart-upload state.**
+[Format workers](src/lib/gbi_data/formats.py) retain destination locks and
+write verification receipts before cleanup. Archive cleanup checks source
+content and destination stability before each selected unlink. Chunk
+manifests/parts and restored targets remain guarded across cleanup; unknown
+additions are never recursively removed.
 
-## Verification, deletion and recovery
+Ordinary partial files and chunk resume require unchanged source evidence.
+A journal-owned incomplete **unchunked archive** may instead be rebuilt from
+current source: fresh packing, manifest, full readback and source revalidation
+must all precede cleanup. It does not reuse old archive bytes. Chunked archive
+stages and partial raw chunk restores remain bound to source/manifest evidence.
 
-```mermaid
-sequenceDiagram
-    participant W as File worker
-    participant S as Source filesystem
-    participant D as Destination filesystem
-    participant R as Receipt on Lustre
-    W->>S: Record identity and stream source
-    W->>D: Create exclusively, write bytes, calculate SHA-256
-    W->>W: Require expected byte count and successful reader exit
-    W->>D: Close, reopen and hash the complete destination
-    D-->>W: Matching SHA-256 and stable destination identity
-    opt Move requests source removal
-        W->>S: Rehash regular source and check identity
-    end
-    W->>R: Append verification receipt and fsync
-    opt Source deletion is permitted
-        W->>W: Recheck source and destination identity
-        W->>S: Unlink source
-        W->>R: Append deletion record
-    end
-```
+Ordinary history is published as immutable Alluxio records and read back before
+scratch cleanup. Publication failure retains scratch and fails the command.
+Failed scratch removal after verified publication is a cleanup warning, not a
+data-verification failure. FSS holds installed code/configuration, not accumulated
+transfer logs.
 
-`copy` keeps sources. `move` removes verified FSS/Lustre sources;
-**Alluxio sources remain unless `--delete-source` is explicit**. Deletion is
-per file, so a partially failed directory move can contain both completed moves
-and retained sources. Inputs must be quiescent; the CLI does not lock out
-applications writing their data. Rehashing the source catches same-size edits
-that coarse filesystem timestamps alone can miss.
+Prefect requests save their exact parameters and UUID on Lustre before sending.
+Status can recover by request ID after a lost reply; `retry` resends that
+unchanged request. Client records currently stay on scratch. The flows own
+durable migration receipts; the CLI reports Prefect state without inventing
+aggregate verification counters.
 
-An identical existing destination is checked and reused. A differing destination
-is retained and reported. Retry journals and shared destination lock stripes
-permit replacement only of this CLI's recorded incomplete output with an
-unchanged source. These journals do not import parcopy's retry ownership.
+## Deadlines and progress
 
-At completion, closed logs, receipts and the final summary are copied into
-Alluxio's `.gbi/transfers/TRANSFER_ID/` tree and read back before the temporary Lustre
-run directory is removed. History publication failure retains scratch evidence
-and reports failure. Foreground history uses one immutable `history.json`
-bundle to reduce small-object publication overhead. FSS stores the installed code and configuration; it does
-not accumulate transfer history.
+[The watchdog](src/lib/gbi_data/deadlines.py) runs outside mount-dependent
+operations. Its serialized event pipe carries phase/path/counters and worker
+lifetimes. Configurable state, discovery and history deadlines bound waiting.
+Only finished history-file work refreshes the history deadline; periodic
+heartbeats do not hide blocked I/O. Slurm submissions discard inherited
+watchdog environment and establish fresh supervision on the execution node.
 
-## Implementation and limits
+A deadline reports last observed counters, retained records and worker PIDs
+needing terminal-state checks. It does not prove kernel I/O stopped. Locks are
+not bypassed, missing mounts are not replaced with local directories, and
+engines are not silently changed. An unavailable state mount can prevent a
+final failure record; retain the original output or Slurm log.
 
-| Source | Responsibility |
+Interactive and timestamped newline logs distinguish discovery, copying,
+close/readback, packing/staging/parts/extraction and history publication.
+Active bytes are separate from verified bytes. Ctrl-C stops foreground work
+but detaches a submitted-job viewer. `--detach --wait` submits and waits.
+Same-host Linux status uses process identity to detect stopped/reused PIDs.
+
+## Source map and evidence limits
+
+| Modules | Responsibility |
 | --- | --- |
-| [storage.py](src/lib/gbi_data/storage.py) | Site settings, user-root resolution and reserved paths |
-| [selection.py](src/lib/gbi_data/selection.py) | Bounded metadata probe and streaming selection |
-| [cli.py](src/lib/gbi_data/cli.py) | Placement and reader choice, worker supervision, request snapshots and history publication |
-| [jobs.py](src/lib/gbi_data/jobs.py) | Slurm submission, status and terminal display |
-| [transfer.py](src/lib/gbi_data/transfer.py) | Copy stream, checksums, retry ownership, receipts and deletion |
-| [Module recipe](sm-config/settings.toml) | Shared installation and [Lmod dependency/configuration](sm-config/module_template.lua) |
+| [storage.py](src/lib/gbi_data/storage.py), [selection.py](src/lib/gbi_data/selection.py) | Site/path policy, filters and bounded selection |
+| [packing.py](src/lib/gbi_data/packing.py), [format_selection.py](src/lib/gbi_data/format_selection.py) | Packing plans and logical units |
+| [transfer.py](src/lib/gbi_data/transfer.py), [formats.py](src/lib/gbi_data/formats.py) | Supervised work, receipts and cleanup |
+| [archives.py](src/lib/gbi_data/archives.py), [chunks.py](src/lib/gbi_data/chunks.py) | Portable formats, verification and reconstruction |
+| [cli.py](src/lib/gbi_data/cli.py), [jobs.py](src/lib/gbi_data/jobs.py), [deadlines.py](src/lib/gbi_data/deadlines.py) | Submission, progress, watchdog and ordinary history |
+| [prefect.py](src/lib/gbi_data/prefect.py) | Broker adapter and exact-request recovery |
 
-Symlinks are copied as links on native filesystems and represented by
-`.rclonelink` objects through Alluxio. Original Unix modes/timestamps are not
-preserved through Alluxio; ACLs, extended attributes and hard-link relationships
-are not replicated. The CLI requires Lustre for active state and Alluxio for
-retained history even when moving a payload between FSS and Lustre.
-
-The underlying worker validation covered all six filesystem directions, real Alluxio partial-write
-recovery, locks across distinct hosts and two four-file 12 GiB moves at about
-59 MiB/s including verification and history publication. These are bounded
-test results, not a throughput guarantee. In the instrumented run, roughly
-25 seconds per file wrote the bytes, while destination readback took 46–169
-seconds including completion waits. That does not isolate backend queueing,
-upload or read cost. Changing Alluxio upload concurrency or streaming belongs
-in its infrastructure configuration; the CLI does not change those settings.
-
-See the [user and installation guide](README.md) for commands and the
-[implementation specification](SPEC.md) for the scope of this release.
-
-The 0.3.0 adaptive candidate also passed all six 5 KB routes from a login shell,
-a four-file 512 MiB foreground archive in 14.9 seconds and a 2 GiB foreground
-archive in 43.4 seconds. Those times include verification and history. Explicit
-background submission and existing-allocation reuse passed. The above-8-GiB
-automatic boundary was checked with metadata-only dry runs and local submission
-tests; this was not another bulk throughput benchmark.
+Linux is the operational target. Local tests do not qualify real FSS, Lustre or
+Alluxio semantics. Preliminary bounded Linux small-file measurements showed
+about 2% lower wall time and 47% lower CPU with native reading, at unchanged
+concurrency. These are not throughput guarantees or qualified policy defaults.
+See [test guidance](tests/README.md) for the unresolved macOS rclone limitation.
+No candidate release or broker deployment is established by this document.

@@ -1,123 +1,181 @@
-# GBI data CLI: filesystem movement
+# GBI data CLI specification — 0.4.2 candidate
 
-## User contract
+This describes the candidate implementation contract. It does not claim that
+0.4.2 or its optional infrastructure broker is released, deployed or accepted
+on a production storage route. [Architecture](ARCHITECTURE.md) maps the contract
+to the current modules; [README](README.md) is the command guide.
 
-`gbi data copy SOURCE DESTINATION` and `gbi data move SOURCE DESTINATION` work
-between filesystem paths accessible to the invoking user, including shared
-Lustre and instrument mounts. Unix permissions govern access; personal roots
-are defaults for discovery and transfer state, not an access allowlist. The paths
-select the storage route. The user does not select rclone, Prefect, a partition
-or cloud credentials. Foreground and Slurm execution use that same identity.
+## Commands and identity
 
-Move is copy → independent SHA-256 verification → receipt → source deletion.
-Alluxio/Object Storage sources are retained unless `--delete-source` is
-explicit. Existing different destinations are preserved. Native filesystem
-permissions remain the authority; the program has no elevated identity.
+`gbi data copy SOURCE DESTINATION` retains sources.
+`gbi data move SOURCE DESTINATION` deletes only verified filesystem sources;
+Object Storage originals remain unless `--delete-source` is explicit.
+Existing differing destinations are preserved. A directory's contents go into
+the named destination. Unix permissions govern ordinary shared/instrument
+paths; personal roots are defaults for discovery and state.
 
-This replaces the earlier unshipped archive/stage-only CLI design. It reuses
-the working parcopy final-name, per-file concurrency and owned-partial retry
-approach. It adopts hash-during-copy and bounded discovery from the bulk-worker
-lessons. Prefect is not a runtime dependency or a hidden size-based detour.
+Foreground and ordinary Slurm work run with the invoking identity. The user
+does not choose an engine, cloud credential or execution partition.
+`--prefect` explicitly selects a managed personal migration through a
+kernel-UID-bound broker. It is mutually exclusive with `--detach` and
+`--local`; ordinary automatic placement never escalates to Prefect by size.
 
-## Storage roles
+## Ordinary placement and source readers
 
-- Alluxio: retained data, archives and completed transfer logs/receipts.
-- Lustre: computation and temporary transfer execution state.
-- FSS: installed code and site configuration.
+The optional Python surface is `from gbi import data`, with blocking `copy` and
+`move` calls. It invokes the matching installed executable using an argument
+list and `--wait`, inherits the caller's allocation/environment and streams the
+CLI's output. It adds no transfer, scheduling, retry or deletion implementation.
+Lmod exposes the SDK through `PYTHONPATH`; scientific environments need no extra
+package installation. Nonzero CLI exits raise `subprocess.CalledProcessError`.
 
-Live Slurm output and atomic progress snapshots are temporary scratch files.
-Closed records are copied to unique final Alluxio paths and read back before
-scratch cleanup. Alluxio is never asked to append an active log or repeatedly
-overwrite a progress file. A failed archival attempt retains temporary evidence.
+Selections up to 8 GiB run in the current shell by default. Larger or
+unbounded selections use Slurm; unknown decoded archive size also selects
+Slurm. Metadata probing is bounded by five seconds and 100,000 visited entries.
+Existing allocations are reused. `--detach` requests a new background job,
+and explicit `--wait` wins even when combined with `--detach`.
 
-## Runtime structure
+The configured default is four workers, two CPUs and 4 GiB. Native reading
+covers tiny requests and individual ordinary regular files up to 8 MiB after
+source pinning. Larger requests retain the pinned-rclone dependency check;
+larger regular files use rclone. This is a per-file reader decision, not a
+concurrency change. Both paths retain identical independent verification,
+receipt and deletion rules.
 
-- `storage.py`: data-only site settings, mount classification and canonical path checks.
-- `selection.py`: bounded metadata probe and streaming directory selection.
-- `cli.py`: execution/reader choice, bounded worker supervision, history.
-- `transfer.py`: one-file transfer and source-deletion boundary.
-- `jobs.py`: direct Slurm submission, status and terminal rendering.
+Code/configuration snapshots and a source digest bind submitted jobs to their
+request. Later module updates do not change queued execution.
 
-Each submitted job has a code/configuration snapshot and source digest. Each
-file worker is a separate process with an overall timeout, including FUSE
-metadata calls, write close and readback. Native I/O or rclone supplies a
-sequential input stream. The worker hashes while writing to a newly created final-name file,
-then hashes a new destination read. No whole-tree checksum pass precedes work.
-Moves rehash the source before recording verification and deleting it, because
-whole-second Lustre timestamps can hide same-size edits. Quiescent inputs are
-still required; the CLI does not lock applications out of their source files.
+## Selection and encoding
 
-The foreground probe retains a bounded selection of metadata (at most 100,000
-visited entries). Bulk discovery uses a depth-first scandir iterator in a
-bounded helper stream, allowing the orchestrator to collect completed files
-while discovery waits on a mount. A source lookup error is recorded for that
-entry and discovery continues. Source metadata and empty-directory preparation
-run in the same supervised worker slots as transfers, so coordinator progress
-continues while one preparation waits on filesystem I/O. The orchestrator holds
-at most the configured file concurrency in flight. Each unfinished file has a
-small journal. A kernel-stuck directory walk can still prevent final completion;
-the preparation deadline does not make that discovery operation interruptible.
-Completed journals are removed. A fixed set of cross-node lock stripes survives
-individual attempts; kernel-blocked workers and their rclone children inherit
-the lock so a new attempt cannot write over them.
+Repeatable `--include` and `--exclude` use case-sensitive basenames.
+Exclusions win, including for explicit files and links. Directory names do not
+prune descendants. Ordinary foreground selection is a bounded metadata
+snapshot; selected files are rechecked before copying. Bulk discovery streams
+independently of workers so a slow lookup does not hide completed receipts.
 
-Incomplete outputs can be replaced only if the journal identifies both the
-unchanged source and the current destination inode. Otherwise the CLI leaves
-both versions intact. Cross-node flock semantics are a deployment prerequisite.
+Format work uses logical units rather than descending into encoded payloads:
 
-## Automatic execution
+- `--pack tar|gzip` requires a directory and an exact generated archive
+  filename. A versioned manifest binds member names, types, metadata and hashes.
+- `--pack-small` requires a complete bounded plan of non-overlapping
+  qualifying subtrees. Dry-run explains selected layouts; unselected files
+  stay loose. An incomplete plan cannot authorize packing.
+- `--chunk-size SIZE` accepts human-readable binary sizes and writes ordered,
+  individually verified parts plus a full-payload hash. A manifest-bound
+  completion marker is required for restoration.
+- Packing plus chunks uses bounded, capacity-checked Lustre staging. Strict
+  source/manifest evidence governs reuse. Plain packing does not stage an
+  extra archive payload.
 
-Selections up to 8 GiB start in the current shell. Up to four files run in
-parallel; up to 8 MiB and 32 files uses native reads, with rclone for larger
-selections. Reader choice is independent of placement. Larger than 8 GiB or
-a probe exceeding five seconds / 100,000 visited entries selects Slurm.
-An existing allocation is reused automatically, regardless of size.
-`--detach` explicitly chooses a new background Slurm job.
+Source content markers authorize automatic restoration; a filename alone
+does not. Complete container verification includes unselected members.
+Restoration goes to Lustre/FSS, with member filtering and no traversal of
+symbolic-link targets. Archives preserve supported mode/time/link/hardlink
+relationships; ownership, ACLs and xattrs are outside the format contract.
+Existing directory permissions remain intact. Partial filtered restores keep
+the complete encoded source.
 
-There is no short total foreground deadline. Existing per-file and Alluxio
-settling timeouts still apply. Ctrl-C or shell hangup stops foreground workers;
-there is no automatic mid-transfer handoff to Slurm. Foreground selection
-fingerprints are checked before copying; late directory arrivals are outside
-that snapshot. Sources must be quiescent.
+## Verification, source removal and retries
 
-Foreground history is one immutable JSON bundle; bulk history retains the
-separate log and receipt files. Both are verified through Alluxio before
-scratch cleanup. All controls are site settings in the maintained module recipe.
+Ordinary move is stream/hash → independently reopen/hash destination →
+recheck source content/identity → fsynced verification receipt → guarded
+unlink. A reader's successful exit alone never authorizes deletion.
+Alluxio output uses exclusive final-name creation, without large-object rename
+or truncation. Accepted write-through persistence and cross-node lock semantics
+are deployment prerequisites; mount readback is not a direct Object Storage GET.
 
-## Progress
+Format workers verify containers/reconstructed data, retain their destination
+locks and write receipts before cleanup. Selected sources and destinations are
+rechecked across removal; unknown additions are preserved. Chunk source removal
+checks the restored destination before each owned metadata/part unlink.
+Concurrent applications must not modify sources or incomplete destinations.
 
-Foreground commands report progress directly and wait even in scripts.
-Interactive Slurm commands follow the submitted job. Ctrl-C detaches the viewer;
-the Slurm job continues. `status JOB_ID --watch` reconnects on the HPC.
-Piped/scripted calls return after submission unless `--wait` is requested.
+Ordinary owned-partial retry requires the recorded source and destination
+identity. Chunk resume additionally binds the complete source/format manifest;
+verified parts are read back before reuse. Unchanged source evidence is
+required for chunked archive stages and partial raw chunk restoration.
 
-Counters distinguish discovered, verified, active, removed-source and failed
-work. Discovery has no invented total; the percentage appears only when the
-iterator completes. Final state comes from the transfer summary, with Slurm
-state as a fallback for killed jobs. Scheduler success without a final transfer
-summary is not reported as successful data movement.
-Per-file receipts distinguish copy, client close, destination readback and
-source recheck time. Readback includes waits for asynchronous completion;
-these timings alone do not identify an Alluxio backend bottleneck.
+An owned incomplete **unchunked archive** may restart from current source,
+rather than resume old bytes. It must produce a fresh manifest and pass full
+archive readback/source revalidation before deletion. A foreign output is never
+adopted or overwritten by this exception.
 
-## Boundaries and validation
+## State, deadlines and progress
 
-Independent mount readback is the normal user proof. Direct Object Storage
-readback requires credentials and is not silently introduced. Alluxio must be
-configured for accepted write-through persistence, and actual large-file,
-failure/retry and multi-node tests are required before calling a site supported.
+Lustre holds active requests, journals, progress and logs. Ordinary completed
+records are published immutably to Alluxio and independently read back before
+scratch cleanup. Publication failure retains scratch and fails the command;
+failure to remove scratch after verified publication is a cleanup warning.
+No accumulated FSS log store is introduced.
 
-Tests must distinguish ordinary local filesystems from actual FSS/Lustre/Alluxio.
-Synthetic local Slurm adapters test the interface only. Cluster tests run as
-the invoking user, inside that user's test roots, with no IAM expansion or
-unrelated transfer cancellation.
+The outer watchdog uses a dedicated process/event-pipe boundary for initial
+site/path resolution, state I/O and history. Defaults are a 120-second bootstrap
+before configuration is readable, 120-second mount/state waiting, 120 seconds
+without a discovery entry or directory-scan progress while capacity is available, and 30 minutes
+without finished history-file work. Per-file and Alluxio settling deadlines
+remain separate. Site settings control the configured values.
 
-Symlink targets are data, never traversed. Alluxio uses `.rclonelink` records;
-ordinary files with that suffix on other filesystems are refused. Original
-permissions/timestamps are not persisted through Alluxio in this implementation.
-Concurrent applications must not modify files being moved. Extended attributes,
-ACL replication and preservation of hard-link relationships are outside scope.
 
-No automatic tar packing, data catalogue, cloud-credential broker, Prefect
-gateway, new service, new execution partition or infrastructure redesign is
-part of this implementation.
+Timeout means bounded command failure, not proof that kernel I/O stopped.
+Report phase/path, last observed verified/deleted counts, retained records and
+unresolved workers. Preserve lock ownership; do not start a competing writer,
+substitute a local directory for an unavailable mount, or change engines.
+Writing final failure state may itself be impossible on an unavailable mount.
+
+Interactive and timestamped newline output share progress states. Logs emit
+periodic updates while responsive, distinguish active from verified bytes,
+and cover discovery, copy/close/readback, packing/staging/chunks/extraction and
+history. Unknown totals have no invented percentage. Foreground Ctrl-C stops
+work; Slurm/Prefect viewer Ctrl-C detaches. Scheduler completion without a final
+ordinary-transfer summary is not accepted as data completion.
+
+## Read-only Lustre usage
+
+`gbi data usage [PATH]` reads the invoking user's owner-scoped SQLite snapshot
+from their configured FSS `.gbi/usage.sqlite3` publication. It never performs
+a recursive filesystem scan. The optional path must remain below the user's
+canonical Lustre root, and `--depth`/`--limit` control indexed directory
+drilldown. The output keeps the live whole-filesystem UID quota from `lfs`
+separate from cached apparent logical bytes and inventory entries.
+
+The publication requires schema version, owner UID, canonical root,
+`complete_input`, status, source `snapshot_at`, and `published_at` metadata.
+Incomplete or stale results remain visibly labelled; no failed publication
+replaces the previous result.
+
+## Explicit Prefect contract
+
+The broker selects only approved personal Lustre/FSS archive/stage routes.
+The peer's Unix UID binds the route; user-supplied identities, buckets,
+deployments and credentials are unavailable. Broker API authentication and
+flow Object Storage credentials remain service-side.
+
+Maintained flows use direct Object Storage SDK payload transfer, with existing
+Slurm execution and Alluxio ownership/presentation checks. This source-verified
+distinction does not establish deployment or performance benefit.
+FSS archives and all restores require matching relative paths; Lustre archives
+may remap the relative destination. Each include pattern must match at least
+one file. Exclusions, packing, chunks, shared paths and `--delete-source` are
+not supported on this route.
+
+The exact request/UUID is saved on Lustre before submission. Status can query
+by request ID after a lost reply; `gbi data retry TRANSFER_ID` resends that
+unchanged request. Repeating the original copy/move creates a different
+request and is not lost-reply recovery. Client records remain on scratch;
+the maintained flows own durable receipts. Report Prefect state explicitly,
+without manufacturing CLI aggregate byte/verification evidence.
+
+## Validation boundary
+
+Linux is the operational target. Local ordinary filesystems and synthetic
+Slurm adapters test interfaces, not real FSS/Lustre/Alluxio semantics.
+Encoded-format corruption/cleanup/retry tests and broker schema tests do not
+substitute for deployed user-path acceptance. Tests use newly created fixtures
+under the invoking user's roots, without unrelated cleanup or IAM expansion.
+
+Preliminary small-file measurements (about 2% wall and 47% CPU reduction) do
+not qualify packing thresholds, higher concurrency or throughput guarantees.
+The intermittent macOS rclone descriptor failure remains tracked separately;
+passing bounded reproductions do not resolve it. No external data catalogue,
+automatic Prefect size tier, cloud credentials for users or new execution
+partition is part of this candidate.

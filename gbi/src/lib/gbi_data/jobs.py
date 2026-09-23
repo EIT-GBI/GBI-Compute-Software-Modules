@@ -6,11 +6,25 @@ from pathlib import Path
 import re
 import shlex
 import shutil
+import socket
 import subprocess
 import sys
 import time
 
 from .transfer import write_json
+from . import deadlines
+
+
+def timestamp():
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
+
+def process_identity(pid):
+    """Linux process start ticks distinguish a reused PID from this transfer."""
+    try:
+        return Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()[19]
+    except (OSError, IndexError):
+        return None
 
 
 def human_bytes(value):
@@ -46,6 +60,8 @@ def submit(run_dir, command, site):
          f"--mem={site.values['mem']}", "--job-name=gbi-data",
          f"--output={run_dir / 'slurm.out'}", f"--error={run_dir / 'slurm.out'}", str(script)],
         capture_output=True, text=True, timeout=30,
+        env={key: value for key, value in os.environ.items()
+             if key not in (deadlines.EVENT_FD, deadlines.SUPERVISOR_PID)},
     )
     if result.returncode:
         raise ValueError(result.stderr.strip() or "Slurm rejected the transfer")
@@ -89,12 +105,13 @@ def display(progress, width=24):
     total = progress.get("discovered_bytes", 0)
     elapsed = progress.get("elapsed", 0)
     speed = completed / elapsed if elapsed else 0
-    if progress.get("discovery_complete") and total:
+    if progress.get("discovery_complete") and progress.get("totals_known", True) and total:
         proportion = min(completed / total, 1)
         filled = int(width * proportion)
         bar = "[" + "=" * filled + " " * (width - filled) + f"] {proportion:6.1%}"
     else:
-        bar = "[ discovering files ]" if progress.get("phase") == "running" else "[ awaiting job ]"
+        bar = ("[ verifying archive sizes ]" if not progress.get("totals_known", True) else
+               "[ discovering files ]" if progress.get("phase") == "running" else "[ awaiting job ]")
     phases = ", ".join(f"{count} {phase}" for phase, count in sorted(progress.get("phases", {}).items()))
     return (f"{bar}  {progress['files']:,} verified  {human_bytes(completed)}  "
             f"{human_bytes(speed)}/s  freed {human_bytes(progress['freed'])}  "
@@ -108,12 +125,13 @@ def terminal_display(progress):
     total = progress.get("discovered_bytes", 0)
     done = progress.get("bytes", 0)
     width = max(10, min(36, shutil.get_terminal_size().columns - 36))
-    if progress.get("discovery_complete") and total:
+    if progress.get("discovery_complete") and progress.get("totals_known", True) and total:
         fraction = min(done / total, 1)
         filled = int(width * fraction)
         bar = "[" + "=" * filled + " " * (width - filled) + f"] {fraction:.1%}"
     else:
-        bar = "Discovering files…" if progress["phase"] == "running" else progress["phase"].capitalize()
+        bar = ("Verifying archive sizes…" if not progress.get("totals_known", True) else
+               "Discovering files…" if progress["phase"] == "running" else progress["phase"].capitalize())
     if progress["phase"] == "saving history" and progress.get("discovery_complete") and total:
         bar += " · Saving history"
     speed = done / max(progress.get("elapsed", 0), 1)
@@ -129,13 +147,15 @@ class ProgressDisplay:
     def __init__(self):
         self.terminal = sys.stdout.isatty()
         self.last_line = ""
+        self.last_print = 0.0
 
     def update(self, progress):
         line = terminal_display(progress) if self.terminal else display(progress)
         if self.terminal:
             print(("\033[3A\r\033[J" if self.last_line else "") + line, end="", flush=True)
-        elif line != self.last_line:
-            print(line, flush=True)
+        elif line != self.last_line or time.monotonic() - self.last_print >= 15:
+            print(f"{timestamp()} {progress['phase']}: {line}", flush=True)
+            self.last_print = time.monotonic()
         self.last_line = line
 
     def finish(self):
@@ -152,14 +172,31 @@ def watch(run_dir, job_id, follow=True, archive_root=None):
         print("Ctrl-C detaches this display; the transfer continues.")
     try:
         while True:
+            deadlines.event("reading transfer status", run_dir)
             if not run_dir.exists() and archive_root is not None:
                 run_dir = archive_root / ".gbi" / "transfers" / job_id / run_dir.name
             progress = read_progress(run_dir)
             output.update(progress)
+            deadlines.event("following transfer status", run_dir, counters=progress)
             if progress["phase"] in ("complete", "failed", "interrupted"):
                 receipt = run_dir / ("history.json" if (run_dir / "history.json").is_file() else "receipts.jsonl")
                 print(f"\n{progress['phase'].capitalize()}. Receipts: {receipt}")
                 return 0 if progress["phase"] == "complete" else 1
+            if not job_id.isdigit() and progress.get("hostname") == socket.gethostname():
+                try:
+                    os.kill(progress["coordinator_pid"], 0)
+                    identity = process_identity(progress["coordinator_pid"])
+                    if identity is not None and progress.get("coordinator_identity") is not None and (
+                            identity != progress["coordinator_identity"]):
+                        raise ProcessLookupError
+                except ProcessLookupError:
+                    output.finish()
+                    print("Transfer process stopped without a final history record. "
+                          f"Inspect receipts and the original command's output: {run_dir}. "
+                          "Check any reported worker PIDs before retrying.")
+                    return 1
+                except (KeyError, PermissionError):
+                    pass
             if job_id.isdigit() and time.monotonic() - last_check > 15:
                 try:
                     state = slurm_state(job_id)
