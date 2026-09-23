@@ -1,2 +1,14 @@
 verified data movement between HPC filesystems
+Run gbi data roots to find your storage paths.
+gbi data copy SOURCE DESTINATION keeps sources; move removes verified sources.
+Alluxio/Object Storage originals stay unless move includes --delete-source.
+Small transfers run in your shell; larger ones use Slurm automatically.
+Use --detach to submit to Slurm; add --wait to wait for completion.
+Use --include and --exclude with quoted file-name patterns to select files.
+Use --pack tar or --pack gzip to create a GBI archive; copy restores it automatically.
+Use --pack-small --dry-run to review small-subdirectory packing and destination layout.
+Use --chunk-size 64MiB for verified resumable parts; repeat the command to resume.
+Use --prefect for a managed personal-storage migration; --wait follows its state.
+After a lost Prefect reply, use gbi data retry TRANSFER_ID, not a new copy/move.
+Run gbi data copy --help or gbi data move --help for examples and retry behavior.
 Python 3.9+ and the rclone module are required on execution nodes.

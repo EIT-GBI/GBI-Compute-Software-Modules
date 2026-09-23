@@ -12,10 +12,18 @@ import threading
 from .storage import Site, fingerprint
 
 
-def entries(source, site, root, patterns, visit=lambda: None, on_error=None):
+def matches(name, includes=(), exclusions=()):
+    """Select case-sensitive basenames; any exclusion wins over all includes."""
+    return (not includes or any(fnmatch.fnmatchcase(name, pattern) for pattern in includes)) and not any(
+        fnmatch.fnmatchcase(name, pattern) for pattern in exclusions
+    )
+
+
+def entries(source, site, root, patterns, visit=lambda: None, on_error=None, exclusions=()):
     if source.is_symlink() or not source.is_dir():
         visit()
-        yield source, False
+        if matches(source.name, patterns, exclusions):
+            yield source, False
         return
     with os.scandir(source) as children:
         empty = True
@@ -33,8 +41,8 @@ def entries(source, site, root, patterns, visit=lambda: None, on_error=None):
                 on_error(path, error)
                 continue
             if is_dir:
-                yield from entries(path, site, root, patterns, visit, on_error)
-            elif not patterns or any(fnmatch.fnmatchcase(child.name, pattern) for pattern in patterns):
+                yield from entries(path, site, root, patterns, visit, on_error, exclusions)
+            elif matches(child.name, patterns, exclusions):
                 yield path, False
         if empty and not patterns:
             yield source, True
@@ -43,10 +51,11 @@ def entries(source, site, root, patterns, visit=lambda: None, on_error=None):
 class EntryStream:
     """Run blocking directory discovery without stopping transfer receipts."""
 
-    def __init__(self, source, site, root, patterns):
+    def __init__(self, source, site, root, patterns, exclusions=(), iterator_factory=None):
         self._events = Queue(maxsize=1)
         self._stopped = threading.Event()
-        self._iterator = entries(source, site, root, patterns, on_error=self._report_error)
+        self._iterator = (iterator_factory(self._report_error) if iterator_factory is not None else
+                          entries(source, site, root, patterns, on_error=self._report_error, exclusions=exclusions))
         self._thread = threading.Thread(target=self._produce, daemon=True)
         self._thread.start()
 
@@ -82,11 +91,14 @@ class EntryStream:
         self._stopped.set()
 
 
-def stream_entries(source, site, root, patterns):
-    return EntryStream(source, site, root, patterns)
+def stream_entries(source, site, root, patterns, exclusions=(), iterator_factory=None):
+    return EntryStream(source, site, root, patterns, exclusions, iterator_factory)
 
 
 def foreground_selection(specification, site):
+    if specification.get("format_units"):
+        from .format_selection import foreground_units
+        return foreground_units(specification, site)
     visited, total = 0, 0
     selected = []
     byte_limit = int(site.values["inline_bytes"])
@@ -98,7 +110,8 @@ def foreground_selection(specification, site):
             raise ValueError("selection needs a larger scan")
 
     for path, empty in entries(Path(specification["source"]), site,
-                               Path(specification["source_root"]), specification["include"], visit):
+                               Path(specification["source_root"]), specification["include"], visit,
+                               exclusions=specification.get("exclude", ())):
         identity = None if empty else fingerprint(path)
         total += 0 if empty else identity[3]
         selected.append({"path": str(path), "empty": empty, "fingerprint": identity})

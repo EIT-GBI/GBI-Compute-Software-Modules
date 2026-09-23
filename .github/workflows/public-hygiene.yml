@@ -1,0 +1,26 @@
+name: Public CLI hygiene
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  public-hygiene:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Check scanner fixtures
+        env:
+          PYTHONDONTWRITEBYTECODE: "1"
+          TMPDIR: ${{ github.workspace }}/.hygiene-tmp
+        run: |
+          mkdir -p "$TMPDIR"
+          python3 -m unittest discover -s gbi/tests -p test_public_hygiene.py
+      - name: Scan tracked public CLI files
+        run: python3 gbi/tests/public_hygiene.py

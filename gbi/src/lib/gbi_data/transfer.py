@@ -123,6 +123,9 @@ def copy_stream(source, target, fd, rclone, lock, progress, target_kind, timings
 
 
 def transfer(task):
+    if task.get("format_action"):
+        from .formats import transfer as transfer_format
+        return transfer_format(task)
     timings = {}
     source = Path(task["source"])
     selection_root = Path(task["selection_root"])
@@ -130,8 +133,14 @@ def transfer(task):
     source_root, target_root = Path(task["source_root"]), Path(task["target_root"])
     destination = target / source.relative_to(selection_root) if task.get("directory", False) else target
     if task.get("empty", False):
+        source_before = fingerprint(source)
         ensure_parent(destination / ".placeholder", target_root)
+        destination_before = fingerprint(destination)[:3]
         if task["delete"] and source != selection_root:
+            check_parent(source, source_root)
+            check_parent(destination, target_root)
+            if fingerprint(source) != source_before or fingerprint(destination)[:3] != destination_before:
+                raise ValueError("empty directory source or destination changed; source kept")
             source.rmdir()
         return {"empty": True}
     initial = fingerprint(source)
@@ -168,6 +177,10 @@ def transfer(task):
         link = stat.S_ISLNK(before[2]) or decode_link
         if not link and not stat.S_ISREG(before[2]):
             raise ValueError("only regular files and symlinks can be transferred")
+        # Request setup still requires the pinned rclone dependency for bulk
+        # work. Tiny regular files can use the existing pinned-fd native reader
+        # without paying a second process startup for every file in that tree.
+        rclone = None if not link and before[3] <= task.get("native_bytes", -1) else task["rclone"]
         link_text = (os.fsdecode(source.read_bytes()) if decode_link else os.readlink(source)) if link else None
         expected = hashlib.sha256(os.fsencode(link_text)).hexdigest() if link else None
         target_digest = None
@@ -230,7 +243,7 @@ def transfer(task):
                         stream.write(os.fsencode(link_text))
                 else:
                     try:
-                        expected, copied_bytes = copy_stream(source, target, fd, task["rclone"], lock,
+                        expected, copied_bytes = copy_stream(source, target, fd, rclone, lock,
                                                             Path(task["progress"]), task["target_kind"], timings,
                                                             task.get("max_bytes"), before[3], source_fd)
                         if copied_bytes != before[3]:
@@ -290,7 +303,7 @@ def transfer(task):
         record = {"source": str(source), "destination": str(target), "bytes": before[3],
                   "sha256": expected, "fingerprint": before, "kind": "symlink" if link else "file",
                   "reused": reused, "event": "verified", "time": time.time(), "timings_seconds": timings,
-                  "reader": "rclone" if task["rclone"] else "native"}
+                  "reader": "rclone" if rclone else "native"}
         # An append-only, fsynced verification receipt is required before unlink.
         saved["phase"] = "verified"
         write_json(journal, saved)
@@ -303,6 +316,9 @@ def transfer(task):
             parent = source.parent
             boundary = Path(task["selection_root"])
             while parent != boundary and boundary in parent.parents:
+                check_parent(target, target_root)
+                if fingerprint(target) != target_before:
+                    raise ValueError("destination changed during directory cleanup; remaining source directories kept")
                 try:
                     parent.rmdir()
                 except OSError:
