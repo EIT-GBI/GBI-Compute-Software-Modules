@@ -418,8 +418,8 @@ and a 20-minute Alluxio readback settling deadline. Choose a partition with all
 three real mounts. Missing user roots are refused rather than created.
 
 Mount-dependent startup/state operations default to a 120-second deadline;
-discovery defaults to 120 seconds spent waiting for the next entry while worker
-capacity is available; history publication defaults to 30 minutes without a
+discovery defaults to 120 seconds without an emitted entry or directory-scan
+progress while worker capacity is available; history publication defaults to 30 minutes without a
 finished history-file worker. Only actual worker completion resets that history
 deadline; periodic progress messages cannot hide a stalled history operation.
 Set `mount_timeout`, `discovery_timeout` and `history_timeout` through the

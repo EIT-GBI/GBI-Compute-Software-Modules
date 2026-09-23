@@ -8,6 +8,7 @@ from queue import Empty, Full, Queue
 import subprocess
 import sys
 import threading
+import time
 
 from .storage import Site, fingerprint
 
@@ -54,8 +55,11 @@ class EntryStream:
     def __init__(self, source, site, root, patterns, exclusions=(), iterator_factory=None):
         self._events = Queue(maxsize=1)
         self._stopped = threading.Event()
-        self._iterator = (iterator_factory(self._report_error) if iterator_factory is not None else
-                          entries(source, site, root, patterns, on_error=self._report_error, exclusions=exclusions))
+        self._visited = 0
+        self._last_progress = time.monotonic()
+        self._iterator = (iterator_factory(self._report_error, self._visit) if iterator_factory is not None else
+                          entries(source, site, root, patterns, visit=self._visit,
+                                  on_error=self._report_error, exclusions=exclusions))
         self._thread = threading.Thread(target=self._produce, daemon=True)
         self._thread.start()
 
@@ -69,6 +73,14 @@ class EntryStream:
 
     def _report_error(self, path, error):
         self._put(("error", path, error))
+
+    def _visit(self):
+        self._visited += 1
+        self._last_progress = time.monotonic()
+
+    def progress(self):
+        """Return entries visited and the last time discovery advanced."""
+        return self._visited, self._last_progress
 
     def _produce(self):
         try:
