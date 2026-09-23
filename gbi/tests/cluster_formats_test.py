@@ -11,6 +11,8 @@ import json
 import os
 from pathlib import Path
 import stat
+import subprocess
+import sys
 import time
 import uuid
 
@@ -73,9 +75,59 @@ def compare(root, expected):
             raise AssertionError(f"content/type/mode/link parity failed: {root / name}")
 
 
+def selective_case(roots, config, execute):
+    """Exercise the actual selective CLI flag and mixed encoded/loose restore."""
+    source = roots["lustre"] / "selective-source"
+    small = source / "small"
+    small.mkdir(parents=True)
+    for index in range(40):
+        (small / f"file-{index:02}.dat").write_bytes(bytes([index]) * 4096)
+    (source / "large.bin").write_bytes(bytes(range(256)) * 4096)
+    (source / "excluded.tmp").write_bytes(b"retained but never transferred")
+    expected = inventory(source)
+    destination = roots["alluxio"] / "selective-mixed"
+    arguments = [str(source), str(destination), "--pack-small", "--exclude", "*.tmp"]
+    before = set(roots["alluxio"].iterdir())
+    result = subprocess.run([sys.executable, "-B", "-m", "gbi_data.cli", "data", "copy",
+                             *arguments, "--dry-run"],
+                            env={**os.environ, "GBI_DATA_SITE_CONF": str(config)},
+                            text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=300)
+    (roots["lustre"] / "selective-dry-run.log").write_text(result.stdout)
+    if result.returncode or destination.exists() or set(roots["alluxio"].iterdir()) != before:
+        raise AssertionError("selective dry run failed or wrote a destination")
+    plan, _ = json.JSONDecoder().raw_decode(result.stdout[result.stdout.index("{"):])
+    if ([row["archive_relative"] for row in plan["candidates"]] != ["small.gbi.tar"]
+            or [row["restore_relative"] for row in plan["candidates"]] != ["small"]
+            or plan["loose_selected"] != ["large.bin"] or not plan["complete"]):
+        raise AssertionError("unexpected selective dry-run layout")
+    execute("selective-copy", arguments, expected_receipts=2)
+    if {path.name for path in destination.iterdir()} != {"small.gbi.tar", "large.bin"}:
+        raise AssertionError("selective copy did not preserve planned mixed layout/exclusion")
+    if digest(destination / "large.bin") != expected["large.bin"]["sha256"]:
+        raise AssertionError("independent loose destination checksum mismatch")
+    restored = roots["fss"] / "selective-restored"
+    execute("selective-restore", [destination, restored], expected_receipts=2)
+    wanted = {name: value for name, value in expected.items() if name != "excluded.tmp"}
+    actual = inventory(restored)
+    # Loose files and the reconstructed archive root do not promise native
+    # metadata retention. Check packed member metadata separately with the
+    # destination-precision tolerance used by the full archive fixtures.
+    for entries in (wanted, actual):
+        for name, value in list(entries.items()):
+            entries[name] = {key: item for key, item in value.items() if key not in ("mode", "mtime_ns")}
+    if actual != wanted:
+        raise AssertionError("independent mixed restore names/types/payload/packed metadata differ")
+    compare(restored / "small", inventory(small))
+    compare(source, expected)
+    return {"dry_run": plan, "source_retained": True, "excluded_name": "excluded.tmp",
+            "restored_entries": len(actual), "independent_parity": True}
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--site-conf", type=Path, required=True)
+    parser.add_argument("--case", choices=("all", "selective"), default="all",
+                        help="run all acceptance cases, or only the mixed --pack-small case")
     options = parser.parse_args()
     if not os.environ.get("SLURM_JOB_ID"):
         parser.error("requires an existing Slurm allocation")
@@ -92,14 +144,20 @@ def main():
     code = {str(path): digest(path) for path in Path(__file__).resolve().parents[1].joinpath("src/lib/gbi_data").glob("*.py")}
     report["code_sha256"] = code
 
-    def execute(name, arguments, operation="copy"):
+    def execute(name, arguments, operation="copy", expected_receipts=1):
         row = {"case": name, **run_cli(arguments, options.site_conf, roots["lustre"] / (name + ".log"),
-                                       1, operation=operation)}
+                                       expected_receipts, operation=operation)}
         report["results"].append(row)
         report_path.write_text(json.dumps(report, indent=2) + "\n")
         return row
 
     try:
+        report["selective"] = selective_case(roots, options.site_conf, execute)
+        if options.case == "selective":
+            if any(digest(Path(path)) != value for path, value in code.items()):
+                raise AssertionError("candidate code changed during acceptance")
+            report["passed"] = True
+            return
         for origin in ("lustre", "fss"):
             source = roots[origin] / "source"
             expected = fixture(source)
