@@ -1,15 +1,39 @@
 """Explicit personal migrations through the identity-binding local broker."""
 
+import errno
 import json
 import os
 from pathlib import Path
 import socket
+import ssl
+import subprocess
 import sys
 import time
+from urllib import error as urlerror
+from urllib import request as urlrequest
+from urllib.parse import urlsplit
 import uuid
 
 from . import deadlines, jobs
 from .transfer import write_json
+
+
+_TOKEN = None
+_TOKEN_EXPIRES = 0.0
+_MAX_RESPONSE = 65536
+
+
+class _BrokerUnavailable(OSError):
+    """The local socket was unavailable before a request was sent."""
+
+
+class _BrokerError(ValueError):
+    """A deliberate public error from the authenticated broker."""
+
+
+class _NoRedirect(urlrequest.HTTPRedirectHandler):
+    def redirect_request(self, request, file, code, msg, headers, newurl):
+        raise ValueError("Prefect HTTPS endpoint redirected")
 
 
 def prepare(options, site):
@@ -55,30 +79,110 @@ def prepare(options, site):
             "destination": target, "include": options.include}
 
 
+def _validate_result(raw):
+    if len(raw) > _MAX_RESPONSE or not raw.endswith(b"\n"):
+        raise ValueError("incomplete broker response")
+    result = json.loads(raw)
+    if not isinstance(result, dict) or result.get("version") != 1:
+        raise ValueError("unsupported broker response")
+    if "error" in result:
+        message = result["error"]
+        if not isinstance(message, str) or not message.isprintable() or len(message) > 1024:
+            raise ValueError("invalid broker error")
+        raise _BrokerError(message)
+    if result.get("state") not in {"NOT_SUBMITTED", "SCHEDULED", "PENDING", "RUNNING", "COMPLETED",
+                                   "FAILED", "CANCELLED", "CANCELLING", "CRASHED", "PAUSED", "UNKNOWN"}:
+        raise ValueError("unsupported Prefect state")
+    if result["state"] != "NOT_SUBMITTED":
+        result["run_id"] = str(uuid.UUID(result.get("run_id", "")))
+    result["terminal"] = result["state"] in {"COMPLETED", "FAILED", "CANCELLED", "CRASHED"}
+    return result
+
+
+def _exchange_socket(path, request):
+    with socket.socket(socket.AF_UNIX) as client:
+        client.settimeout(30)
+        try:
+            client.connect(path)
+        except OSError as error:
+            if error.errno not in (errno.ENOENT, errno.ECONNREFUSED):
+                raise
+            raise _BrokerUnavailable(str(error)) from error
+        client.sendall(json.dumps(request).encode() + b"\n")
+        with client.makefile("rb") as stream:
+            raw = stream.readline(65537)
+    return _validate_result(raw)
+
+
+def _https_url(site):
+    value = site.values.get("prefect_url", "").strip()
+    if not value:
+        return None
+    parsed = urlsplit(value)
+    if parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password:
+        raise ValueError("prefect_url must be an HTTPS URL without credentials")
+    if parsed.query or parsed.fragment:
+        raise ValueError("prefect_url must not contain a query or fragment")
+    return value
+
+
+def _token():
+    global _TOKEN, _TOKEN_EXPIRES
+    now = time.monotonic()
+    if _TOKEN and now < _TOKEN_EXPIRES:
+        return _TOKEN
+    try:
+        # Use the process's native Slurm identity, not a token inherited from
+        # another tool or an earlier job. Never write the returned token to disk.
+        environment = {key: value for key, value in os.environ.items() if key != "SLURM_JWT"}
+        completed = subprocess.run(("scontrol", "token", "lifespan=60"), check=True,
+                                   capture_output=True, text=True, timeout=10, env=environment)
+    except (OSError, subprocess.SubprocessError) as error:
+        raise ValueError(f"cannot obtain Slurm user token: {type(error).__name__}; contact cluster support") from None
+    token = next((line.split("=", 1)[1].strip() for line in completed.stdout.splitlines()
+                  if line.startswith("SLURM_JWT=") and line.split("=", 1)[1].strip()), None)
+    if not token or len(token) > 8192 or not token.isascii() or not token.isprintable():
+        raise ValueError("scontrol did not return a Slurm user token")
+    _TOKEN, _TOKEN_EXPIRES = token, now + 45
+    return token
+
+
+def _exchange_https(url, request):
+    body = json.dumps(request).encode() + b"\n"
+    req = urlrequest.Request(url, data=body, method="POST", headers={
+        "Authorization": f"Bearer {_token()}", "Content-Type": "application/json"})
+    opener = urlrequest.build_opener(_NoRedirect, urlrequest.HTTPSHandler(context=ssl.create_default_context()))
+    try:
+        with opener.open(req, timeout=30) as response:
+            raw = response.read(_MAX_RESPONSE + 1)
+    except urlerror.HTTPError as error:
+        raise ValueError(f"Prefect HTTPS request failed: HTTP {error.code}") from None
+    except (urlerror.URLError, OSError, ValueError) as error:
+        raise ValueError(f"Prefect HTTPS request failed: {type(error).__name__}") from None
+    if raw and not raw.endswith(b"\n"):
+        raw += b"\n"
+    try:
+        return _validate_result(raw)
+    except _BrokerError:
+        raise
+    except (ValueError, TypeError, AttributeError):
+        raise ValueError("Prefect HTTPS response was invalid") from None
+
+
 def exchange(site, request):
     path = site.values["prefect_socket"]
     deadlines.event("contacting Prefect migration broker", path)
     try:
-        with socket.socket(socket.AF_UNIX) as client:
-            client.settimeout(30)
-            client.connect(path)
-            client.sendall(json.dumps(request).encode() + b"\n")
-            with client.makefile("rb") as stream:
-                raw = stream.readline(65537)
-        if len(raw) > 65536 or not raw.endswith(b"\n"):
-            raise ValueError("incomplete broker response")
-        result = json.loads(raw)
-        if not isinstance(result, dict) or result.get("version") != 1:
-            raise ValueError("unsupported broker response")
-        if "error" in result:
-            raise ValueError(str(result["error"]))
-        if result.get("state") not in {"NOT_SUBMITTED", "SCHEDULED", "PENDING", "RUNNING", "COMPLETED",
-                                       "FAILED", "CANCELLED", "CANCELLING", "CRASHED", "PAUSED", "UNKNOWN"}:
-            raise ValueError("unsupported Prefect state")
-        if result["state"] != "NOT_SUBMITTED":
-            result["run_id"] = str(uuid.UUID(result.get("run_id", "")))
-        result["terminal"] = result["state"] in {"COMPLETED", "FAILED", "CANCELLED", "CRASHED"}
-        return result
+        return _exchange_socket(path, request)
+    except _BrokerUnavailable as error:
+        url = _https_url(site)
+        if not url:
+            raise ValueError(f"Prefect request not confirmed: {error}. Use status or retry with the same transfer ID") from error
+        deadlines.event("local Prefect broker unavailable; using HTTPS transport", url)
+        try:
+            return _exchange_https(url, request)
+        except (OSError, ValueError, TypeError, AttributeError) as https_error:
+            raise ValueError(f"Prefect request not confirmed: {https_error}. Use status or retry with the same transfer ID") from https_error
     except (OSError, ValueError, TypeError, AttributeError) as error:
         raise ValueError(f"Prefect request not confirmed: {error}. Use status or retry with the same transfer ID") from error
 

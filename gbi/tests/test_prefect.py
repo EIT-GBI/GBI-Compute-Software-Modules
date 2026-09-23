@@ -1,14 +1,17 @@
 """Prefect submission preserves user paths and retries one saved request."""
 
 import contextlib
+import errno
 import io
 import json
 import os
 from pathlib import Path
 import pwd
+import subprocess
 import tempfile
 import unittest
 from unittest.mock import patch
+from urllib import error as urlerror
 
 from gbi_data import cli, prefect
 from gbi_data.storage import Site
@@ -26,6 +29,8 @@ class Prefect(unittest.TestCase):
         config.write_text("".join(f"{name}_root = {self.base / name}\n" for name in ("lustre", "fss", "bucket")))
         self.site = Site(config)
         self.home = self.site.roots["lustre"] / ".gbi"
+        prefect._TOKEN = None
+        prefect._TOKEN_EXPIRES = 0
 
     def options(self, source="lustre", target="alluxio", *flags):
         return cli.parser().parse_args(["data", "copy", str(self.site.roots[source] / "experiment"),
@@ -89,6 +94,116 @@ class Prefect(unittest.TestCase):
                 factory.return_value.__enter__.return_value.makefile.return_value = io.BytesIO(raw)
                 with self.assertRaisesRegex(ValueError, "same transfer ID"):
                     prefect.exchange(self.site, request)
+
+    def test_https_fallback_only_handles_unavailable_socket(self):
+        request = prefect.prepare(self.options(), self.site)
+        response = {"version": 1, "state": "SCHEDULED", "run_id": "74ec9296-0446-4a46-a428-f004e556f066"}
+        self.site.values["prefect_url"] = "https://broker.example/prefect"
+        with patch("gbi_data.prefect._exchange_socket", side_effect=prefect._BrokerUnavailable("missing")), \
+             patch("gbi_data.prefect._exchange_https", return_value=response) as https:
+            self.assertEqual(prefect.exchange(self.site, request), response)
+        https.assert_called_once_with(self.site.values["prefect_url"], request)
+        with patch("gbi_data.prefect._exchange_socket", side_effect=ValueError("partial reply")), \
+             patch("gbi_data.prefect._exchange_https") as https:
+            with self.assertRaisesRegex(ValueError, "partial reply"):
+                prefect.exchange(self.site, request)
+        https.assert_not_called()
+        with patch("gbi_data.prefect._exchange_socket", side_effect=PermissionError("denied")), \
+             patch("gbi_data.prefect._exchange_https") as https:
+            with self.assertRaisesRegex(ValueError, "denied"):
+                prefect.exchange(self.site, request)
+        https.assert_not_called()
+
+    def test_https_url_rejects_unsafe_forms(self):
+        for value in ("http://broker.example", "https://user:pass@broker.example", "https://broker.example/?x=1",
+                      "https://broker.example/#fragment"):
+            with self.subTest(value=value):
+                self.site.values["prefect_url"] = value
+                with self.assertRaises(ValueError):
+                    prefect._https_url(self.site)
+
+    def test_slurm_token_is_cached_without_leaking_command_output(self):
+        completed = subprocess.CompletedProcess(("scontrol", "token"), 0,
+                                                 stdout="SLURM_JWT=secret-token\n", stderr="")
+        with patch("gbi_data.prefect.subprocess.run", return_value=completed) as run, \
+             patch("gbi_data.prefect.time.monotonic", side_effect=[100, 140, 146]), \
+             patch.dict(os.environ, {"SLURM_JWT": "inherited-secret", "PATH": "/bin"}, clear=True):
+            self.assertEqual(prefect._token(), "secret-token")
+            self.assertEqual(prefect._token(), "secret-token")
+            self.assertEqual(run.call_count, 1)
+            self.assertEqual(prefect._token(), "secret-token")
+            self.assertEqual(run.call_count, 2)
+        self.assertEqual(run.call_args.args, (("scontrol", "token", "lifespan=60"),))
+        self.assertEqual(run.call_args.kwargs["env"], {"PATH": "/bin"})
+
+    def test_token_failures_do_not_expose_process_output(self):
+        for error in (FileNotFoundError("private command details"),
+                      subprocess.CalledProcessError(1, "scontrol", output="private token", stderr="private error"),
+                      subprocess.TimeoutExpired("scontrol", 10, output="private token")):
+            with self.subTest(error=type(error).__name__), \
+                 patch("gbi_data.prefect.subprocess.run", side_effect=error), \
+                 self.assertRaisesRegex(ValueError, "cannot obtain Slurm user token") as raised:
+                prefect._token()
+            self.assertNotIn("private", str(raised.exception))
+            self.assertTrue(raised.exception.__suppress_context__)
+
+    def test_https_preserves_request_and_public_errors_but_bounds_untrusted_responses(self):
+        request = prefect.prepare(self.options(), self.site)
+        response = {"version": 1, "state": "COMPLETED", "run_id": "74ec9296-0446-4a46-a428-f004e556f066"}
+        with patch("gbi_data.prefect._token", return_value="private-token"), \
+             patch("gbi_data.prefect.urlrequest.build_opener") as factory:
+            opener = factory.return_value
+            opener.open.return_value.__enter__.return_value.read.return_value = json.dumps(response).encode()
+            self.assertTrue(prefect._exchange_https("https://broker.example/migrations", request)["terminal"])
+            submitted = opener.open.call_args.args[0]
+            self.assertEqual(json.loads(submitted.data), request)
+            self.assertEqual(submitted.get_header("Authorization"), "Bearer private-token")
+            for raw, message in ((b'{"version":1,"error":"your route is unavailable"}', "your route is unavailable"),
+                                 (b"private broken body", "response was invalid"),
+                                 (b"x" * (prefect._MAX_RESPONSE + 1), "response was invalid")):
+                opener.open.return_value.__enter__.return_value.read.return_value = raw
+                with self.assertRaisesRegex(ValueError, message) as raised:
+                    prefect._exchange_https("https://broker.example/migrations", request)
+                self.assertNotIn("private", str(raised.exception))
+
+    def test_https_transport_failures_and_redirects_do_not_expose_credentials(self):
+        errors = (urlerror.HTTPError("https://private.example", 401, "private-token", {}, io.BytesIO(b"private body")),
+                  urlerror.URLError("private-token"), TimeoutError("private-token"))
+        for error in errors:
+            with self.subTest(error=type(error).__name__), \
+                 patch("gbi_data.prefect._token", return_value="private-token"), \
+                 patch("gbi_data.prefect.urlrequest.build_opener") as factory:
+                factory.return_value.open.side_effect = error
+                with self.assertRaisesRegex(ValueError, "HTTPS request failed") as raised:
+                    prefect._exchange_https("https://broker.example/migrations", {})
+                self.assertNotIn("private", str(raised.exception))
+                self.assertTrue(raised.exception.__suppress_context__)
+        with self.assertRaisesRegex(ValueError, "redirected"):
+            prefect._NoRedirect().redirect_request(None, None, 307, None, {}, "https://other.example")
+
+    def test_socket_write_failure_never_switches_transport(self):
+        self.site.values["prefect_url"] = "https://broker.example/migrations"
+        for error in (BrokenPipeError(errno.EPIPE, "lost write"), TimeoutError("lost reply")):
+            with self.subTest(error=type(error).__name__), \
+                 patch("gbi_data.prefect.socket.socket") as factory, \
+                 patch("gbi_data.prefect._exchange_https") as remote:
+                client = factory.return_value.__enter__.return_value
+                client.sendall.side_effect = error
+                with self.assertRaisesRegex(ValueError, "same transfer ID"):
+                    prefect.exchange(self.site, prefect.prepare(self.options(), self.site))
+                remote.assert_not_called()
+
+    def test_missing_socket_falls_back_without_changing_request(self):
+        self.site.values["prefect_url"] = "https://broker.example/migrations"
+        request = prefect.prepare(self.options(), self.site)
+        for code in (errno.ENOENT, errno.ECONNREFUSED):
+            with self.subTest(code=code), patch("gbi_data.prefect.socket.socket") as factory, \
+                 patch("gbi_data.prefect._exchange_https", return_value={"state": "RUNNING"}) as remote:
+                client = factory.return_value.__enter__.return_value
+                client.connect.side_effect = OSError(code, "unavailable")
+                prefect.exchange(self.site, request)
+                client.sendall.assert_not_called()
+                remote.assert_called_once_with(self.site.values["prefect_url"], request)
 
     def test_lost_reply_retry_resends_identical_saved_request(self):
         sent = []
