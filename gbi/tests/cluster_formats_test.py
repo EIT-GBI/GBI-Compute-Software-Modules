@@ -209,6 +209,7 @@ def main():
         disposable = roots["lustre"] / "disposable-move"
         disposable.mkdir()
         (disposable / "payload.txt").write_bytes(b"only this new fixture may be deleted")
+        (disposable / "empty directory").mkdir()
         expected = inventory(disposable)
         archive = roots["alluxio"] / "disposable.gbi.tar"
         execute("disposable-move", [disposable, archive, "--pack", "tar"], operation="move")
@@ -218,6 +219,18 @@ def main():
         execute("disposable-restore", [archive, restored])
         compare(restored, expected)
         report["disposable_move"] = "verified by independent restore; source entries removed"
+        empty = roots["lustre"] / "disposable-empty-move"
+        empty.mkdir()
+        (empty / "empty child").mkdir()
+        expected = inventory(empty)
+        archive = roots["alluxio"] / "disposable-empty.gbi.tar"
+        execute("disposable-empty-move", [empty, archive, "--pack", "tar"], operation="move")
+        if list(empty.iterdir()):
+            raise AssertionError("directory-only move retained selected empty directories")
+        restored = roots["fss"] / "disposable-empty-restored"
+        execute("disposable-empty-restore", [archive, restored])
+        compare(restored, expected)
+        report["disposable_empty_move"] = "verified by independent restore; empty source child removed"
         if any(digest(Path(path)) != value for path, value in code.items()):
             raise AssertionError("candidate code changed during acceptance")
         report["passed"] = True
