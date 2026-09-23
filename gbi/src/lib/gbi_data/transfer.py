@@ -123,6 +123,9 @@ def copy_stream(source, target, fd, rclone, lock, progress, target_kind, timings
 
 
 def transfer(task):
+    if task.get("format_action"):
+        from .formats import transfer as transfer_format
+        return transfer_format(task)
     timings = {}
     source = Path(task["source"])
     selection_root = Path(task["selection_root"])
@@ -168,6 +171,10 @@ def transfer(task):
         link = stat.S_ISLNK(before[2]) or decode_link
         if not link and not stat.S_ISREG(before[2]):
             raise ValueError("only regular files and symlinks can be transferred")
+        # Request setup still requires the pinned rclone dependency for bulk
+        # work. Tiny regular files can use the existing pinned-fd native reader
+        # without paying a second process startup for every file in that tree.
+        rclone = None if not link and before[3] <= task.get("native_bytes", -1) else task["rclone"]
         link_text = (os.fsdecode(source.read_bytes()) if decode_link else os.readlink(source)) if link else None
         expected = hashlib.sha256(os.fsencode(link_text)).hexdigest() if link else None
         target_digest = None
@@ -230,7 +237,7 @@ def transfer(task):
                         stream.write(os.fsencode(link_text))
                 else:
                     try:
-                        expected, copied_bytes = copy_stream(source, target, fd, task["rclone"], lock,
+                        expected, copied_bytes = copy_stream(source, target, fd, rclone, lock,
                                                             Path(task["progress"]), task["target_kind"], timings,
                                                             task.get("max_bytes"), before[3], source_fd)
                         if copied_bytes != before[3]:
@@ -290,7 +297,7 @@ def transfer(task):
         record = {"source": str(source), "destination": str(target), "bytes": before[3],
                   "sha256": expected, "fingerprint": before, "kind": "symlink" if link else "file",
                   "reused": reused, "event": "verified", "time": time.time(), "timings_seconds": timings,
-                  "reader": "rclone" if task["rclone"] else "native"}
+                  "reader": "rclone" if rclone else "native"}
         # An append-only, fsynced verification receipt is required before unlink.
         saved["phase"] = "verified"
         write_json(journal, saved)
