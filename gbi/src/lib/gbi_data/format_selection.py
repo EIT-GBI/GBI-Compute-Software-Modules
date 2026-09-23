@@ -5,6 +5,7 @@ automatic restore checks generated .gbi.tar[.gz] / .gbi-chunks names first, then
 validates their markers; ordinary small files incur no payload-sniffing reads.
 """
 
+from collections import Counter
 from dataclasses import asdict
 import json
 import os
@@ -19,6 +20,54 @@ from .storage import Site, fingerprint, overlap
 
 CHUNK_SUFFIX = ".gbi-chunks"
 ARCHIVE_SUFFIXES = (".gbi.tar.gz", ".gbi.tar")
+
+
+def _packing_preview(result):
+    """Keep dry-run output bounded when qualification sees a large tree."""
+    result = dict(result)
+    unqualified = result.pop("unqualified", [])
+    loose = result.pop("loose_selected", [])
+
+    def reason_group(reason):
+        for marker, label in (
+                ("budget", "discovery budget"),
+                ("fewer than", "too few selected files"),
+                ("larger than", "large selected file"),
+                ("exceed the", "archive size budget"),
+                ("special files", "unsupported special file"),
+                ("collides", "archive name collision"),
+                ("changed", "source changed during discovery"),
+                ("failed", "discovery failure")):
+            if marker in reason:
+                return label
+        return reason
+
+    reasons = Counter(group
+                      for item in unqualified
+                      for group in {reason_group(reason) for reason in
+                                    (item.get("reasons") or ["discovery incomplete"])})
+    reason_counts = dict(sorted(reasons.items(), key=lambda pair: (-pair[1], pair[0])))
+    if len(reason_counts) > 20:
+        kept = dict(list(reason_counts.items())[:19])
+        kept["other reasons"] = sum(list(reason_counts.values())[19:])
+        reason_counts = kept
+
+    result["unqualified_summary"] = {
+        "directory_count": len(unqualified),
+        "reason_counts": reason_counts,
+        "examples": [item.get("source_relative") for item in unqualified[:12]],
+    }
+    result["loose_selected_summary"] = {
+        "entry_count": len(loose),
+        "examples": loose[:12],
+    }
+    result["preview_notice"] = (
+        "Discovery incomplete: displayed counts are observed lower bounds; "
+        "no archive is authorized."
+        if not result.get("complete") else
+        "Discovery complete: metadata observations are not checksum-verified payload totals."
+    )
+    return result
 
 
 def _unpacked_name(name):
@@ -257,6 +306,7 @@ def dry_run(specification, site):
         result = packing.plan(Path(specification["source"]), packing.PackingPolicy(**specification["packing_policy"]),
                               includes=specification.get("include", ()), exclusions=specification.get("exclude", ()),
                               reserved_names=site.reserved)
+        result = _packing_preview(result)
         if specification.get("chunk_size"):
             result["staging_required"] = bool(result["candidates"])
             result["staging_location"] = "bounded, capacity-checked Lustre scratch"

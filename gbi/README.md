@@ -200,10 +200,11 @@ The directory you named as the source remains the layout root; use `--pack` if
 you want to pack that whole directory instead. Names such as `.git` or
 `node_modules` are candidates under the same policy and filters as other names.
 
-Dry-run shows the thresholds, selected subtrees, reasons, observed file/byte
-counts, loose entries and staging requirements. These are metadata observations,
-not verified payload totals. An unfinished scan is labelled as a lower bound
-and does not authorize packing; narrow the source if the scan budget is exceeded.
+Dry-run shows the thresholds, the complete list of proposed archives, grouped
+counts and examples for unqualified or loose entries, and staging requirements.
+These are metadata observations, not verified payload totals. An unfinished scan
+is labelled as a lower bound and does not authorize packing; narrow the source if
+the scan budget is exceeded.
 The worker rechecks qualification and verifies the resulting archive before any
 source removal. A mixed restore unpacks generated archives alongside loose files.
 
