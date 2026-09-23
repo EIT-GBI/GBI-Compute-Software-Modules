@@ -8,12 +8,28 @@ Load the module, give it a source and destination, and watch the transfer:
 module load gbi
 gbi data roots
 gbi data move /your/lustre/experiment /your/alluxio/experiment
+gbi data usage
 ```
 
 Use the paths printed by `roots`. A directory's **contents** go into the exact
 destination directory you name. A single file goes to the named destination
 file, or into an existing destination directory under its original name.
 Spaces and unusual file names are supported; quote paths in your shell.
+
+`usage` reports your current Lustre quota when the `lfs` client is available,
+plus the latest owner-scoped inventory snapshot. The inventory is a cached
+logical-byte estimate, labelled with its snapshot age; it is not allocated
+filesystem space and does not recursively scan Lustre. Select a directory
+below your own Lustre root and choose how many levels to show:
+
+```bash
+gbi data usage /your/lustre/experiment --depth 2 --limit 20
+```
+
+The published inventory is read-only and may be partial or stale.
+Those states are shown in the output. Shared paths and another user's root are
+rejected. If no snapshot has been published yet, the live UID quota still
+appears and the cached folder report is reported as unavailable.
 
 `roots` prints the configured user-facing mount paths, preserving aliases such
 as `/mnt/user-data/$USER` for Alluxio instead of exposing its internal shard
@@ -401,8 +417,8 @@ GBI_SITE_PARTITION=site-partition make gbi
 
 For a shared cluster installation, run the recipe as a software maintainer
 from the reviewed release checkout and add `GBI_MODULE_PATH=/site/shared/software`
-to the `make` command. Software goes under `gbi/0.4.0` and the modulefile under
-`modules/gbi/0.4.0.lua` in that tree. Use the same install root as the cluster's
+to the `make` command. Software goes under `gbi/0.4.1` and the modulefile under
+`modules/gbi/0.4.1.lua` in that tree. Use the same install root as the cluster's
 existing rclone module. When its `modules` directory is already in the shared
 Lmod environment, users only need `module load gbi`; no per-user installation,
 container rebuild or login-node restart is required. Check `module show gbi`,

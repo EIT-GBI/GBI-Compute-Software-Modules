@@ -20,7 +20,7 @@ from . import __version__
 from . import jobs
 from . import deadlines
 from . import prefect
-from . import format_selection, packing
+from . import format_selection, packing, usage
 from .selection import entries, probe, stream_entries
 from .storage import Site, overlap
 from .transfer import ensure_parent, receipt, write_json
@@ -37,7 +37,7 @@ def parser():
     result = argparse.ArgumentParser(prog="gbi", description="Move data between your HPC filesystems.")
     result.add_argument("--version", action="version", version=__version__)
     data = result.add_subparsers(dest="command", required=True).add_parser("data")
-    verbs = data.add_subparsers(dest="verb", required=True, metavar="{copy,move,status,retry,roots}")
+    verbs = data.add_subparsers(dest="verb", required=True, metavar="{copy,move,status,retry,roots,usage}")
     for verb in ("copy", "move"):
         command = verbs.add_parser(
             verb, help=f"{verb} a file or directory to a destination",
@@ -95,6 +95,13 @@ def parser():
     retry.add_argument("job_id", metavar="TRANSFER_ID")
     retry.add_argument("--wait", action="store_true", help="wait for the existing migration's result")
     verbs.add_parser("roots", help="show your available storage paths")
+    usage_command = verbs.add_parser(
+        "usage", help="show live quota and your cached Lustre folder usage",
+        description="Show your live Lustre quota and the latest owner-scoped inventory snapshot.",
+    )
+    usage_command.add_argument("path", nargs="?", help="directory relative to your own Lustre root")
+    usage_command.add_argument("--depth", type=int, default=1, help="folder levels below the selected root (default: 1)")
+    usage_command.add_argument("--limit", type=int, default=20, help="top folders returned at each level (default: 20)")
     # Internal entrypoint used by the generated batch script.
     run = verbs.add_parser("_run")
     run.add_argument("run_dir", type=Path)
@@ -467,6 +474,14 @@ def main():
         deadlines.event("checking request paths", getattr(options, "source", configuration))
         # Scratch holds only active work. Completed records are immutable files
         # in Alluxio; FSS is reserved for code and configuration.
+        if options.verb == "usage":
+            if "lustre" not in site.roots:
+                raise ValueError("the gbi module needs a Lustre scratch root for usage")
+            if options.depth < 1 or options.limit < 1:
+                raise ValueError("usage depth and limit must be positive")
+            usage.print_report(usage.report(site, options.path, options.depth, options.limit),
+                               options.depth, options.limit)
+            return 0
         if "lustre" not in site.roots or "alluxio" not in site.roots:
             raise ValueError("the gbi module needs Lustre scratch and Alluxio archive roots")
         home = site.roots["lustre"] / ".gbi"

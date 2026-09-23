@@ -6,6 +6,7 @@ verified sources. Alluxio originals stay unless --delete-source is explicit.
   gbi data copy SOURCE DESTINATION
   gbi data status JOB_ID --watch
   gbi data roots
+  gbi data usage [PATH] --depth N --limit N
 ]])
 whatis("Name: gbi")
 whatis("Version: {{{INSTALL_VERSION}}}")
