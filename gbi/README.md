@@ -411,7 +411,8 @@ or unavailable command/configuration. Detaching is successful and returns 0.
 The existing module harness installs in-tree source. Ordinary transfers need no
 image or Prefect change; `--prefect` additionally requires the maintained login
 broker and catalogue configuration. Python 3.9+ must be available on every selected node. The module loads
-the pinned rclone dependency automatically.
+the pinned rclone dependency automatically, and the optional `lfs/2.16.1` module
+when it is installed so `gbi data usage` can read live Lustre quotas.
 
 ```bash
 make rclone
@@ -456,8 +457,8 @@ Object Storage, preserving its default source-retention policy. Other mounted
 filesystems use ordinary POSIX transfer behavior. On systems without Linux
 mount information, configured personal roots provide the storage-type hints.
 
-Local tests use real rclone and fault injection. Set `TMPDIR` inside your
-workspace before running them:
+Local tests use real rclone and fault injection. Keep `TMPDIR` in the system
+temporary directory; retain useful test reports in the workspace:
 
 ```bash
 PYTHONPATH=gbi/src/lib python3 -B -m unittest discover -s gbi/tests -v
