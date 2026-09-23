@@ -133,6 +133,33 @@ class FormatSelection(unittest.TestCase):
         self.assertTrue(candidate["format_target"].endswith("dependency.gbi.tar"))
         self.assertEqual(selection.dry_run(configured, self.site)["candidates"][0]["restore_relative"], "dependency")
 
+    def test_packing_dry_run_summarizes_incomplete_large_preview(self):
+        policy = packing.PackingPolicy(10, 3, 100, 100, 10)
+        configured = self.configured(packing_policy=policy)
+        planned = {
+            "version": 1, "complete": False, "visited_entries": 100,
+            "budget_exhausted": "entry budget exhausted", "candidates": [{
+                "source_relative": "candidate", "archive_relative": "candidate.gbi.tar",
+                "restore_relative": "candidate", "bytes": 30,
+            }],
+            "unqualified": [{
+                "source_relative": f"directory-{index}", "selected_entries": 2,
+                "regular_files": 2, "bytes": 20, "reasons": ["entry budget exhausted"],
+            } for index in range(1000)],
+            "loose_selected": [f"loose-{index}" for index in range(10000)],
+            "totals_note": "lower bounds", "staging_required": False,
+        }
+        with patch.object(selection.packing, "plan", return_value=planned):
+            preview = selection.dry_run(configured, self.site)
+        self.assertEqual(len(preview["candidates"]), 1)
+        self.assertEqual(preview["unqualified_summary"]["directory_count"], 1000)
+        self.assertEqual(preview["unqualified_summary"]["selected_entries_lower_bound"], 2000)
+        self.assertEqual(preview["loose_selected_summary"]["entry_count"], 10000)
+        self.assertLess(len(str(preview)), 10000)
+        self.assertIn("lower bounds", preview["preview_notice"])
+        self.assertNotIn("unqualified", preview.keys())
+        self.assertNotIn("loose_selected", preview.keys())
+
     def test_excluded_entries_count_toward_probe_budget(self):
         for index in range(10):
             (self.source / f"file-{index}.bin").write_text("a")
