@@ -29,6 +29,8 @@ make parallel-tar
 make go
 make rclone
 make gbi
+make java
+make nextflow
 # NO LFS on macOS -- Lustre client utilities are linux/amd64 only
 
 # Buuild tests potentially take more time => leave them as optional. Assumed to
