@@ -98,6 +98,11 @@ class Prefect(unittest.TestCase):
     def test_https_fallback_only_handles_unavailable_socket(self):
         request = prefect.prepare(self.options(), self.site)
         response = {"version": 1, "state": "SCHEDULED", "run_id": "74ec9296-0446-4a46-a428-f004e556f066"}
+        with patch("gbi_data.prefect._exchange_socket", side_effect=prefect._BrokerUnavailable("missing")), \
+             patch("gbi_data.prefect._exchange_https") as https:
+            with self.assertRaisesRegex(ValueError, "login node.*No request was sent"):
+                prefect.exchange(self.site, request)
+        https.assert_not_called()
         self.site.values["prefect_url"] = "https://broker.example/prefect"
         with patch("gbi_data.prefect._exchange_socket", side_effect=prefect._BrokerUnavailable("missing")), \
              patch("gbi_data.prefect._exchange_https", return_value=response) as https:

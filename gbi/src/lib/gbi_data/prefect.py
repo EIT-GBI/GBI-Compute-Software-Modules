@@ -177,7 +177,8 @@ def exchange(site, request):
     except _BrokerUnavailable as error:
         url = _https_url(site)
         if not url:
-            raise ValueError(f"Prefect request not confirmed: {error}. Use status or retry with the same transfer ID") from error
+            raise ValueError("Prefect broker unavailable on this node. Run this command on the login node "
+                             "or contact cluster support. No request was sent; retry with the same transfer ID") from error
         deadlines.event("local Prefect broker unavailable; using HTTPS transport", url)
         try:
             return _exchange_https(url, request)
