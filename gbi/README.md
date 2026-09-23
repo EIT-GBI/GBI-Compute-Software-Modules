@@ -261,6 +261,11 @@ Use `--prefect` explicitly when you want the maintained migration flows to
 handle a personal-storage transfer. The CLI never selects Prefect based on size.
 Ordinary transfers keep their automatic foreground/Slurm behavior.
 
+The Prefect flow name "archive" means moving files to Object Storage. It does
+not create tar/gzip archives: each selected file remains a separate object.
+Use the ordinary transfer route for `--pack` or `--pack-small`; those options
+cannot currently be combined with `--prefect`.
+
 ```bash
 gbi data copy /your/lustre/experiment /your/alluxio/experiment --prefect --dry-run
 gbi data move /your/lustre/experiment /your/alluxio/experiment --prefect --wait
