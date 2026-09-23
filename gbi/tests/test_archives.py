@@ -206,6 +206,40 @@ class Archives(unittest.TestCase):
                 archives.cleanup_source(self.source, manifest, stored)
         self.assertEqual(len(list(self.source.iterdir())), 1)
 
+    def test_empty_directory_cleanup_checks_archive_after_source_preflight(self):
+        (self.source / "empty").mkdir()
+        stored = self.base / "stored.gbi.tar"
+        with stored.open("wb") as output:
+            manifest = archives.pack(self.source, output)
+        original = archives.verify_source
+
+        def verify_then_change(source, expected):
+            original(source, expected)
+            stored.write_bytes(b"replaced after readback")
+
+        with patch.object(archives, "verify_source", side_effect=verify_then_change):
+            with self.assertRaisesRegex(archives.ArchiveError, "archive changed"):
+                archives.cleanup_source(self.source, manifest, stored)
+        self.assertTrue((self.source / "empty").is_dir())
+
+    def test_cleanup_checks_archive_between_directory_removals(self):
+        (self.source / "first").mkdir()
+        (self.source / "second").mkdir()
+        stored = self.base / "stored.gbi.tar"
+        with stored.open("wb") as output:
+            manifest = archives.pack(self.source, output)
+        original = os.rmdir
+
+        def remove_then_change(path, *args, **kwargs):
+            result = original(path, *args, **kwargs)
+            stored.write_bytes(b"replaced during directory cleanup")
+            return result
+
+        with patch.object(archives.os, "rmdir", side_effect=remove_then_change):
+            with self.assertRaisesRegex(archives.ArchiveError, "archive changed"):
+                archives.cleanup_source(self.source, manifest, stored)
+        self.assertEqual(len(list(self.source.iterdir())), 1)
+
     def test_new_source_entry_retained(self):
         (self.source / "a").write_text("a")
         stream, manifest = self.packed()

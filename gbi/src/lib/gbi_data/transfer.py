@@ -133,8 +133,14 @@ def transfer(task):
     source_root, target_root = Path(task["source_root"]), Path(task["target_root"])
     destination = target / source.relative_to(selection_root) if task.get("directory", False) else target
     if task.get("empty", False):
+        source_before = fingerprint(source)
         ensure_parent(destination / ".placeholder", target_root)
+        destination_before = fingerprint(destination)[:3]
         if task["delete"] and source != selection_root:
+            check_parent(source, source_root)
+            check_parent(destination, target_root)
+            if fingerprint(source) != source_before or fingerprint(destination)[:3] != destination_before:
+                raise ValueError("empty directory source or destination changed; source kept")
             source.rmdir()
         return {"empty": True}
     initial = fingerprint(source)
@@ -310,6 +316,9 @@ def transfer(task):
             parent = source.parent
             boundary = Path(task["selection_root"])
             while parent != boundary and boundary in parent.parents:
+                check_parent(target, target_root)
+                if fingerprint(target) != target_before:
+                    raise ValueError("destination changed during directory cleanup; remaining source directories kept")
                 try:
                     parent.rmdir()
                 except OSError:

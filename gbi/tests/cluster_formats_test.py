@@ -18,6 +18,7 @@ import uuid
 
 from cluster_benchmark import digest
 from packing_benchmark import run_cli
+import gbi_data
 from gbi_data.storage import Site
 
 
@@ -141,8 +142,13 @@ def main():
     report_path = roots["lustre"] / "report.json"
     report = {"slurm_job": os.environ["SLURM_JOB_ID"], "uid": os.getuid(),
               "roots": {key: str(value) for key, value in roots.items()}, "results": []}
-    code = {str(path): digest(path) for path in Path(__file__).resolve().parents[1].joinpath("src/lib/gbi_data").glob("*.py")}
+    package = Path(gbi_data.__file__).resolve().parent
+    code = {str(path): digest(path) for path in package.glob("*.py")}
+    if not code:
+        raise AssertionError("loaded package has no source files to verify")
     report["code_sha256"] = code
+    report["version"] = gbi_data.__version__
+    report["package_path"] = str(package)
 
     def execute(name, arguments, operation="copy", expected_receipts=1):
         row = {"case": name, **run_cli(arguments, options.site_conf, roots["lustre"] / (name + ".log"),

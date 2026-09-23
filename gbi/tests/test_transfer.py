@@ -56,6 +56,43 @@ class Transfers(unittest.TestCase):
         transfer({**self.task, "delete": False})
         self.assertEqual(self.source.read_bytes(), self.target.read_bytes())
 
+    def test_empty_source_directory_retained_if_destination_replaced(self):
+        source = self.source_root / "empty"
+        source.mkdir()
+        destination = self.target_root / "empty"
+        source_reads = 0
+
+        def observe(path):
+            nonlocal source_reads
+            result = fingerprint(path)
+            if path == source:
+                source_reads += 1
+                if source_reads == 2:
+                    destination.rename(self.target_root / "old-empty")
+                    destination.mkdir()
+            return result
+
+        with patch("gbi_data.transfer.fingerprint", side_effect=observe):
+            with self.assertRaisesRegex(ValueError, "empty directory source or destination changed"):
+                transfer({**self.task, "source": str(source), "target": str(destination), "empty": True})
+        self.assertTrue(source.is_dir())
+
+    def test_source_parent_retained_if_destination_changes_after_file_unlink(self):
+        from gbi_data.transfer import receipt
+        parent = self.source_root / "parent"
+        parent.mkdir()
+        self.source.rename(parent / "file.dat")
+
+        def receipt_then_change(path, record):
+            receipt(path, record)
+            if record["event"] == "deleted":
+                self.target.write_bytes(b"changed after file cleanup")
+
+        with patch("gbi_data.transfer.receipt", side_effect=receipt_then_change):
+            with self.assertRaisesRegex(ValueError, "destination changed during directory cleanup"):
+                transfer({**self.task, "source": str(parent / "file.dat")})
+        self.assertTrue(parent.is_dir())
+
     def test_different_destination_is_never_overwritten(self):
         self.target.write_bytes(b"existing research")
         with self.assertRaisesRegex(ValueError, "both copies kept"):

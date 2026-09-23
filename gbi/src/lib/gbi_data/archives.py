@@ -530,6 +530,7 @@ def cleanup_source(source, manifest, stored_archive, destination_unchanged=None)
                 now = os.stat(name, dir_fd=parent, follow_symlinks=False)
                 if [now.st_dev, now.st_ino, now.st_mode] != evidence[entry["path"]][:3]:
                     raise ArchiveError("selected source directory changed; directory kept")
+                destination_unchanged()
                 try:
                     os.rmdir(name, dir_fd=parent)
                 except OSError as error:

@@ -117,3 +117,13 @@ These single repetitions support a conservative opt-in packing policy; they
 do not establish universal thresholds. Shared-route timings varied between
 runs. Uncompressed tar reduces file-count overhead but adds archive metadata:
 40 × 4 KiB occupied 235,520 archive bytes for 163,840 payload bytes.
+
+For a smaller installed-version check, run `cluster_formats_test.py --site-conf
+"$GBI_DATA_SITE_CONF" --case selective` inside an existing allocation. Keep
+`cluster_benchmark.py` and `packing_benchmark.py` alongside the helper. Load
+the desired `gbi` module and set `PYTHONPATH` to that installation's `lib`
+directory when invoking the Python helper directly; the `gbi` wrapper normally
+sets this itself. The report records the actual imported package path,
+version and source hashes. This case checks a no-write dry run, selective
+packing with an excluded file and a loose larger file, then mixed restore to
+FSS with independent parity. All source fixtures are retained.

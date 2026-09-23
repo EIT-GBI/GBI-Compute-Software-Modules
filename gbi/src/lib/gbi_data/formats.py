@@ -279,6 +279,7 @@ def _remove_chunk_source(store, snapshot, source_root, destination_unchanged):
         destination_unchanged()
         path.unlink()
     for directory in (store / ".gbi" / "parts", store / ".gbi", store):
+        destination_unchanged()
         try:
             directory.rmdir()
         except OSError:

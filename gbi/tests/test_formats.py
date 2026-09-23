@@ -281,6 +281,26 @@ class Formats(unittest.TestCase):
                                    format_target=str(restored)))
         self.assertTrue((store / ".gbi" / "parts" / "00000000.part").exists())
 
+    def test_chunk_cleanup_checks_destination_before_container_removal(self):
+        store = self.target_root / "chunks"
+        transfer(self.task("chunk", source=str(self.source / "a.txt"), format_target=str(store), chunk_size=2))
+        restored = self.target_root / "restored"
+        parts = store / ".gbi" / "parts"
+        original = Path.unlink
+
+        def unlink_then_change(path, *args, **kwargs):
+            result = original(path, *args, **kwargs)
+            if path.parent == parts and not list(parts.iterdir()):
+                restored.write_text("changed after final part removal")
+            return result
+
+        with patch.object(Path, "unlink", unlink_then_change):
+            with self.assertRaisesRegex(ValueError, "destination changed"):
+                transfer(self.task("restore_chunks", source=str(store), target_kind="fss", delete=True,
+                                   format_target=str(restored)))
+        self.assertTrue(parts.is_dir())
+        self.assertNotIn("deleted", [record["event"] for record in self.records()])
+
     def test_incomplete_staging_rebuilt_only_for_unchanged_owned_source(self):
         packed = self.task(chunk_size=4096)
 
