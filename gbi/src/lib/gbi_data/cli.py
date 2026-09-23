@@ -238,6 +238,7 @@ def run(run_dir, site, home):
     for signum in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
         signal.signal(signum, lambda *_: stopped.set())
     started, last_publish, discovery_wait = time.monotonic(), 0.0, 0.0
+    discovery_progress = None
     progress = {"phase": "running", "files": 0, "bytes": 0, "freed": 0, "failed": 0,
                 "discovered_files": 0, "discovered_bytes": 0, "discovery_complete": False,
                 "elapsed": 0, "active": 0, "active_bytes": 0,
@@ -318,10 +319,12 @@ def run(run_dir, site, home):
                         if event is None:
                             progress_info = getattr(discovery, "progress", None)
                             last_progress = progress_info()[1] if callable(progress_info) else None
-                            if isinstance(last_progress, (int, float)):
-                                discovery_wait = max(0, time.monotonic() - last_progress)
-                            else:
-                                discovery_wait += time.monotonic() - waiting_since
+                            now = time.monotonic()
+                            discovery_wait += now - waiting_since
+                            if isinstance(last_progress, (int, float)) and last_progress != discovery_progress:
+                                # Only time spent waiting with worker capacity counts.
+                                discovery_wait = max(0, now - max(waiting_since, last_progress))
+                            discovery_progress = last_progress
                         else:
                             discovery_wait = 0
                         if discovery_wait >= float(site.values["discovery_timeout"]):
