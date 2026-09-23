@@ -1,0 +1,3 @@
+the Lustre client utilities: lfs, lctl, lfs_migrate, llstat
+userspace half of the Lustre client, unpacked from Whamcloud's Ubuntu 24.04 lustre-client-utils deb (linux/amd64 only) plus the libnl-genl-3 runtime library the GBI slurm images do not ship; the kernel half lives on the host, so these tools only do anything where Lustre is mounted -- no MODE=build, since compiling them needs the matching Lustre kernel ABI headers and a dozen -dev packages
+runtime needs glibc >= 2.38 (Ubuntu 24.04): the slurm login and worker images qualify, the Ubuntu 22.04 OOD host does not (it has its own lustre-client-utils 2.15.5)

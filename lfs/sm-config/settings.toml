@@ -1,0 +1,31 @@
+[env]
+# Whamcloud's Ubuntu 24.04 client build: lustre-client-utils is pure userspace
+# (lfs, lctl, liblustreapi, liblnetconfig) -- the kernel modules are the host's.
+SOURCE_PREFIX = "https://downloads.whamcloud.com/public/lustre/lustre-{INSTALL_VERSION}/ubuntu2404/client"
+# liblnetconfig (linked by lfs and lctl) needs libnl-genl-3, which the GBI slurm
+# login/worker images do not carry -- vendor Ubuntu noble's copy into lib/.
+LIBNL_GENL_SOURCE = "http://archive.ubuntu.com/ubuntu/pool/main/libn/libnl3/libnl-genl-3-200_3.7.0-0.3build1.1_amd64.deb"
+VERSION      = "{INSTALL_VERSION}"
+VARIANT      = "{INSTALL_VERSION_VARIANT}"
+RUNTIME_OS   = "{RUNTIME_OS}"
+RUNTIME_ARCH = "{RUNTIME_ARCH}"
+
+[install]
+versions = ["2.16.1"]
+prefix = "{SITE_DESTINATION}/{STAGE_DIR}"
+# note: this is Lua regex: you will need to escape - and + (using %)
+format = "^downloaded$"
+# (optional) relocate after install
+destination = "{SITE_DESTINATION}/{INSTALL_VERSION_VARIANT}"
+stage = true
+
+[module]
+PATH = "{INSTALL_DIR}"
+INSTALL_VERSION = "{INSTALL_VERSION}"
+
+[post]
+# toggles mandatory relocate if `stage` and `clean` are true. If the install
+# script already relocates the package, then we can set `safe = false`
+safe = true
+# delete staging area after successful install
+clean = true

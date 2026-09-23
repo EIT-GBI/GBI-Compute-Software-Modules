@@ -1,0 +1,5 @@
+name = "lfs"
+
+relocate = true
+destination = "{SM_ROOT}/lfs"
+modules = "{SM_ROOT}/modules"
