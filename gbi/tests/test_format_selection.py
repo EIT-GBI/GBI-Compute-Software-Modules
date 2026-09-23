@@ -143,8 +143,12 @@ class FormatSelection(unittest.TestCase):
                 "restore_relative": "candidate", "bytes": 30,
             }],
             "unqualified": [{
-                "source_relative": f"directory-{index}", "selected_entries": 2,
-                "regular_files": 2, "bytes": 20, "reasons": ["entry budget exhausted"],
+                # A root row includes its nested directory rollups; these rows
+                # must not be summed into a purported total.
+                "source_relative": "." if index == 0 else ("nested" if index == 1 else f"directory-{index}"),
+                "regular_files": 2, "bytes": 20,
+                "reasons": (["entry budget exhausted", "discovery budget exhausted during reconciliation"]
+                            if index == 0 else ["entry budget exhausted"]),
             } for index in range(1000)],
             "loose_selected": [f"loose-{index}" for index in range(10000)],
             "totals_note": "lower bounds", "staging_required": False,
@@ -153,7 +157,8 @@ class FormatSelection(unittest.TestCase):
             preview = selection.dry_run(configured, self.site)
         self.assertEqual(len(preview["candidates"]), 1)
         self.assertEqual(preview["unqualified_summary"]["directory_count"], 1000)
-        self.assertEqual(preview["unqualified_summary"]["selected_entries_lower_bound"], 2000)
+        self.assertEqual(preview["unqualified_summary"]["reason_counts"]["discovery budget"], 1000)
+        self.assertNotIn("selected_entries_lower_bound", preview["unqualified_summary"])
         self.assertEqual(preview["loose_selected_summary"]["entry_count"], 10000)
         self.assertLess(len(str(preview)), 10000)
         self.assertIn("lower bounds", preview["preview_notice"])

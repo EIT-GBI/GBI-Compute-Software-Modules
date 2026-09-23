@@ -42,9 +42,10 @@ def _packing_preview(result):
                 return label
         return reason
 
-    reasons = Counter(reason_group(reason)
+    reasons = Counter(group
                       for item in unqualified
-                      for reason in (item.get("reasons") or ["discovery incomplete"]))
+                      for group in {reason_group(reason) for reason in
+                                    (item.get("reasons") or ["discovery incomplete"])})
     reason_counts = dict(sorted(reasons.items(), key=lambda pair: (-pair[1], pair[0])))
     if len(reason_counts) > 20:
         kept = dict(list(reason_counts.items())[:19])
@@ -53,9 +54,6 @@ def _packing_preview(result):
 
     result["unqualified_summary"] = {
         "directory_count": len(unqualified),
-        "selected_entries_lower_bound": sum(item.get("selected_entries", 0) for item in unqualified),
-        "regular_files_lower_bound": sum(item.get("regular_files", 0) for item in unqualified),
-        "apparent_bytes_lower_bound": sum(item.get("bytes", 0) for item in unqualified),
         "reason_counts": reason_counts,
         "examples": [item.get("source_relative") for item in unqualified[:12]],
     }
