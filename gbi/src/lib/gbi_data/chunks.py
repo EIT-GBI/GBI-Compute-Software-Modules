@@ -329,7 +329,7 @@ def write_chunks(source, store, *, state, chunk_size=DEFAULT_CHUNK_SIZE,
                 input_file.seek(index * chunk_size)
                 _write_part(input_file, path, part, journal, journal_path)
                 combined = _verify(path, part, settle_seconds=settle_seconds, combined=combined)
-            verified_parts.append((path, fingerprint(path)))
+            verified_parts.append((path, fingerprint(path), part))
             verified_bytes += part["size"]
             if progress:
                 progress({"parts": index + 1, "bytes": verified_bytes,
@@ -340,8 +340,16 @@ def write_chunks(source, store, *, state, chunk_size=DEFAULT_CHUNK_SIZE,
         if (fingerprint(source) != before or final_digest != digest or
                 final_size != before[3] or combined.hexdigest() != digest):
             raise ValueError("source changed or full chunk checksum differs; source retained")
-        if any(fingerprint(path) != identity for path, identity in verified_parts):
-            raise ValueError("verified chunk changed before completion; source retained")
+        for path, identity, part in verified_parts:
+            try:
+                # A same-size rewrite can preserve a coarse filesystem mtime.
+                # Re-read the checksum before publishing completion rather than
+                # trusting the metadata fingerprint alone.
+                if fingerprint(path) != identity:
+                    raise ValueError("fingerprint changed")
+                _part_digest(path, part)
+            except (OSError, ValueError) as error:
+                raise ValueError("verified chunk changed before completion; source retained") from error
         _remote_json(marker, _completion(manifest, encoded), journal, journal_path, settle_seconds)
         return {**manifest, "state": "complete"}
 
