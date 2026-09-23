@@ -29,6 +29,7 @@ make parallel-tar
 make go
 make rclone
 make gbi
+# NO LFS on macOS -- Lustre client utilities are linux/amd64 only
 
 # Buuild tests potentially take more time => leave them as optional. Assumed to
 # be true for heavy testing

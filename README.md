@@ -297,9 +297,12 @@ build dependencies from the `module load` lines of its `install.sh`.
 | `go` | the Go programming language toolchain | no — bootstrapping needs an existing go |
 | [`gbi`](gbi/README.md) | verified HPC data movement; immediate foreground transfers and automatic Slurm for bulk work | no — in-tree Python source; needs Python 3.9+ and rclone |
 | `rclone` | rsync for cloud storage | no — upstream ships static go binaries for every platform |
+| `lfs` | the Lustre client utilities: `lfs`, `lctl`, `lfs_migrate`, `llstat` — Whamcloud's Ubuntu 24.04 `lustre-client-utils` deb (linux/amd64 only) plus the `libnl-genl-3` library the slurm images lack | no — the tools are useless without the host's Lustre kernel client, and compiling them needs its ABI headers |
 
 Upstream `eza` and `ncdu` ship no macOS binaries, so their default-mode recipes
 fail fast on darwin with a pointer to `make <target> MODE=build`.
+`lfs` is linux/amd64 only — there is no Lustre client for macOS — and fails
+fast everywhere else.
 
 Three more targets are **opt-in** — valid for `make <target>` and `make clean`,
 but skipped by `make all`, since they are either large or only interesting as
