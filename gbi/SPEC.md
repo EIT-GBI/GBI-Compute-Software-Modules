@@ -104,7 +104,7 @@ No accumulated FSS log store is introduced.
 The outer watchdog uses a dedicated process/event-pipe boundary for initial
 site/path resolution, state I/O and history. Defaults are a 120-second bootstrap
 before configuration is readable, 120-second mount/state waiting, 120 seconds
-waiting for discovery entries while capacity is available, and 30 minutes
+without a discovery entry or directory-scan progress while capacity is available, and 30 minutes
 without finished history-file work. Per-file and Alluxio settling deadlines
 remain separate. Site settings control the configured values.
 

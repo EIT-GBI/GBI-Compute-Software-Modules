@@ -246,6 +246,7 @@ def run(run_dir, site, home):
     for signum in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
         signal.signal(signum, lambda *_: stopped.set())
     started, last_publish, discovery_wait = time.monotonic(), 0.0, 0.0
+    discovery_progress = None
     progress = {"phase": "running", "files": 0, "bytes": 0, "freed": 0, "failed": 0,
                 "discovered_files": 0, "discovered_bytes": 0, "discovery_complete": False,
                 "elapsed": 0, "active": 0, "active_bytes": 0,
@@ -254,7 +255,7 @@ def run(run_dir, site, home):
     iterator = iter(selected) if selected is not None else None
     discovery = None if selected is not None else stream_entries(
         source, site, source_root, specification["include"], exclusions=specification.get("exclude", []),
-        **({"iterator_factory": lambda on_error: format_selection.iter_units(specification, site, on_error)}
+        **({"iterator_factory": lambda on_error, visit: format_selection.iter_units(specification, site, on_error, visit)}
            if specification.get("format_units") else {}))
     file_specification = {key: value for key, value in specification.items() if key != "selection"}
     pending = {}
@@ -323,7 +324,17 @@ def run(run_dir, site, home):
                     else:
                         waiting_since = time.monotonic()
                         event = discovery.get(0.1 if pending else 0.5)
-                        discovery_wait = discovery_wait + time.monotonic() - waiting_since if event is None else 0
+                        if event is None:
+                            progress_info = getattr(discovery, "progress", None)
+                            last_progress = progress_info()[1] if callable(progress_info) else None
+                            now = time.monotonic()
+                            discovery_wait += now - waiting_since
+                            if isinstance(last_progress, (int, float)) and last_progress != discovery_progress:
+                                # Only time spent waiting with worker capacity counts.
+                                discovery_wait = max(0, now - max(waiting_since, last_progress))
+                            discovery_progress = last_progress
+                        else:
+                            discovery_wait = 0
                         if discovery_wait >= float(site.values["discovery_timeout"]):
                             raise ValueError(f"discovery deadline exceeded at {source}; "
                                              "inspect receipts before retrying; mount I/O may still be unresolved")

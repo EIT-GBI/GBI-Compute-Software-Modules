@@ -108,6 +108,69 @@ class Deadlines(unittest.TestCase):
             self.assertEqual(source.read_bytes(), b"unverified")
             self.assertFalse(target.exists())
 
+    def test_coordinator_distinguishes_scan_progress_from_stall_and_busy_workers(self):
+        from gbi_data import selection
+
+        for scenario in ("scanning", "stalled", "busy"):
+            with self.subTest(scenario=scenario), tempfile.TemporaryDirectory() as directory:
+                base = Path(directory).resolve()
+                user = pwd.getpwuid(os.getuid()).pw_name
+                for name in ("lustre", "fss", "bucket"):
+                    (base / name / user).mkdir(parents=True)
+                config = base / "site.conf"
+                config.write_text("".join(f"{key}_root = {base / key}\n" for key in ("lustre", "fss", "bucket"))
+                                  + "discovery_timeout = 0.1\njobs = 1\n")
+                site = Site(config)
+                source = site.roots["lustre"] / "source"
+                source.write_bytes(b"retained")
+                target = site.roots["fss"] / "target"
+                options = cli.parser().parse_args(["data", "copy", str(source), str(target)])
+                request = {**cli.plan(options, site), "reader": "native", "execution": "allocation"}
+                run_dir = base / "run"
+                run_dir.mkdir()
+                (run_dir / "request.json").write_text(json.dumps(request))
+
+                def iterator(_on_error, visit):
+                    if scenario == "scanning":
+                        for _ in range(60):
+                            visit()  # Traversal advances through excluded/nonmatching entries.
+                            time.sleep(0.02)
+                    else:
+                        time.sleep(1)
+                    yield source, False
+
+                if scenario == "busy":
+                    from unittest.mock import Mock
+                    discovery = Mock()
+                    discovery.progress.return_value = (1, time.monotonic())
+                    events = iter([("entry", (source, False), None), None, ("done", None, None)])
+
+                    def get(_timeout):
+                        time.sleep(0.02)
+                        return next(events)
+
+                    discovery.get.side_effect = get
+                else:
+                    discovery = selection.stream_entries(source, site, source.parent, [], iterator_factory=iterator)
+                captured = {}
+
+                def keep_history(_run, _site, _state, _rclone, progress, *_args):
+                    captured.update(progress)
+                    return "test history"
+
+                def slow_worker(*_args):
+                    time.sleep(0.3)  # Discovery cannot time out while its worker capacity is full.
+                    return {"bytes": 8, "deleted": False}
+
+                with patch("gbi_data.cli.stream_entries", return_value=discovery), \
+                     patch("gbi_data.cli.supervise", side_effect=slow_worker), \
+                     patch("gbi_data.cli.publish_history", side_effect=keep_history), \
+                     contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                    self.assertEqual(cli.run(run_dir, site, base / "home"), 1 if scenario == "stalled" else 0)
+                self.assertEqual(captured["discovery_complete"], scenario != "stalled")
+                self.assertEqual(captured["freed"], 0)
+                self.assertEqual(source.read_bytes(), b"retained")
+
     def test_finished_worker_is_not_signalled_again(self):
         script = ("import time; from gbi_data import deadlines; "
                   "deadlines.event(worker_started=99999999); "

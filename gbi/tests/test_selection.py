@@ -7,6 +7,7 @@ import pwd
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 
 from gbi_data import cli, selection
@@ -76,6 +77,28 @@ class Selection(unittest.TestCase):
             self.assertEqual(self.names(self.specification("--include", "*.absent"), streamed), set())
         (self.source / "empty").mkdir()
         self.assertEqual(self.names(self.specification("--exclude", "*")), {"empty"})
+
+    def test_stream_progress_counts_nonmatching_entries(self):
+        for number in range(250):
+            (self.source / f"scan-{number}.log").write_text("ignored")
+        stream = selection.stream_entries(self.source, self.site, self.source, ["*.absent"])
+        self.addCleanup(stream.stop)
+        self.assertEqual(stream.get(2)[0], "done")
+        visited, _ = stream.progress()
+        self.assertGreaterEqual(visited, 250)
+
+    def test_stream_progress_stops_advancing_when_iterator_stalls(self):
+        def stalled(_on_error, visit):
+            visit()
+            time.sleep(0.2)
+            yield self.source / "never-reached", False
+
+        stream = selection.stream_entries(self.source, self.site, self.source, [], iterator_factory=stalled)
+        self.addCleanup(stream.stop)
+        self.assertIsNone(stream.get(0.05))
+        visited, last_progress = stream.progress()
+        self.assertEqual(visited, 1)
+        self.assertLess(last_progress, time.monotonic())
 
     def test_explicit_file_and_symlink_use_the_shared_rule(self):
         for name in ("model.pt", "link.pt", "skip.log"):
