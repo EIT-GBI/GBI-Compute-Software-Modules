@@ -1,7 +1,7 @@
-# GBI data CLI specification — 0.4.0 candidate
+# GBI data CLI specification — 0.4.1 candidate
 
 This describes the candidate implementation contract. It does not claim that
-0.4.0 or its optional infrastructure broker is released, deployed or accepted
+0.4.1 or its optional infrastructure broker is released, deployed or accepted
 on a production storage route. [Architecture](ARCHITECTURE.md) maps the contract
 to the current modules; [README](README.md) is the command guide.
 
@@ -108,6 +108,7 @@ waiting for discovery entries while capacity is available, and 30 minutes
 without finished history-file work. Per-file and Alluxio settling deadlines
 remain separate. Site settings control the configured values.
 
+
 Timeout means bounded command failure, not proof that kernel I/O stopped.
 Report phase/path, last observed verified/deleted counts, retained records and
 unresolved workers. Preserve lock ownership; do not start a competing writer,
@@ -120,6 +121,20 @@ and cover discovery, copy/close/readback, packing/staging/chunks/extraction and
 history. Unknown totals have no invented percentage. Foreground Ctrl-C stops
 work; Slurm/Prefect viewer Ctrl-C detaches. Scheduler completion without a final
 ordinary-transfer summary is not accepted as data completion.
+
+## Read-only Lustre usage
+
+`gbi data usage [PATH]` reads the invoking user's owner-scoped SQLite snapshot
+from their configured FSS `.gbi/usage.sqlite3` publication. It never performs
+a recursive filesystem scan. The optional path must remain below the user's
+canonical Lustre root, and `--depth`/`--limit` control indexed directory
+drilldown. The output keeps the live whole-filesystem UID quota from `lfs`
+separate from cached apparent logical bytes and inventory entries.
+
+The publication requires schema version, owner UID, canonical root,
+`complete_input`, status, source `snapshot_at`, and `published_at` metadata.
+Incomplete or stale results remain visibly labelled; no failed publication
+replaces the previous result.
 
 ## Explicit Prefect contract
 

@@ -12,6 +12,7 @@ DEFAULTS = {
     "partition": "", "time_limit": "1-00:00:00", "cpus": "2", "mem": "4G",
     "jobs": "4", "file_timeout": "86400", "verify_settle_seconds": "1200",
     "rclone_bin": "rclone", "reserved_names": "",
+    "lfs_bin": "lfs", "usage_db": "",
     "inline_bytes": "8589934592",
     "native_bytes": "8388608", "native_files": "32",
     "inline_scan_entries": "100000", "inline_probe_seconds": "5",
