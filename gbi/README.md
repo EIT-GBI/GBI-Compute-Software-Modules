@@ -237,10 +237,11 @@ Both functions **wait for completion** and stream progress to your Slurm log.
 They return `subprocess.CompletedProcess` on success and raise
 `subprocess.CalledProcessError` on a nonzero CLI exit. Output is not buffered or
 parsed into a transfer ID. A missing executable raises `FileNotFoundError`.
-The SDK calls its matching installed CLI, inheriting your identity and existing
-Slurm allocation; it does not submit another Slurm job from inside that
-allocation. Outside Slurm the CLI may queue larger transfers, and Python waits
-for them too. Interrupting a wait for a submitted job does not cancel that job.
+The SDK calls its matching installed CLI. Ordinary transfers inherit your
+identity and reuse your existing Slurm allocation. Outside Slurm the CLI may
+queue larger transfers, and Python waits for them too. The explicit Prefect
+route below submits a separate managed migration. Interrupting a wait for a
+submitted job does not cancel that job.
 
 Call once per job, for example on rank zero after all training workers finish
 writing, and leave enough allocation time for packing and verification. Give
@@ -248,9 +249,97 @@ each new checkpoint snapshot a new archive name: existing differing archives
 are not overwritten. The SDK does not change verification, receipts or deletion
 behavior, and it never retries a failed command automatically.
 
-`prefect=True` selects the existing personal-file migration route and also waits
-for completion. That route does not create archives and cannot be combined with
-packing, chunks, exclusions or deletion of Object Storage originals.
+### Submit a Prefect migration from Python
+
+Use `prefect=True` to select the direct Object Storage transfer route. **Run
+the submitting Python script on a login node with the GBI Prefect broker.**
+The broker is a local service; loading the module on a compute node does not
+make that login-node service available there. To archive from inside a Slurm
+training job today, use the ordinary SDK calls above without `prefect=True`.
+
+Start Python after loading the module:
+
+```bash
+module load gbi
+gbi data roots  # shows your personal Lustre, FSS and Object Storage paths
+python migrate.py
+```
+
+For example, put this in `migrate.py`, replacing the example paths with your
+own roots. This copies the whole finished-run directory and keeps its originals:
+
+```python
+from gbi import data
+
+source = "/your/lustre/finished-run"
+stored = "/your/alluxio/finished-run"
+
+data.copy(source, stored, prefect=True)
+```
+
+For a move, replace that last line with:
+
+```python
+data.move(source, stored, prefect=True)
+```
+
+A move removes unchanged filesystem originals after verified readback and
+receipt publication within the same migration. This happens in batches; a
+large-file batch can take time before its first deletion. No separate cleanup
+command is needed. Use only finished data that training is no longer writing.
+
+To restore the directory to its original relative path, keeping Object Storage
+originals:
+
+```python
+data.copy(stored, source, prefect=True)
+```
+
+These calls **wait until the Prefect flow finishes** and print its state, the
+GBI transfer ID and the Prefect run ID. They submit a separate managed transfer;
+they do not reuse a training allocation or run bulk copying on the login node.
+No Prefect UI, `pip install prefect`, API token or Object Storage credential is
+needed in your script. A failed flow raises `subprocess.CalledProcessError`.
+The SDK does not return a future or automatically retry. If you interrupt the
+wait, the submitted migration continues; reconnect using the printed ID:
+
+```bash
+gbi data status TRANSFER_ID --watch
+```
+
+For a nonblocking submission from a shell script, use the CLI with output
+redirected and omit `--wait`:
+
+```bash
+gbi data copy /your/lustre/finished-run /your/alluxio/finished-run --prefect >migration.log 2>&1
+```
+
+The supported options and path rules are:
+
+| Option or path | Prefect behavior |
+| --- | --- |
+| `prefect=True` | Submit a managed migration through the local login broker |
+| `dry_run=True` | Preview routing and deletion intent without submitting; does not verify broker availability or scan the data |
+| `include="*.pt"` | Select matching filenames recursively; a list accepts multiple patterns |
+| `pack`, `pack_small`, `chunk_size`, `exclude` | Unsupported; use an ordinary SDK transfer for these |
+| `delete_source=True` | Unsupported; Object Storage originals stay in place |
+| Sources/destinations | One personal Lustre or FSS path and one personal Object Storage path |
+| FSS archives and restores | Source and destination must have matching paths relative to their respective personal roots |
+
+Prefect stores individual objects. It does not create or unpack GBI tar/gzip
+archives; use ordinary `data.copy` to unpack those. The Object Storage path
+still uses the mounted path syntax, but transfer payload upload/download and
+verification use Object Storage directly. Archive completion also checks
+Alluxio ownership/presentation. The managed transfer executor can differ from
+your Unix user; the login broker binds the request to your authorized route.
+
+For checkpoint-only selection, use the exact patterns you need, for example
+`include=["*.pt", "*.pt.*"]`; do not broaden this to `*.pt*`, which also matches
+`.ptx`. Older deployed Prefect flow versions require every supplied pattern to
+match at least once. If a directory has no sidecars, those versions reject
+`*.pt.*` before copying; use only patterns confirmed present until the flow's
+include-union correction is deployed. An entirely unmatched selection is
+always an error.
 
 ## Pack small subdirectories and leave large files accessible
 
