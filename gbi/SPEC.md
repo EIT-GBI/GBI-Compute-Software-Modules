@@ -1,7 +1,7 @@
-# GBI data CLI specification — 0.4.1 candidate
+# GBI data CLI specification — 0.4.2 candidate
 
 This describes the candidate implementation contract. It does not claim that
-0.4.1 or its optional infrastructure broker is released, deployed or accepted
+0.4.2 or its optional infrastructure broker is released, deployed or accepted
 on a production storage route. [Architecture](ARCHITECTURE.md) maps the contract
 to the current modules; [README](README.md) is the command guide.
 
@@ -21,6 +21,13 @@ kernel-UID-bound broker. It is mutually exclusive with `--detach` and
 `--local`; ordinary automatic placement never escalates to Prefect by size.
 
 ## Ordinary placement and source readers
+
+The optional Python surface is `from gbi import data`, with blocking `copy` and
+`move` calls. It invokes the matching installed executable using an argument
+list and `--wait`, inherits the caller's allocation/environment and streams the
+CLI's output. It adds no transfer, scheduling, retry or deletion implementation.
+Lmod exposes the SDK through `PYTHONPATH`; scientific environments need no extra
+package installation. Nonzero CLI exits raise `subprocess.CalledProcessError`.
 
 Selections up to 8 GiB run in the current shell by default. Larger or
 unbounded selections use Slurm; unknown decoded archive size also selects
