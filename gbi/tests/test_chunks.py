@@ -212,7 +212,11 @@ class Chunks(unittest.TestCase):
     def test_verified_part_changed_later_cannot_publish_completion(self):
         def corrupt_prior_part(row):
             if row["parts"] == 2:
+                before = self.part().stat()
                 self.part().write_bytes(b"bad part")
+                # Exercise filesystems whose timestamp granularity hides a
+                # same-size rewrite from the metadata fingerprint.
+                os.utime(self.part(), ns=(before.st_atime_ns, before.st_mtime_ns))
         with self.assertRaisesRegex(ValueError, "verified chunk changed"):
             self.write(progress=corrupt_prior_part)
         self.assertEqual(chunks.read_manifest(self.store, complete=False)["state"], "incomplete")
