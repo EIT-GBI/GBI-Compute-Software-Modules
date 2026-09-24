@@ -6,6 +6,7 @@ from pathlib import Path
 import shutil
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from gbi_data.transfer import transfer
 
@@ -45,10 +46,16 @@ class SmallFileReader(unittest.TestCase):
         self.assertEqual([row["event"] for row in rows], ["verified", "deleted"])
 
     def test_above_bound_remains_rclone(self):
-        self.assertEqual(self.recorded_reader(native_bytes=4), "rclone")
+        with patch("gbi_data.transfer.sys.platform", "linux"):
+            self.assertEqual(self.recorded_reader(native_bytes=4), "rclone")
 
     def test_existing_tasks_without_threshold_keep_reader(self):
-        self.assertEqual(self.recorded_reader(), "rclone")
+        with patch("gbi_data.transfer.sys.platform", "linux"):
+            self.assertEqual(self.recorded_reader(), "rclone")
+
+    def test_darwin_regular_file_uses_native_above_threshold(self):
+        with patch("gbi_data.transfer.sys.platform", "darwin"):
+            self.assertEqual(self.recorded_reader(native_bytes=0), "native")
 
 
 if __name__ == "__main__":

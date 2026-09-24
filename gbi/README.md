@@ -56,7 +56,8 @@ Everyday transfers start immediately in your current shell. Up to **8 GiB**
 of selected data runs in the foreground, including Alluxio transfers, with up
 to four files copying concurrently. Tiny selections (up to 8 MiB and 32 files)
 use native I/O; bulk transfers also read individual regular files up to 8 MiB
-natively, while larger files use rclone readers.
+natively, while larger files use rclone readers on Linux. On macOS, every
+regular file uses the native reader with the same checksums and receipts.
 The tiny-selection limit chooses a reader, **not whether to queue a job**.
 Every reader uses the same checksum, receipt and source-deletion safeguards.
 
@@ -237,10 +238,11 @@ Both functions **wait for completion** and stream progress to your Slurm log.
 They return `subprocess.CompletedProcess` on success and raise
 `subprocess.CalledProcessError` on a nonzero CLI exit. Output is not buffered or
 parsed into a transfer ID. A missing executable raises `FileNotFoundError`.
-The SDK calls its matching installed CLI, inheriting your identity and existing
-Slurm allocation; it does not submit another Slurm job from inside that
-allocation. Outside Slurm the CLI may queue larger transfers, and Python waits
-for them too. Interrupting a wait for a submitted job does not cancel that job.
+The SDK calls its matching installed CLI. Ordinary transfers inherit your
+identity and reuse your existing Slurm allocation. Outside Slurm the CLI may
+queue larger transfers, and Python waits for them too. The explicit Prefect
+route below submits a separate managed migration. Interrupting a wait for a
+submitted job does not cancel that job.
 
 Call once per job, for example on rank zero after all training workers finish
 writing, and leave enough allocation time for packing and verification. Give
@@ -248,9 +250,98 @@ each new checkpoint snapshot a new archive name: existing differing archives
 are not overwritten. The SDK does not change verification, receipts or deletion
 behavior, and it never retries a failed command automatically.
 
-`prefect=True` selects the existing personal-file migration route and also waits
-for completion. That route does not create archives and cannot be combined with
-packing, chunks, exclusions or deletion of Object Storage originals.
+### Submit a Prefect migration from Python
+
+Use `prefect=True` to select the direct Object Storage transfer route.
+**On Tokyo today, run the submitting Python script on the login node.**
+Compute-job submission requires the site's HTTPS broker to be enabled; once
+enabled, the same Python call works inside a Slurm job, with no new arguments
+or credentials to configure. Until then, use ordinary SDK calls without
+`prefect=True` inside training jobs.
+
+Start Python after loading the module:
+
+```bash
+module load gbi
+gbi data roots  # shows your personal Lustre, FSS and Object Storage paths
+python migrate.py
+```
+
+For example, put this in `migrate.py`, replacing the example paths with your
+own roots. This copies the whole finished-run directory and keeps its originals:
+
+```python
+from gbi import data
+
+source = "/your/lustre/finished-run"
+stored = "/your/alluxio/finished-run"
+
+data.copy(source, stored, prefect=True)
+```
+
+For a move, replace that last line with:
+
+```python
+data.move(source, stored, prefect=True)
+```
+
+A move removes unchanged filesystem originals after verified readback and
+receipt publication within the same migration. This happens in batches; a
+large-file batch can take time before its first deletion. No separate cleanup
+command is needed. Use only finished data that training is no longer writing.
+
+To restore the directory to its original relative path, keeping Object Storage
+originals:
+
+```python
+data.copy(stored, source, prefect=True)
+```
+
+These calls **wait until the Prefect flow finishes** and print its state, the
+GBI transfer ID and the Prefect run ID. They submit a separate managed transfer;
+they do not reuse a training allocation or run bulk copying on the login node.
+No Prefect UI, `pip install prefect`, API token or Object Storage credential is
+needed in your script. A failed flow raises `subprocess.CalledProcessError`.
+The SDK does not return a future or automatically retry. If you interrupt the
+wait, the submitted migration continues; reconnect using the printed ID:
+
+```bash
+gbi data status TRANSFER_ID --watch
+```
+
+For a nonblocking submission from a shell script, use the CLI with output
+redirected and omit `--wait`:
+
+```bash
+gbi data copy /your/lustre/finished-run /your/alluxio/finished-run --prefect >migration.log 2>&1
+```
+
+The supported options and path rules are:
+
+| Option or path | Prefect behavior |
+| --- | --- |
+| `prefect=True` | Submit a managed migration through the site's GBI broker |
+| `dry_run=True` | Preview routing and deletion intent without submitting; does not verify broker availability or scan the data |
+| `include="*.pt"` | Select matching filenames recursively; a list accepts multiple patterns |
+| `pack`, `pack_small`, `chunk_size`, `exclude` | Unsupported; use an ordinary SDK transfer for these |
+| `delete_source=True` | Unsupported; Object Storage originals stay in place |
+| Sources/destinations | One personal Lustre or FSS path and one personal Object Storage path |
+| FSS archives and restores | Source and destination must have matching paths relative to their respective personal roots |
+
+Prefect stores individual objects. It does not create or unpack GBI tar/gzip
+archives; use ordinary `data.copy` to unpack those. The Object Storage path
+still uses the mounted path syntax, but transfer payload upload/download and
+verification use Object Storage directly. Archive completion also checks
+Alluxio ownership/presentation. The managed transfer executor can differ from
+your Unix user; the login broker binds the request to your authorized route.
+
+For checkpoint-only selection, use the exact patterns you need, for example
+`include=["*.pt", "*.pt.*"]`; do not broaden this to `*.pt*`, which also matches
+`.ptx`. Older deployed Prefect flow versions require every supplied pattern to
+match at least once. If a directory has no sidecars, those versions reject
+`*.pt.*` before copying; use only patterns confirmed present until the flow's
+include-union correction is deployed. An entirely unmatched selection is
+always an error.
 
 ## Pack small subdirectories and leave large files accessible
 
@@ -482,8 +573,8 @@ GBI_SITE_PARTITION=site-partition make gbi
 
 For a shared cluster installation, run the recipe as a software maintainer
 from the reviewed release checkout and add `GBI_MODULE_PATH=/site/shared/software`
-to the `make` command. Software goes under `gbi/0.4.2` and the modulefile under
-`modules/gbi/0.4.2.lua` in that tree. Use the same install root as the cluster's
+to the `make` command. Software goes under `gbi/0.4.3` and the modulefile under
+`modules/gbi/0.4.3.lua` in that tree. Use the same install root as the cluster's
 existing rclone module. When its `modules` directory is already in the shared
 Lmod environment, users only need `module load gbi`; no per-user installation,
 container rebuild or login-node restart is required. Check `module show gbi`,
@@ -493,7 +584,14 @@ Each root is a parent directory; the authenticated local username is appended
 and its individual root alias resolved internally for path-safety checks.
 The `roots` command displays the alias itself. Site settings come from `GBI_SITE_*`
 environment variables at installation, never from public source code. Supported
-keys and defaults are in [storage.py](src/lib/gbi_data/storage.py). Defaults
+keys and defaults are in [storage.py](src/lib/gbi_data/storage.py).
+`GBI_SITE_PREFECT_URL` is empty by default. If enabled by the site, it must be
+an HTTPS URL without credentials, query parameters or fragments; the CLI does
+not follow redirects. It tries the local Unix socket first and uses HTTPS only
+if that socket is missing or not listening, before sending a request. HTTPS
+uses the caller's own short-lived Slurm token, held in memory; the site must
+provide an endpoint that validates it through Slurm. Lost replies retain the
+saved request ID for status checks and safe retries. Defaults
 are four parallel files, two CPUs and 4 GiB, with a one-day per-file deadline
 and a 20-minute Alluxio readback settling deadline. Choose a partition with all
 three real mounts. Missing user roots are refused rather than created.

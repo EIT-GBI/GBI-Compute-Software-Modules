@@ -522,7 +522,7 @@ def main():
         if options.verb == "move" and specification["source_kind"] == "alluxio" and not specification["delete"]:
             print("Alluxio/Object Storage originals stay. Use --delete-source to explicitly remove them.")
         mode = specification["execution"]
-        print({"inline": "Foreground transfer (" + specification["reader"] + "). Ctrl-C stops the transfer.",
+        print({"inline": "Foreground transfer. Ctrl-C stops the transfer.",
                "allocation": "Using your existing Slurm allocation.",
                "slurm": "Submitting background work to Slurm."}[mode])
         if options.dry_run:

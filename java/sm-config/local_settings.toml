@@ -1,0 +1,5 @@
+name = "java"
+
+relocate = true
+destination = "{SM_ROOT}/java"
+modules = "{SM_ROOT}/modules"

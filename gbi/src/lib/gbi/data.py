@@ -1,7 +1,9 @@
 """Blocking CLI calls with progress in your terminal or Slurm log.
 
 Load the gbi module before starting Python. Transfers use the CLI installed
-beside this SDK and inherit your identity, environment and Slurm allocation.
+beside this SDK. Ordinary transfers inherit your identity and Slurm allocation;
+prefect=True submits a managed migration through the site's broker. Submission
+from a compute job requires the site's authenticated HTTPS endpoint.
 Failures raise subprocess.CalledProcessError; no retry is submitted implicitly.
 """
 
@@ -46,13 +48,15 @@ def copy(source, destination, *, include=(), exclude=(), pack=None,
     Paths accept strings or pathlib.Path. include/exclude accept one glob or an
     iterable of globs. pack="tar" or "gzip" creates a .gbi.tar or .gbi.tar.gz;
     copying a GBI archive restores it. pack_small and chunk_size have the same
-    meaning as CLI flags. dry_run previews without writing. prefect submits
-    individual objects and cannot be combined with packing or chunks.
+    meaning as CLI flags. dry_run previews without writing. prefect=True uses
+    the site's broker (local socket or authenticated HTTPS), submits individual
+    objects, and cannot be combined with packing, chunks or exclusions. It
+    starts a separate managed transfer instead of reusing a Slurm allocation.
 
     Return subprocess.CompletedProcess (output streams to the current log).
     A nonzero exit raises subprocess.CalledProcessError. CLI validation and all
-    verification/receipt rules apply unchanged. Existing Slurm allocations are
-    reused; outside Slurm, a queued transfer is followed until it finishes.
+    verification/receipt rules apply unchanged. Ordinary transfers reuse an
+    existing Slurm allocation; queued transfers are followed until they finish.
     """
     return _transfer("copy", source, destination, include=include, exclude=exclude,
                      pack=pack, pack_small=pack_small, chunk_size=chunk_size,

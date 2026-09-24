@@ -10,13 +10,16 @@ are omitted from this public document.
 | Route | Payload and authority |
 | --- | --- |
 | Ordinary `copy` / `move` | Native I/O or rclone reads a pinned source descriptor; Python writes and independently verifies mounted filesystem paths. Alluxio persists its mounted writes to Object Storage. FSS ↔ Lustre payloads travel directly between filesystems. |
-| Explicit `--prefect` | A local broker submits an approved personal archive/stage flow. The maintained worker transfers payload directly with the Object Storage SDK, retaining existing Slurm execution, route authorization, verification and Alluxio ownership/presentation checks. |
+| Explicit `--prefect` | An identity-bound broker submits an approved personal archive/stage flow. The maintained worker transfers payload directly with the Object Storage SDK, retaining existing Slurm execution, route authorization, verification and Alluxio ownership/presentation checks. |
 
 Prefect is never selected by an automatic size threshold. The CLI has no cloud
 credentials and does not acquire them for this route. The [adapter](src/lib/gbi_data/prefect.py)
-sends a versioned request over a local Unix socket. The infrastructure-owned
-broker obtains the caller UID from the kernel, binds it to an enabled personal
-route and selects approved deployments. Users cannot choose another account,
+sends a versioned request over a local Unix socket first. If the socket is
+unavailable before sending, an optional site HTTPS endpoint accepts the same
+request with the caller's own short-lived Slurm token. The infrastructure-owned
+broker obtains the UID from the kernel or validates the token through Slurm,
+then binds that UID to an enabled personal route and approved deployments.
+Tokens remain in memory and redirects are refused. Users cannot choose another account,
 bucket, deployment or execution identity. API authentication stays with the
 broker; Object Storage credentials stay with the maintained flow services.
 

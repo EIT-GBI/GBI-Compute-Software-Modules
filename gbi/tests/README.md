@@ -2,17 +2,17 @@
 
 Linux is the operational target. Workstation tests validate local behavior;
 they do not qualify FSS, Lustre, Alluxio, cross-node locks or the deployed
-Prefect broker. The 0.4.0 source is a candidate until separately released and
-accepted on its intended routes.
+Prefect broker. Use the cluster checks below to validate an installed release
+on its intended routes.
 
-The macOS rclone descriptor path remains unqualified: [issue #28 — intermittent
-macOS pinned-descriptor failure](https://github.com/EIT-GBI/GBI-Compute-Software-Modules/issues/28)
-records a source-open failure with the pinned rclone 1.75.1. The final bounded
-`test_fd_handoff.py` investigation passed 48 attempts: 24 direct rclone calls
-and 24 existing-engine calls, including 12 child descriptor-identity probes and
-24 source paths unlinked after opening. Those passing attempts do **not**
-resolve the intermittent failure. The implementation retains the source on
-reader failure and does not silently fall back to a different engine.
+On macOS, regular files select the existing pinned native reader before the
+transfer, avoiding rclone's intermittent `/dev/fd` reopen failure recorded in
+[the macOS descriptor bug](https://github.com/EIT-GBI/GBI-Compute-Software-Modules/issues/28).
+The native path still hashes the pinned descriptor, independently reads back the
+destination, and publishes the receipt before an optional source deletion.
+Linux retains the pinned-rclone path for bulk files. The direct rclone
+`test_fd_handoff.py` diagnostic is therefore skipped on Darwin and remains
+covered on Linux; it is not a fallback or a pathname retry.
 
 `cluster_benchmark.py` compares the maintained native and pinned rclone source
 readers without changing the installed module or its configuration. Both paths
@@ -46,8 +46,10 @@ filesystem RPC counts. Resource block counters can be zero on cached local
 filesystems and should not be interpreted as zero storage traffic.
 
 `--readers default` measures the unchanged site selection policy; `--readers
-rclone native` forces the two comparison readers through temporary fixture
-configuration. For a baseline/candidate comparison, point `PYTHONPATH` at each
+rclone native` forces the two comparison readers on Linux through temporary
+fixture configuration. On macOS, use `--readers default` or `--readers native`;
+both use native regular-file reads, and the profiler reports only that reader.
+For a baseline/candidate comparison, point `PYTHONPATH` at each
 source snapshot and repeat the same arguments. The report records source
 hashes and rejects conclusions from changing code (`code_unchanged_during_run`).
 
@@ -73,7 +75,7 @@ Alluxio throughput, packing thresholds, or permission to increase concurrency.
 Early bounded Linux small-file comparisons showed about 2% lower wall time and
 47% lower CPU with native reading, at the unchanged four-worker limit. These
 are preliminary measurements, not qualified policy defaults. The per-file
-native threshold remains 8 MiB; large files continue to use pinned rclone.
+native threshold on Linux remains 8 MiB; larger Linux files use pinned rclone.
 
 One bounded Linux CPU allocation on the configured Lustre→Alluxio route
 completed all six comparisons with zero failures. Rclone/native elapsed times

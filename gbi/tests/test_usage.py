@@ -14,7 +14,7 @@ from gbi_data import cli, usage
 class Usage(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
-        self.root = Path(self.temp.name) / "lustre" / "alice"
+        self.root = Path(self.temp.name).resolve() / "lustre" / "alice"
         self.root.mkdir(parents=True)
         (self.root / "project" / "nested").mkdir(parents=True)
         self.site = SimpleNamespace(

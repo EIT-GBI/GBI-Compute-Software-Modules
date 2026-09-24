@@ -1,7 +1,7 @@
-# GBI data CLI specification — 0.4.2 candidate
+# GBI data CLI specification — 0.4.3 candidate
 
 This describes the candidate implementation contract. It does not claim that
-0.4.2 or its optional infrastructure broker is released, deployed or accepted
+0.4.3 or its optional infrastructure broker is released, deployed or accepted
 on a production storage route. [Architecture](ARCHITECTURE.md) maps the contract
 to the current modules; [README](README.md) is the command guide.
 
@@ -16,8 +16,8 @@ paths; personal roots are defaults for discovery and state.
 
 Foreground and ordinary Slurm work run with the invoking identity. The user
 does not choose an engine, cloud credential or execution partition.
-`--prefect` explicitly selects a managed personal migration through a
-kernel-UID-bound broker. It is mutually exclusive with `--detach` and
+`--prefect` explicitly selects a managed personal migration through an
+identity-bound broker. It is mutually exclusive with `--detach` and
 `--local`; ordinary automatic placement never escalates to Prefect by size.
 
 ## Ordinary placement and source readers
@@ -145,8 +145,15 @@ replaces the previous result.
 
 ## Explicit Prefect contract
 
+The local Unix socket uses kernel peer identity. If that socket is missing or
+not listening before a request is sent, a site-configured HTTPS endpoint can
+authenticate the caller's own short-lived Slurm token. Redirects are refused;
+tokens stay in memory. Ambiguous writes/replies do not switch transports or
+create new request IDs. Compute use requires the site's complete broker route
+to be enabled; installing the CLI alone does not establish availability.
+
 The broker selects only approved personal Lustre/FSS archive/stage routes.
-The peer's Unix UID binds the route; user-supplied identities, buckets,
+The authenticated UID binds the route; user-supplied identities, buckets,
 deployments and credentials are unavailable. Broker API authentication and
 flow Object Storage credentials remain service-side.
 

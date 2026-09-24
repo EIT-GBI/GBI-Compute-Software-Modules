@@ -6,9 +6,7 @@ import json
 import os
 from pathlib import Path
 import pwd
-import signal
 import socket
-import subprocess
 import sys
 import tempfile
 import time
@@ -65,8 +63,9 @@ class Deadlines(unittest.TestCase):
         # The discovery timeout is distinct from the outer filesystem timeout.
         script = (
             "import time; from gbi_data import deadlines; "
-            "deadlines.event('discovering', '/stalled/source'); time.sleep(30)")
-        result, output = self.supervise(script)
+            "deadlines.event('discovering', '/stalled/source', "
+            "timeouts={'mount_timeout': 0.2}); time.sleep(30)")
+        result, output = self.supervise(script, timeout=1.0)
         self.assertEqual(result, 1)
         self.assertIn("FAILED discovering", output)
         self.assertIn("/stalled/source", output)
@@ -181,7 +180,7 @@ class Deadlines(unittest.TestCase):
 
     def test_stalled_readback_keeps_source_without_verified_receipt(self):
         with tempfile.TemporaryDirectory() as directory:
-            base = Path(directory)
+            base = Path(directory).resolve()
             source_root, target_root, state = base / "source", base / "target", base / "state"
             for path in (source_root, target_root, state / "locks", state / "pending"):
                 path.mkdir(parents=True)

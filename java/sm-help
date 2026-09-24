@@ -1,0 +1,3 @@
+Eclipse Temurin OpenJDK (java runtime + compiler)
+bootstrapping a JDK from source needs an existing JDK, hence no MODE=build recipe
+sets JAVA_HOME for JVM tools such as nextflow

@@ -177,10 +177,12 @@ def transfer(task):
         link = stat.S_ISLNK(before[2]) or decode_link
         if not link and not stat.S_ISREG(before[2]):
             raise ValueError("only regular files and symlinks can be transferred")
-        # Request setup still requires the pinned rclone dependency for bulk
-        # work. Tiny regular files can use the existing pinned-fd native reader
-        # without paying a second process startup for every file in that tree.
-        rclone = None if not link and before[3] <= task.get("native_bytes", -1) else task["rclone"]
+        # Rclone intermittently fails to stat /dev/fd handles on macOS.
+        # Regular files therefore use the existing pinned
+        # native reader on Darwin. Other platforms retain the configured
+        # threshold so bulk transfers continue to use rclone.
+        native = not link and (sys.platform == "darwin" or before[3] <= task.get("native_bytes", -1))
+        rclone = None if native else task["rclone"]
         link_text = (os.fsdecode(source.read_bytes()) if decode_link else os.readlink(source)) if link else None
         expected = hashlib.sha256(os.fsencode(link_text)).hexdigest() if link else None
         target_digest = None

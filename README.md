@@ -297,6 +297,8 @@ build dependencies from the `module load` lines of its `install.sh`.
 | `go` | the Go programming language toolchain | no — bootstrapping needs an existing go |
 | [`gbi`](gbi/README.md) | verified HPC data movement, portable archives and resumable parts; automatic Slurm and optional managed Prefect submission | no — in-tree Python source; needs Python 3.9+ and rclone; Prefect option needs the site broker |
 | `rclone` | rsync for cloud storage | no — upstream ships static go binaries for every platform |
+| `java` | the Eclipse Temurin OpenJDK — `java`, `javac`, and a `JAVA_HOME` for JVM tools | no — bootstrapping a JDK from source needs an existing JDK |
+| `nextflow` | Nextflow — data-driven computational pipelines (standalone distribution) | no — upstream ships a single JVM executable; needs the `java` module at runtime |
 | `lfs` | the Lustre client utilities: `lfs`, `lctl`, `lfs_migrate`, `llstat` — Whamcloud's Ubuntu 24.04 `lustre-client-utils` deb (linux/amd64 only) plus the `libnl-genl-3` library the slurm images lack | no — the tools are useless without the host's Lustre kernel client, and compiling them needs its ABI headers |
 
 Upstream `eza` and `ncdu` ship no macOS binaries, so their default-mode recipes
