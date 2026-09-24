@@ -5,6 +5,15 @@ they do not qualify FSS, Lustre, Alluxio, cross-node locks or the deployed
 Prefect broker. Use the cluster checks below to validate an installed release
 on its intended routes.
 
+`cluster_sdk_test.py --prefect` checks the installed Python SDK from an existing
+Slurm allocation. Load `gbi` first and keep `cluster_selftest.py` beside the
+helper. It creates two fresh checkpoints, moves them through the authenticated
+HTTPS broker, then restores them to the same Lustre path and independently
+compares hashes. An unselected file remains throughout. The helper retains its
+fixtures and an `acceptance.json`; join the printed Prefect run IDs with their
+receipts when recording operational acceptance. Without `--prefect`, the helper
+checks ordinary SDK packing and restore within the current allocation.
+
 On macOS, regular files select the existing pinned native reader before the
 transfer, avoiding rclone's intermittent `/dev/fd` reopen failure recorded in
 [the macOS descriptor bug](https://github.com/EIT-GBI/GBI-Compute-Software-Modules/issues/28).
