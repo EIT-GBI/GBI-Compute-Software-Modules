@@ -285,6 +285,12 @@ For a move, replace that last line with:
 data.move(source, stored, prefect=True)
 ```
 
+To move only checkpoints and their sidecar files, use:
+
+```python
+data.move(source, stored, include=["*.pt", "*.pt.*"], prefect=True)
+```
+
 A move removes unchanged filesystem originals after verified readback and
 receipt publication within the same migration. This happens in batches; a
 large-file batch can take time before its first deletion. No separate cleanup
@@ -332,16 +338,16 @@ Prefect stores individual objects. It does not create or unpack GBI tar/gzip
 archives; use ordinary `data.copy` to unpack those. The Object Storage path
 still uses the mounted path syntax, but transfer payload upload/download and
 verification use Object Storage directly. Archive completion also checks
-Alluxio ownership/presentation. The managed transfer executor can differ from
-your Unix user; the login broker binds the request to your authorized route.
+Alluxio ownership/presentation. The login broker binds the request to your
+authorized route. On Tokyo, the transfer's Slurm job runs as your Unix user,
+including FSS transfers through a legacy home-directory name.
 
 For checkpoint-only selection, use the exact patterns you need, for example
 `include=["*.pt", "*.pt.*"]`; do not broaden this to `*.pt*`, which also matches
-`.ptx`. Older deployed Prefect flow versions require every supplied pattern to
-match at least once. If a directory has no sidecars, those versions reject
-`*.pt.*` before copying; use only patterns confirmed present until the flow's
-include-union correction is deployed. An entirely unmatched selection is
-always an error.
+`.ptx`. The patterns form a union: a file matching either is selected, and one
+pattern may match nothing. An entirely unmatched selection is an error. Tokyo's
+deployed flows support this behavior; other sites need the include-union flow
+fix before using a pattern with no matches.
 
 ## Pack small subdirectories and leave large files accessible
 
@@ -423,6 +429,19 @@ gbi data status TRANSFER_ID --watch
 gbi data retry TRANSFER_ID --wait
 ```
 
+For finished model checkpoints, run this on the login node with your own paths:
+
+```bash
+module load gbi
+gbi data move /your/lustre/finished-run /your/alluxio/finished-run \
+  --include '*.pt' --include '*.pt.*' --prefect --wait
+```
+
+This preserves filenames and relative directories as individual objects. A move
+deletes unchanged filesystem originals in verified, receipted batches within the
+same migration. Use `copy` to keep those originals. `--wait` waits for completion
+in scripts as well as interactive shells; it does not change transfer speed.
+
 These flows transfer payload bytes directly between the filesystem and Object
 Storage, bypassing the Alluxio payload write/read path. Prefect orchestrates Slurm
 jobs; archive completion still includes an Alluxio ownership/presentation step.
@@ -434,8 +453,9 @@ This route supports personal Lustre/FSS ↔ Object Storage paths. Shared paths,
 wildcards in paths, exclusions, packing and chunks use ordinary transfers.
 FSS archives and all restores require the same relative path on both sides;
 Lustre archives may use a different relative destination. `--include` uses
-file-name patterns recursively, but **each pattern must match at least one
-file** in the Prefect route. Restores retain Object Storage originals;
+file-name patterns recursively; a file matching any supplied pattern is selected.
+One pattern may match nothing, but an entirely unmatched selection fails.
+Restores retain Object Storage originals;
 `--delete-source` is unavailable. `copy` retains filesystem sources, while
 `move` archives remove them only through the flow's verification/deletion rules.
 
