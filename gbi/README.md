@@ -253,11 +253,10 @@ behavior, and it never retries a failed command automatically.
 ### Submit a Prefect migration from Python
 
 Use `prefect=True` to select the direct Object Storage transfer route.
-**On Tokyo today, run the submitting Python script on the login node.**
-Compute-job submission requires the site's HTTPS broker to be enabled; once
-enabled, the same Python call works inside a Slurm job, with no new arguments
-or credentials to configure. Until then, use ordinary SDK calls without
-`prefect=True` inside training jobs.
+**On Tokyo, the same Python call works on the login node and inside an ordinary
+Slurm job.** Load `gbi/0.4.3` or newer before starting Python. Compute jobs use
+the site's authenticated HTTPS broker automatically; no new arguments,
+credentials or Jupyter session are needed.
 
 Start Python after loading the module:
 
