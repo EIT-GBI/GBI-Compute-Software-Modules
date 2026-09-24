@@ -1,7 +1,7 @@
-# GBI data CLI specification — 0.4.3 candidate
+# GBI data CLI specification — 0.4.4 candidate
 
 This describes the candidate implementation contract. It does not claim that
-0.4.3 or its optional infrastructure broker is released, deployed or accepted
+0.4.4 or its optional infrastructure broker is released, deployed or accepted
 on a production storage route. [Architecture](ARCHITECTURE.md) maps the contract
 to the current modules; [README](README.md) is the command guide.
 

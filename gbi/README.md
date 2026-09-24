@@ -458,8 +458,9 @@ they are not a replacement for the flows' durable receipts.
 
 `--native-sync` is an explicit alternative to `--prefect`. It asks OCI to export
 the whole linked Lustre folder, then uses the managed GBI flow to verify the
-objects. It is **not enabled in the installed release**: it needs the matching
-broker/flow release, a reviewed link for your account, and completed native
+objects. In this **0.4.4 development candidate**, it is **not enabled in the
+installed release**: it needs the matching broker/flow release, a reviewed
+link for your account, and completed native
 metadata/restore testing. No speed improvement is claimed yet.
 
 Once enabled for your folder, preview with its exact approved source and
@@ -632,8 +633,8 @@ GBI_SITE_PARTITION=site-partition make gbi
 
 For a shared cluster installation, run the recipe as a software maintainer
 from the reviewed release checkout and add `GBI_MODULE_PATH=/site/shared/software`
-to the `make` command. Software goes under `gbi/0.4.3` and the modulefile under
-`modules/gbi/0.4.3.lua` in that tree. Use the same install root as the cluster's
+to the `make` command. Software goes under `gbi/0.4.4` and the modulefile under
+`modules/gbi/0.4.4.lua` in that tree. Use the same install root as the cluster's
 existing rclone module. When its `modules` directory is already in the shared
 Lmod environment, users only need `module load gbi`; no per-user installation,
 container rebuild or login-node restart is required. Check `module show gbi`,
