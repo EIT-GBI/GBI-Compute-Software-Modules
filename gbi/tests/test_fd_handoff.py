@@ -15,6 +15,7 @@ from gbi_data.transfer import copy_stream
 
 
 class DescriptorHandoff(unittest.TestCase):
+    @unittest.skipIf(sys.platform == "darwin", "direct rclone /dev/fd diagnostic is Linux-only")
     def test_real_pinned_descriptor_direct_and_engine(self):
         rclone = shutil.which("rclone")
         self.assertIsNotNone(rclone, "this regression requires the pinned rclone on PATH")

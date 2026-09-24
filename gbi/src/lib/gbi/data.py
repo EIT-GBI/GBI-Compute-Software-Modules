@@ -2,7 +2,8 @@
 
 Load the gbi module before starting Python. Transfers use the CLI installed
 beside this SDK. Ordinary transfers inherit your identity and Slurm allocation;
-prefect=True needs the login-node broker and submits a managed migration.
+prefect=True submits a managed migration through the site's broker. Submission
+from a compute job requires the site's authenticated HTTPS endpoint.
 Failures raise subprocess.CalledProcessError; no retry is submitted implicitly.
 """
 
@@ -47,9 +48,10 @@ def copy(source, destination, *, include=(), exclude=(), pack=None,
     Paths accept strings or pathlib.Path. include/exclude accept one glob or an
     iterable of globs. pack="tar" or "gzip" creates a .gbi.tar or .gbi.tar.gz;
     copying a GBI archive restores it. pack_small and chunk_size have the same
-    meaning as CLI flags. dry_run previews without writing. prefect=True needs
-    the login-node broker, submits individual objects, and cannot be combined
-    with packing, chunks or exclusions. It does not reuse a Slurm allocation.
+    meaning as CLI flags. dry_run previews without writing. prefect=True uses
+    the site's broker (local socket or authenticated HTTPS), submits individual
+    objects, and cannot be combined with packing, chunks or exclusions. It
+    starts a separate managed transfer instead of reusing a Slurm allocation.
 
     Return subprocess.CompletedProcess (output streams to the current log).
     A nonzero exit raises subprocess.CalledProcessError. CLI validation and all

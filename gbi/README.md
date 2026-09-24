@@ -56,7 +56,8 @@ Everyday transfers start immediately in your current shell. Up to **8 GiB**
 of selected data runs in the foreground, including Alluxio transfers, with up
 to four files copying concurrently. Tiny selections (up to 8 MiB and 32 files)
 use native I/O; bulk transfers also read individual regular files up to 8 MiB
-natively, while larger files use rclone readers.
+natively, while larger files use rclone readers on Linux. On macOS, every
+regular file uses the native reader with the same checksums and receipts.
 The tiny-selection limit chooses a reader, **not whether to queue a job**.
 Every reader uses the same checksum, receipt and source-deletion safeguards.
 
@@ -251,11 +252,12 @@ behavior, and it never retries a failed command automatically.
 
 ### Submit a Prefect migration from Python
 
-Use `prefect=True` to select the direct Object Storage transfer route. **Run
-the submitting Python script on a login node with the GBI Prefect broker.**
-The broker is a local service; loading the module on a compute node does not
-make that login-node service available there. To archive from inside a Slurm
-training job today, use the ordinary SDK calls above without `prefect=True`.
+Use `prefect=True` to select the direct Object Storage transfer route.
+**On Tokyo today, run the submitting Python script on the login node.**
+Compute-job submission requires the site's HTTPS broker to be enabled; once
+enabled, the same Python call works inside a Slurm job, with no new arguments
+or credentials to configure. Until then, use ordinary SDK calls without
+`prefect=True` inside training jobs.
 
 Start Python after loading the module:
 
@@ -318,7 +320,7 @@ The supported options and path rules are:
 
 | Option or path | Prefect behavior |
 | --- | --- |
-| `prefect=True` | Submit a managed migration through the local login broker |
+| `prefect=True` | Submit a managed migration through the site's GBI broker |
 | `dry_run=True` | Preview routing and deletion intent without submitting; does not verify broker availability or scan the data |
 | `include="*.pt"` | Select matching filenames recursively; a list accepts multiple patterns |
 | `pack`, `pack_small`, `chunk_size`, `exclude` | Unsupported; use an ordinary SDK transfer for these |
@@ -571,8 +573,8 @@ GBI_SITE_PARTITION=site-partition make gbi
 
 For a shared cluster installation, run the recipe as a software maintainer
 from the reviewed release checkout and add `GBI_MODULE_PATH=/site/shared/software`
-to the `make` command. Software goes under `gbi/0.4.2` and the modulefile under
-`modules/gbi/0.4.2.lua` in that tree. Use the same install root as the cluster's
+to the `make` command. Software goes under `gbi/0.4.3` and the modulefile under
+`modules/gbi/0.4.3.lua` in that tree. Use the same install root as the cluster's
 existing rclone module. When its `modules` directory is already in the shared
 Lmod environment, users only need `module load gbi`; no per-user installation,
 container rebuild or login-node restart is required. Check `module show gbi`,
@@ -582,7 +584,14 @@ Each root is a parent directory; the authenticated local username is appended
 and its individual root alias resolved internally for path-safety checks.
 The `roots` command displays the alias itself. Site settings come from `GBI_SITE_*`
 environment variables at installation, never from public source code. Supported
-keys and defaults are in [storage.py](src/lib/gbi_data/storage.py). Defaults
+keys and defaults are in [storage.py](src/lib/gbi_data/storage.py).
+`GBI_SITE_PREFECT_URL` is empty by default. If enabled by the site, it must be
+an HTTPS URL without credentials, query parameters or fragments; the CLI does
+not follow redirects. It tries the local Unix socket first and uses HTTPS only
+if that socket is missing or not listening, before sending a request. HTTPS
+uses the caller's own short-lived Slurm token, held in memory; the site must
+provide an endpoint that validates it through Slurm. Lost replies retain the
+saved request ID for status checks and safe retries. Defaults
 are four parallel files, two CPUs and 4 GiB, with a one-day per-file deadline
 and a 20-minute Alluxio readback settling deadline. Choose a partition with all
 three real mounts. Missing user roots are refused rather than created.

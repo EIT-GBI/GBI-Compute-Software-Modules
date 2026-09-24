@@ -104,10 +104,13 @@ def main():
     parser.add_argument("--state-root", type=Path, help="local synthetic scratch/report parent; omit with --site-conf")
     parser.add_argument("--rclone", required=True, help="maintained pinned rclone executable")
     parser.add_argument("--repetitions", type=int, default=3, choices=range(1, 6))
-    parser.add_argument("--readers", nargs="+", choices=("default", "rclone", "native"), default=["rclone", "native"],
+    parser.add_argument("--readers", nargs="+", choices=("default", "rclone", "native"),
+                        default=["default", "native"] if sys.platform == "darwin" else ["rclone", "native"],
                         help="default tests unchanged site policy; other values force comparison readers only in fixture config")
     parser.add_argument("--large-bytes", type=int, default=16 * 1024**2, help="bytes per large fixture (max 256 MiB)")
     options = parser.parse_args()
+    if sys.platform == "darwin" and "rclone" in options.readers:
+        parser.error("macOS uses native regular-file reads; choose --readers default or native")
     if not 1 <= options.large_bytes <= 256 * 1024**2:
         parser.error("--large-bytes must be between 1 and 268435456")
     rclone = shutil.which(options.rclone)
@@ -209,7 +212,7 @@ def main():
                 print(json.dumps(row), flush=True)
                 report_path.write_text(json.dumps(report, indent=2) + "\n")
         report.setdefault("engine_profiles", {})[case] = {}
-        for reader in ("rclone", "native"):
+        for reader in (("native",) if sys.platform == "darwin" else ("rclone", "native")):
             destination = roots["target"] / f"profile-{case}-{reader}"
             state = roots["state"] / f"profile-{case}-{reader}"
             report["engine_profiles"][case][reader] = engine_profile(
