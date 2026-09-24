@@ -1,0 +1,3 @@
+data-driven computational pipelines
+needs the java module (any 17-26) at runtime: make java; upstream ships one JVM executable, hence no MODE=build recipe
+plugins are downloaded on first use into $NXF_HOME (default ~/.nextflow)
