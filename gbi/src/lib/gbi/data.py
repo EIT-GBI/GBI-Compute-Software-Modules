@@ -23,7 +23,9 @@ def _patterns(value):
 
 
 def _transfer(verb, source, destination, *, include, exclude, pack, pack_small,
-              chunk_size, dry_run, prefect, delete_source=False):
+              chunk_size, dry_run, prefect, native_sync, delete_source=False):
+    if prefect and native_sync:
+        raise ValueError("choose prefect=True or native_sync=True, not both")
     command = [str(_CLI), "data", verb, "--wait"]
     for flag, patterns in (("include", include), ("exclude", exclude)):
         command.extend(f"--{flag}={pattern}" for pattern in _patterns(patterns))
@@ -31,7 +33,8 @@ def _transfer(verb, source, destination, *, include, exclude, pack, pack_small,
         if value is not None:
             command.append(f"--{flag}={value}")
     for flag, enabled in (("pack-small", pack_small), ("dry-run", dry_run),
-                          ("prefect", prefect), ("delete-source", delete_source)):
+                          ("prefect", prefect), ("native-sync", native_sync),
+                          ("delete-source", delete_source)):
         if not isinstance(enabled, bool):
             raise TypeError(f"{flag.replace('-', '_')} must be a boolean")
         if enabled:
@@ -42,7 +45,7 @@ def _transfer(verb, source, destination, *, include, exclude, pack, pack_small,
 
 
 def copy(source, destination, *, include=(), exclude=(), pack=None,
-         pack_small=False, chunk_size=None, dry_run=False, prefect=False):
+         pack_small=False, chunk_size=None, dry_run=False, prefect=False, native_sync=False):
     """Copy and verify, retaining originals; return only when the CLI finishes.
 
     Paths accept strings or pathlib.Path. include/exclude accept one glob or an
@@ -52,6 +55,9 @@ def copy(source, destination, *, include=(), exclude=(), pack=None,
     the site's broker (local socket or authenticated HTTPS), submits individual
     objects, and cannot be combined with packing, chunks or exclusions. It
     starts a separate managed transfer instead of reusing a Slurm allocation.
+    native_sync=True instead selects a managed OCI export of the whole linked
+    Lustre folder, then GBI verification. It is under development and requires
+    a configured link, stopped writers, and no filters, packing or chunks.
 
     Return subprocess.CompletedProcess (output streams to the current log).
     A nonzero exit raises subprocess.CalledProcessError. CLI validation and all
@@ -60,19 +66,22 @@ def copy(source, destination, *, include=(), exclude=(), pack=None,
     """
     return _transfer("copy", source, destination, include=include, exclude=exclude,
                      pack=pack, pack_small=pack_small, chunk_size=chunk_size,
-                     dry_run=dry_run, prefect=prefect)
+                     dry_run=dry_run, prefect=prefect, native_sync=native_sync)
 
 
 def move(source, destination, *, include=(), exclude=(), pack=None,
          pack_small=False, chunk_size=None, dry_run=False, prefect=False,
-         delete_source=False):
+         delete_source=False, native_sync=False):
     """Copy and verify, then remove unchanged selected filesystem originals.
 
     Options and return/exception behavior match copy(). Object Storage originals
     remain unless delete_source=True, and a partial archive restore always keeps
     its container. This calls the same maintained `gbi data move` operation;
-    deletion is never a separate SDK pass.
+    deletion is never a separate SDK pass. With native_sync=True, the OCI job
+    finishes first; verified unchanged sources are then removed in receipt-backed
+    batches inside that same managed flow.
     """
     return _transfer("move", source, destination, include=include, exclude=exclude,
                      pack=pack, pack_small=pack_small, chunk_size=chunk_size,
-                     dry_run=dry_run, prefect=prefect, delete_source=delete_source)
+                     dry_run=dry_run, prefect=prefect, delete_source=delete_source,
+                     native_sync=native_sync)

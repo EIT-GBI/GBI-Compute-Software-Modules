@@ -21,7 +21,7 @@ from . import jobs
 from . import deadlines
 from . import prefect
 from . import format_selection, packing, usage
-from .selection import entries, probe, stream_entries
+from .selection import entries as entries, probe, stream_entries
 from .storage import Site, overlap
 from .transfer import ensure_parent, receipt, write_json
 
@@ -59,6 +59,10 @@ def parser():
                 "FSS archives\n"
                 "and restores require matching relative paths. Exclusions, packing, chunks\n"
                 "and deleting Object Storage originals are unavailable on this route.\n"
+                "--native-sync uses OCI for the whole linked Lustre directory, then\n"
+                "verifies it through Prefect/Slurm. No filters or packing. Stop writers\n"
+                "first; move deletes verified files only after OCI finishes. A configured\n"
+                "link is required; native sync is still under development.\n"
                 "After a lost submission reply: gbi data retry ID (same saved request).\n\n"
                 f"Examples:\n  gbi data {verb} SOURCE DESTINATION --dry-run\n"
                 f"  gbi data {verb} SOURCE DESTINATION --detach\n"
@@ -89,6 +93,8 @@ def parser():
         execution.add_argument("--local", action="store_true", help="execute inside an existing Slurm allocation")
         execution.add_argument("--prefect", action="store_true",
                                help="submit a personal Object Storage migration through Prefect; no UI or credentials needed")
+        execution.add_argument("--native-sync", action="store_true",
+                               help="use OCI export for the whole linked Lustre folder (development; requires a configured link)")
     status = verbs.add_parser("status", help="show a transfer's progress")
     status.add_argument("job_id")
     status.add_argument("--watch", action="store_true", help="follow until the transfer finishes")
@@ -511,7 +517,7 @@ def main():
             return jobs.watch(run_dir, options.job_id, options.watch, site.roots["alluxio"])
         if options.verb == "_run":
             return run(options.run_dir.resolve(), site, home)
-        if options.prefect:
+        if options.prefect or options.native_sync:
             return prefect.start(options, site, home)
         specification = execution_plan(plan(options, site), site, options)
         if specification["execution"] == "slurm" and not site.values["partition"]:

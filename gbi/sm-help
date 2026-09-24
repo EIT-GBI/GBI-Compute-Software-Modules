@@ -10,6 +10,8 @@ Use --pack-small --dry-run to review small-subdirectory packing and destination 
 Use --chunk-size 64MiB for verified resumable parts; repeat the command to resume.
 Use --prefect for a managed personal-storage migration; --wait follows its state.
 Sites may configure an HTTPS Prefect endpoint for compute-job submissions.
+Development: --native-sync selects whole-folder OCI export after a link is enabled.
+Native sync has no filters/packing; verification and move deletion follow OCI completion.
 After a lost Prefect reply, use gbi data retry TRANSFER_ID, not a new copy/move.
 Run gbi data copy --help or gbi data move --help for examples and retry behavior.
 Python 3.9+ and the rclone module are required on execution nodes.

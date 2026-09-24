@@ -453,6 +453,65 @@ command to recover a lost reply: that creates a new request. Broker request and
 status records currently remain on scratch, including after terminal completion;
 they are not a replacement for the flows' durable receipts.
 
+
+## Native OCI export (development)
+
+`--native-sync` is an explicit alternative to `--prefect`. It asks OCI to export
+the whole linked Lustre folder, then uses the managed GBI flow to verify the
+objects. It is **not enabled in the installed release**: it needs the matching
+broker/flow release, a reviewed link for your account, and completed native
+metadata/restore testing. No speed improvement is claimed yet.
+
+Once enabled for your folder, preview with its exact approved source and
+destination paths:
+
+```sh
+gbi data copy /your/lustre/linked-folder /your/alluxio/linked-folder --native-sync --dry-run
+```
+
+The personal Alluxio path selects your Object Storage destination; OCI carries
+the copy. The dry run checks local options only. The server checks the exact
+link, source and destination at submission and refuses any mismatch. Stop
+training and all other writers or migrations in that entire folder first.
+
+```sh
+# Copy and retain sources; wait for the managed flow to finish.
+gbi data copy /your/lustre/linked-folder /your/alluxio/linked-folder --native-sync --wait
+
+# Move: finish OCI export, then verify and remove unchanged sources in batches.
+gbi data move /your/lustre/linked-folder /your/alluxio/linked-folder --native-sync --wait
+```
+
+OCI completion alone does not delete sources. Each GBI verification batch must
+pass independent destination readback and publish its receipt before its
+unchanged source files are removed. There is no later cleanup run. Failed,
+missing or incompatible objects keep their sources. The directory is not freed
+progressively during OCI export itself; verification and deletion start after
+that export finishes.
+
+The Python wrapper uses the same single choice and waits by default:
+
+```python
+from gbi import data
+
+data.copy(source, stored, native_sync=True)  # Keep originals.
+# Or, once copying and restore are accepted for this link:
+data.move(source, stored, native_sync=True)
+```
+
+Use only one of `native_sync=True` and `prefect=True`. Native sync has no include
+or exclude filters, packing, chunks, FSS route or restore mode. It keeps
+individual object keys and does not create tar/gzip archives. In particular,
+checkpoint-only moves with `*.pt` and `*.pt.*` must use the existing filtered
+routes. Restore through the normal GBI copy or Prefect route only after native
+object compatibility is accepted.
+
+`gbi data status ID --watch` follows the managed flow. After a lost submission
+reply, `gbi data retry ID` preserves the saved native selection and request ID;
+do not submit a new copy/move to recover that reply. Ctrl-C while following
+only detaches. Canceling Prefect does not stop an OCI export already running;
+contact support with the transfer ID before starting writers or another export.
+
 ## Existing files and interruptions
 
 An existing identical regular-file destination is independently checked and

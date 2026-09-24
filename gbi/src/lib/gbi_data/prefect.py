@@ -37,10 +37,14 @@ class _NoRedirect(urlrequest.HTTPRedirectHandler):
 
 
 def prepare(options, site):
+    native = getattr(options, "native_sync", False)
+    route_flag = "--native-sync" if native else "--prefect"
+    if native and options.include:
+        raise ValueError("--native-sync exports the whole linked folder; --include is unsupported. Use --prefect for filters")
     if options.exclude or any(getattr(options, key, None) for key in ("pack", "pack_small", "chunk_size")):
-        raise ValueError("--prefect does not support exclusions, packing or chunks; use an ordinary transfer")
+        raise ValueError(f"{route_flag} does not support exclusions, packing or chunks; use an ordinary transfer")
     if options.delete_source:
-        raise ValueError("--prefect retains Object Storage originals; --delete-source is not supported")
+        raise ValueError(f"{route_flag} does not support --delete-source; move already removes verified Lustre/FSS originals")
     if len(options.include) > 100 or any(
             not pattern or len(pattern.encode()) > 255 or not pattern.isprintable()
             or any(character in pattern for character in "/\\{}") for pattern in options.include):
@@ -53,11 +57,11 @@ def prepare(options, site):
                 if root is not None and root in path.parents:
                     relative = path.relative_to(root).as_posix()
                     if any(part in ("", ".", "..") or part != part.strip() for part in relative.split("/")):
-                        raise ValueError("--prefect needs a plain path inside your personal storage root")
+                        raise ValueError(f"{route_flag} needs a plain path inside your personal storage root")
                     if site.is_reserved(path, root):
                         raise ValueError("transfer state and development prefixes are reserved")
                     return name, relative
-        raise ValueError("--prefect supports paths inside your personal Lustre, FSS and Object Storage roots only")
+        raise ValueError(f"{route_flag} supports paths inside your personal Lustre, FSS and Object Storage roots only")
 
     source_kind, source = personal(options.source)
     target_kind, target = personal(options.destination)
@@ -66,17 +70,20 @@ def prepare(options, site):
     elif source_kind == "alluxio" and target_kind in ("lustre", "fss"):
         operation = "stage-" + target_kind
     else:
-        raise ValueError("--prefect needs one personal Object Storage path and one Lustre or FSS path")
+        raise ValueError(f"{route_flag} needs one personal Object Storage path and one Lustre or FSS path")
+    if native and operation != "archive-lustre":
+        raise ValueError("--native-sync supports Lustre to Object Storage only; use --prefect for FSS or restores")
     if operation != "archive-lustre" and source != target:
         raise ValueError("Prefect FSS archives and restores require matching relative source and destination paths")
     for value in (source, target):
         if len(value.encode()) > 4096 or not value.isprintable() or any(character in value for character in "\\*?[]{}"):
-            raise ValueError("--prefect requires plain paths without wildcard characters")
+            raise ValueError(f"{route_flag} requires plain paths without wildcard characters")
         if any(part.startswith((".gbi", ".prefect", "prefect-transfer-dev")) for part in value.split("/")):
             raise ValueError("transfer state and development prefixes are reserved")
     return {"version": 1, "action": "submit", "request_id": str(uuid.uuid4()),
             "operation": operation, "verb": options.verb, "source": source,
-            "destination": target, "include": options.include}
+            "destination": target, "include": options.include,
+            **({"native_sync": True} if native else {})}
 
 
 def _validate_result(raw):
@@ -236,7 +243,13 @@ def submit(run_dir, site, wait=False):
 
 def start(options, site, home):
     request = prepare(options, site)
-    print(f"Prefect {request['operation']}: {request['source']} → {request['destination']}")
+    label = "Native OCI sync via Prefect" if request.get("native_sync") else "Prefect"
+    print(f"{label} {request['operation']}: {request['source']} → {request['destination']}")
+    if request.get("native_sync"):
+        print("Whole linked folder; stop writers and overlapping migrations before submitting.")
+        print("Link configuration is checked by the flow; dry run checks local options only.")
+        if options.verb == "move":
+            print("OCI export finishes first; GBI then verifies and removes sources in receipt-backed batches.")
     print("Sources: delete verified filesystem originals." if options.verb == "move" and request["operation"].startswith("archive-")
           else "Sources: keep originals.")
     if options.dry_run:

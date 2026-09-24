@@ -90,3 +90,19 @@ class SDK(unittest.TestCase):
         with self.assertRaises(TypeError):
             data.copy("source", "target", detach=True)
         self.assertFalse(self.log.exists())
+
+
+    def test_native_selection_uses_one_flag_and_waits(self):
+        for operation in (data.copy, data.move):
+            operation("source", "target", native_sync=True)
+            options = self.parsed()
+            self.assertTrue(options.native_sync)
+            self.assertFalse(options.prefect)
+            self.assertTrue(options.wait)
+
+    def test_native_bad_boolean_or_conflicting_route_never_launches(self):
+        with self.assertRaisesRegex(TypeError, "native_sync must be a boolean"):
+            data.move("source", "target", native_sync="false")
+        with self.assertRaisesRegex(ValueError, "not both"):
+            data.copy("source", "target", prefect=True, native_sync=True)
+        self.assertFalse(self.log.exists())

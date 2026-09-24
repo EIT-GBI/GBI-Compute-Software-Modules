@@ -161,9 +161,11 @@ Maintained flows use direct Object Storage SDK payload transfer, with existing
 Slurm execution and Alluxio ownership/presentation checks. This source-verified
 distinction does not establish deployment or performance benefit.
 FSS archives and all restores require matching relative paths; Lustre archives
-may remap the relative destination. Each include pattern must match at least
-one file. Exclusions, packing, chunks, shared paths and `--delete-source` are
-not supported on this route.
+may remap the relative destination. Maintained flow source treats includes as a
+union: at least one entry must match any supplied pattern. Older deployed flows
+require every pattern to match until their include-union release is promoted.
+Exclusions, packing, chunks, shared paths and `--delete-source` are not supported
+on this route.
 
 The exact request/UUID is saved on Lustre before submission. Status can query
 by request ID after a lost reply; `gbi data retry TRANSFER_ID` resends that
@@ -171,6 +173,16 @@ unchanged request. Repeating the original copy/move creates a different
 request and is not lost-reply recovery. Client records remain on scratch;
 the maintained flows own durable receipts. Report Prefect state explicitly,
 without manufacturing CLI aggregate byte/verification evidence.
+
+The development `--native-sync` option (Python `native_sync=True`) uses the same
+broker with an explicit native selection, mutually exclusive with `--prefect`.
+It permits only the complete server-linked Lustre directory, with no includes,
+excludes, packing or chunks. The flow checks the caller's exact link; the client
+cannot choose an OCID or broaden its selection. OCI completion precedes the
+normal independent readback, immutable batch receipts and unchanged-source
+deletion. A saved request cannot switch between native and ordinary export.
+Native output/restore acceptance and matching releases are required before
+site enablement; no performance claim follows from these source tests.
 
 ## Validation boundary
 

@@ -259,3 +259,74 @@ class Prefect(unittest.TestCase):
             with self.subTest(state=state), patch("gbi_data.prefect.exchange", return_value={
                     "version": 1, "state": state, "terminal": terminal}):
                 self.assertEqual(prefect.follow(run_dir, self.site, True), 1)
+
+
+class NativeSync(unittest.TestCase):
+    setUp = Prefect.setUp
+    options = Prefect.options
+    def native_options(self, source="lustre", target="alluxio", *flags):
+        return cli.parser().parse_args([
+            "data", "copy", str(self.site.roots[source] / "experiment"),
+            str(self.site.roots[target] / "experiment"), "--native-sync", *flags,
+        ])
+
+    def test_native_selects_managed_export_without_extra_prefect_flag(self):
+        options = self.native_options()
+        request = prefect.prepare(options, self.site)
+        self.assertEqual(request["operation"], "archive-lustre")
+        self.assertIs(request["native_sync"], True)
+        self.assertEqual(request["include"], [])
+        self.assertFalse(options.prefect)
+        self.assertNotIn("native_sync", prefect.prepare(self.options(), self.site))
+
+    def test_native_rejects_any_filter_or_format(self):
+        for flags in (("--include", "*.pt"), ("--exclude", "*.tmp"),
+                      ("--pack", "gzip"), ("--pack-small",),
+                      ("--chunk-size", "64MiB"), ("--delete-source",)):
+            with self.subTest(flags=flags), self.assertRaisesRegex(ValueError, "--native-sync"):
+                prefect.prepare(self.native_options("lustre", "alluxio", *flags), self.site)
+
+    def test_native_rejects_fss_and_restore_routes(self):
+        for source, target in (("fss", "alluxio"), ("alluxio", "lustre"), ("alluxio", "fss")):
+            with self.subTest(source=source, target=target), self.assertRaisesRegex(ValueError, "Lustre to Object Storage"):
+                prefect.prepare(self.native_options(source, target), self.site)
+
+    def test_native_execution_choice_is_exclusive(self):
+        for flag in ("--prefect", "--detach", "--local"):
+            with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+                self.native_options("lustre", "alluxio", flag)
+
+    def test_native_dry_run_explains_unchecked_link_without_submission(self):
+        output = io.StringIO()
+        with patch("gbi_data.prefect.exchange") as exchange, contextlib.redirect_stdout(output):
+            self.assertEqual(prefect.start(
+                self.native_options("lustre", "alluxio", "--dry-run"), self.site, self.home,
+            ), 0)
+        exchange.assert_not_called()
+        self.assertFalse(self.home.exists())
+        self.assertIn("Native OCI sync", output.getvalue())
+        self.assertIn("dry run checks local options only", output.getvalue())
+
+    def test_native_cli_dispatches_to_managed_route(self):
+        args = ["gbi", "data", "copy", str(self.site.roots["lustre"] / "experiment"),
+                str(self.site.roots["alluxio"] / "experiment"), "--native-sync", "--dry-run"]
+        with patch("sys.argv", args), patch.dict(os.environ, {"GBI_DATA_SITE_CONF": str(self.site.path)}), \
+             patch("gbi_data.prefect.start", return_value=0) as start, \
+             patch("gbi_data.cli.plan") as ordinary:
+            self.assertEqual(cli.main(), 0)
+        self.assertTrue(start.call_args.args[0].native_sync)
+        ordinary.assert_not_called()
+
+    def test_native_lost_reply_keeps_request_identity(self):
+        with patch("gbi_data.prefect.exchange", side_effect=ValueError("lost")), \
+             patch("sys.stdout.isatty", return_value=False):
+            with self.assertRaises(ValueError):
+                prefect.start(self.native_options(), self.site, self.home)
+        run_dir = next((self.home / "runs").iterdir())
+        request = prefect.stored_request(run_dir)
+        self.assertIs(request["native_sync"], True)
+        with patch("gbi_data.prefect.exchange", return_value={
+            "version": 1, "state": "RUNNING", "terminal": False,
+        }) as exchange:
+            prefect.submit(run_dir, self.site)
+        self.assertEqual(exchange.call_args.args[1], request)
