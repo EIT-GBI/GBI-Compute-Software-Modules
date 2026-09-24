@@ -195,6 +195,7 @@ class Transfers(unittest.TestCase):
         self.assertTrue(self.source.exists())
         self.assertFalse(Path(self.task["receipt"]).exists())
 
+    @unittest.skipIf(sys.platform == "darwin", "rclone reader timeout diagnostic is Linux-only")
     def test_blocked_reader_times_out_without_source_deletion(self):
         blocked = self.base / "blocked-reader"
         blocked.write_text("#!/bin/sh\nexec sleep 60\n")
@@ -243,6 +244,26 @@ class Transfers(unittest.TestCase):
             with self.assertRaises(OSError):
                 transfer({**self.task, "rclone": None})
         self.assertEqual(self.source.read_bytes(), self.target.read_bytes())
+
+    def test_darwin_native_pinned_inode_rejects_replacement(self):
+        original = self.source.read_bytes()
+        replacement = b"replacement source" * (len(original) // 18 + 1)
+        replacement = replacement[:len(original)]
+        real_copy = copy_stream
+
+        def replace_after_pinning(*args):
+            swapped = self.source.with_name("swapped-source")
+            swapped.write_bytes(replacement)
+            os.replace(swapped, self.source)
+            return real_copy(*args)
+
+        with patch("gbi_data.transfer.sys.platform", "darwin"), \
+                patch("gbi_data.transfer.copy_stream", side_effect=replace_after_pinning):
+            with self.assertRaisesRegex(ValueError, "source changed during transfer"):
+                transfer({**self.task, "rclone": "/missing/rclone", "delete": True})
+        self.assertEqual(self.target.read_bytes(), original)
+        self.assertEqual(self.source.read_bytes(), replacement)
+        self.assertFalse(Path(self.task["receipt"]).exists())
 
     def test_changed_small_selection_cannot_start_copying(self):
         original = fingerprint(self.source)
@@ -480,7 +501,7 @@ class Interface(unittest.TestCase):
                                  str(source), str(target)], env=environment,
                                 capture_output=True, text=True, timeout=30)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertIn("Foreground transfer (rclone", result.stdout)
+        self.assertIn("Foreground transfer.", result.stdout)
         self.assertNotIn("Submitted transfer", result.stdout)
         history = next((self.site.roots["alluxio"] / ".gbi/transfers").glob("*/*/history.json"))
         bundle = json.loads(history.read_text())

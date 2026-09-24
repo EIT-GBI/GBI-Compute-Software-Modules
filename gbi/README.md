@@ -56,7 +56,8 @@ Everyday transfers start immediately in your current shell. Up to **8 GiB**
 of selected data runs in the foreground, including Alluxio transfers, with up
 to four files copying concurrently. Tiny selections (up to 8 MiB and 32 files)
 use native I/O; bulk transfers also read individual regular files up to 8 MiB
-natively, while larger files use rclone readers.
+natively, while larger files use rclone readers on Linux. On macOS, every
+regular file uses the native reader with the same checksums and receipts.
 The tiny-selection limit chooses a reader, **not whether to queue a job**.
 Every reader uses the same checksum, receipt and source-deletion safeguards.
 

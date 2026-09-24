@@ -180,7 +180,7 @@ class Deadlines(unittest.TestCase):
 
     def test_stalled_readback_keeps_source_without_verified_receipt(self):
         with tempfile.TemporaryDirectory() as directory:
-            base = Path(directory)
+            base = Path(directory).resolve()
             source_root, target_root, state = base / "source", base / "target", base / "state"
             for path in (source_root, target_root, state / "locks", state / "pending"):
                 path.mkdir(parents=True)
