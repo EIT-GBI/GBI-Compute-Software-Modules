@@ -3,6 +3,7 @@
 import argparse
 import json
 import os
+import subprocess
 import uuid
 
 from gbi import data
@@ -36,19 +37,41 @@ def main():
     assert archive.is_file()
     assert {path.name: digest(path) for path in restored.iterdir()} == expected
     histories = site.roots["alluxio"] / ".gbi" / "transfers" / job_id
-    requests, receipts = [], []
+    requests, receipts, run_ids = [], [], []
     for path in histories.glob("*/request.json"):
         request = json.loads(path.read_text())
         if token not in request["source"]:
             continue
         requests.append(request)
+        run_ids.append(path.parent.name)
         receipts.extend(json.loads(line) for line in
                         path.with_name("receipts.jsonl").read_text().splitlines())
     assert len(requests) == 2
     assert all(request["execution"] == "allocation" for request in requests)
+    assert all(request["allocation_job_id"] == job_id for request in requests)
     assert not any(row["event"] == "failed" for row in receipts)
     assert any(row["event"] == "deleted" for row in receipts)
+    run_ids.sort()
+    status_checks = {}
+    for run_id in run_ids:
+        result = subprocess.run(
+            ["gbi", "data", "status", run_id],
+            capture_output=True, text=True, check=False, timeout=120,
+        )
+        assert result.returncode == 0, result.stderr
+        assert "Complete." in result.stdout
+        status_checks[run_id] = {"returncode": result.returncode, "complete": True}
+    numeric_status = subprocess.run(
+        ["gbi", "data", "status", job_id],
+        capture_output=True, text=True, check=False, timeout=120,
+    )
+    numeric_status_output = numeric_status.stdout + numeric_status.stderr
+    assert numeric_status.returncode != 0
+    assert all(run_id in numeric_status_output for run_id in run_ids)
     result = {"status": "PASS", "slurm_job": job_id, "same_allocation_transfers": 2,
+              "allocation_job_ids": [request["allocation_job_id"] for request in requests],
+              "transfer_run_ids": run_ids, "status_checks": status_checks,
+              "numeric_status_ambiguous": True,
               "selected_files": len(expected), "verified_events": sum(
                   row["event"] == "verified" for row in receipts),
               "source": str(source), "archive": str(archive),

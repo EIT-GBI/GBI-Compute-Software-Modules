@@ -1,6 +1,7 @@
 """Real local transfers plus fault injection at the source-deletion boundary."""
 
 import hashlib
+import io
 import json
 import os
 from pathlib import Path
@@ -637,6 +638,37 @@ class Interface(unittest.TestCase):
             self.assertEqual((target / verb / "reads.dat").stat().st_size, 5000)
             self.assertEqual(payload.exists(), verb == "copy")
         self.assertEqual((target / "copy/reads.dat").read_bytes(), (target / "move/reads.dat").read_bytes())
+
+    def test_allocation_prints_transfer_id_and_records_slurm_job(self):
+        source = self.site.roots["lustre"] / "allocation-source"
+        target = self.site.roots["alluxio"] / "allocation-target"
+        source.write_bytes(b"allocation")
+        output = io.StringIO()
+        with patch.dict(os.environ, {"GBI_DATA_SITE_CONF": str(self.conf), "SLURM_JOB_ID": "314159"}), \
+                patch("sys.argv", ["gbi", "data", "copy", str(source), str(target), "--local"]), \
+                patch("gbi_data.cli.probe", return_value=None), \
+                patch("gbi_data.cli.run", return_value=0), \
+                patch("sys.stdout", output):
+            self.assertEqual(cli.main(), 0)
+        run_dir = next((self.site.roots["lustre"] / ".gbi/runs").iterdir())
+        request = json.loads((run_dir / "request.json").read_text())
+        self.assertEqual(request["allocation_job_id"], "314159")
+        self.assertIn(f"Transfer {run_dir.name}. Reconnect: gbi data status {run_dir.name} --watch",
+                      output.getvalue())
+
+    def test_detach_inside_allocation_does_not_record_parent_job(self):
+        source = self.site.roots["lustre"] / "detached-source"
+        source.write_bytes(b"detached")
+        target = self.site.roots["alluxio"] / "detached-target"
+        with patch.dict(os.environ, {"GBI_DATA_SITE_CONF": str(self.conf), "SLURM_JOB_ID": "314159"}), \
+                patch("sys.argv", ["gbi", "data", "copy", str(source), str(target), "--detach"]), \
+                patch("gbi_data.cli.jobs.submit", return_value="271828"), \
+                patch("sys.stdout", io.StringIO()):
+            self.assertEqual(cli.main(), 0)
+        run_dir = next((self.site.roots["lustre"] / ".gbi/runs").iterdir())
+        request = json.loads((run_dir / "request.json").read_text())
+        self.assertEqual(request["execution"], "slurm")
+        self.assertNotIn("allocation_job_id", request)
 
     def test_reserved_paths_pruned_and_filters_do_not_match_ptx(self):
         root = self.site.roots["lustre"]
