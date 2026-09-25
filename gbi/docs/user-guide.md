@@ -16,7 +16,7 @@ gbi --version
 gbi data roots
 ```
 
-This guide accompanies GBI 0.4.8. Use `gbi --version` to check the module you
+This guide accompanies GBI 0.4.9. Use `gbi --version` to check the module you
 loaded, and `gbi data copy --help` for its supported options.
 
 Prefect exclusions are new in this version and require the matching site broker
