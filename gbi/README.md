@@ -16,9 +16,14 @@ paths printed by `gbi data roots`. Start here for the shortest working path.
 ```bash
 module load gbi
 gbi --version
+gbi --help
 gbi data roots
 gbi data copy SOURCE DESTINATION
 ```
+
+`gbi --help` and `gbi data --help` explain every public flag, grouped by
+command, including defaults, examples and execution-mode restrictions. Use
+`gbi data copy --help` (or another command's `--help`) for its focused usage.
 
 Use the paths printed by `gbi data roots` in place of the placeholder paths
 below. A directory's contents go into the destination directory you name.

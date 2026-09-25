@@ -49,6 +49,27 @@ def byte_size(value):
     return int(match[1]) * 1024 ** " KMGT".index(match[2].upper() or " ")
 
 
+def command_reference(verbs):
+    """Keep overview help complete using the actual command argument definitions."""
+    formatter = argparse.RawDescriptionHelpFormatter(prog="gbi")
+    for name, command in verbs.choices.items():
+        if name == "copy" or name.startswith("_"):
+            continue
+        title = "gbi data copy / move SOURCE DESTINATION" if name == "move" else command.prog
+        formatter.start_section(title)
+        if name == "move":
+            formatter.add_text("copy keeps sources. move removes eligible sources only after verification.\n"
+                               "Object Storage originals are kept unless move uses --delete-source.")
+        else:
+            formatter.add_text(command.description)
+        formatter.add_arguments(action for action in command._actions
+                                if action.dest != "help")
+        if name == "move":
+            formatter.add_text("\n" + command.epilog)
+        formatter.end_section()
+    return formatter.format_help()
+
+
 def parser():
     result = _ArgumentParser(
         prog="gbi",
@@ -58,7 +79,8 @@ def parser():
                 "  gbi data move SOURCE DESTINATION --detach --wait\n"
                 "  gbi data status TRANSFER_ID --watch\n"
                 "  gbi data usage projects --depth 2 --limit 10\n\n"
-                "Start with `gbi data copy --help` or `gbi data usage --help`.\n"
+                "All command flags are explained below. For a command's usage and examples,\n"
+                "use e.g. `gbi data copy --help` or `gbi data usage --help`.\n"
                 "Ordinary transfers use site classification and normal Unix permissions;\n"
                 "--prefect additionally requires both paths to be personal storage roots."),
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -90,7 +112,10 @@ def parser():
                 "By default, up to 8 GiB runs in your shell; larger or slow-to-scan trees\n"
                 "use Slurm (site settings may differ). Existing allocations are reused.\n"
                 "Ctrl-C stops foreground work; when following a submitted Slurm job, it\n"
-                "only detaches the display. Reconnect with: gbi data status ID --watch\n\n"
+                "only detaches the display. Reconnect with: gbi data status ID --watch\n"
+                "Choose at most one of --detach, --local and --prefect.\n"
+                "Choose either --pack or --pack-small; they cannot be combined.\n"
+                "Restore archives/chunks to Lustre or FSS without packing/chunking flags.\n\n"
                 "--prefect submits individual files through the personal Object Storage route;\n"
                 "it does not create tar/gzip archives. FSS archives and all restores require\n"
                 "matching relative paths. Packing, chunks, and deleting Object Storage\n"
@@ -108,14 +133,14 @@ def parser():
         command.add_argument("destination", help="destination file or directory path")
         selection = command.add_argument_group("selection")
         selection.add_argument("--include", action="append", default=[], metavar="GLOB",
-                               help="select matching basenames (case-sensitive; repeatable)")
+                               help="select basenames matching any supplied pattern; quote globs such as '*.pt' (case-sensitive; repeatable; default: all files)")
         selection.add_argument("--exclude", action="append", default=[], metavar="GLOB",
                                help="skip matching basenames (repeatable; wins over --include)")
         archive = command.add_mutually_exclusive_group()
         archive.add_argument("--pack", choices=("tar", "gzip"),
-                             help="pack one directory into .gbi.tar or .gbi.tar.gz; very large file lists need smaller folders")
+                             help="pack one directory: tar is uncompressed, gzip compresses; destination must end in .gbi.tar or .gbi.tar.gz (ordinary route only)")
         archive.add_argument("--pack-small", action="store_true",
-                             help="pack small-file subdirectories that fit archive limits; preview with --dry-run")
+                             help="automatically pack eligible small-file subdirectories; transfer the rest as individual files; preview with --dry-run (ordinary route only)")
         command.add_argument("--chunk-size", type=byte_size, metavar="SIZE",
                              help="verified resumable parts, e.g. 64MiB (ordinary route only)")
         command.add_argument("--delete-source", action="store_true",
@@ -142,7 +167,7 @@ def parser():
         epilog="Example:\n  gbi data retry TRANSFER_ID --wait",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    retry.add_argument("job_id", metavar="TRANSFER_ID")
+    retry.add_argument("job_id", metavar="TRANSFER_ID", help="printed ID of the saved Prefect request")
     retry.add_argument("--wait", action="store_true", help="wait for the existing migration's result")
     verbs.add_parser(
         "roots", help="show your available personal storage roots",
@@ -169,6 +194,8 @@ def parser():
     # subparser metavar above intentionally leaves this choice undocumented.
     run = verbs.add_parser("_run")
     run.add_argument("run_dir", type=Path)
+    data.epilog = command_reference(verbs)
+    result.epilog += "\n\n" + data.epilog
     return result
 
 
