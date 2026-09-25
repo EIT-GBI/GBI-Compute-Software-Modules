@@ -12,6 +12,24 @@ from unittest.mock import patch
 from gbi_data import archives
 
 
+class CountingBytesIO(io.BytesIO):
+    def __init__(self, value=b"", max_read=None):
+        super().__init__(value)
+        self.max_read = max_read
+        self.read_calls = []
+        self.write_calls = []
+
+    def read(self, size=-1):
+        if self.max_read is not None and size >= 0:
+            size = min(size, self.max_read)
+        self.read_calls.append(size)
+        return super().read(size)
+
+    def write(self, value):
+        self.write_calls.append(len(value))
+        return super().write(value)
+
+
 class Archives(unittest.TestCase):
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
@@ -345,6 +363,39 @@ class Archives(unittest.TestCase):
                 self.assertLess(stream.tell(), 5000)
         for data in (b"\xff\xfe" * 500, b"\x1f\x8bBAD", b"ordinary"):
             self.assertFalse(archives.archive_marker(io.BytesIO(data)))
+
+    def test_plain_stream_buffering_preserves_manifest_and_restore(self):
+        payload = (bytes(range(256)) * (3 * 1024 * 1024 // 256 + 1))[:3 * 1024 * 1024]
+        (self.source / "large").write_bytes(payload)
+        output = CountingBytesIO()
+        manifest = archives.pack(self.source, output)
+        self.assertLess(len(output.write_calls), 64)
+
+        raw = output.getvalue()
+        reader = CountingBytesIO(raw)
+        archives.verify_archive(reader, manifest)
+        self.assertLess(len(reader.read_calls), 64)
+        target = self.base / "restored"
+        result = archives.restore(CountingBytesIO(raw), target)
+        self.assertTrue(result["verified"])
+        self.assertEqual((target / "large").read_bytes(), payload)
+
+    def test_tar_and_gzip_readers_handle_short_reads(self):
+        self.fixture()
+        for compression in (None, "gzip"):
+            with self.subTest(compression=compression):
+                output, manifest = self.packed(compression=compression)
+                reader = CountingBytesIO(output.getvalue(), max_read=137)
+                archives.verify_archive(reader, manifest)
+                target = self.base / f"short-{compression}"
+                result = archives.restore(
+                    CountingBytesIO(output.getvalue(), max_read=137), target
+                )
+                self.assertTrue(result["verified"])
+                self.assertEqual(
+                    (target / "nested" / "file\n odd.txt").read_bytes(),
+                    (self.source / "nested" / "file\n odd.txt").read_bytes(),
+                )
 
 
 if __name__ == "__main__":

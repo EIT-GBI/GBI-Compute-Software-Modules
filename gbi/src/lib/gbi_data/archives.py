@@ -203,7 +203,8 @@ def pack(source, output, compression=None, includes=(), exclusions=(), reserved_
     directories = {}
     manifest_bytes, observation_bytes, selected_bytes = 0, 0, 0
     mode = "w|gz" if compression in ("gzip", "tar.gz") else "w|"
-    with _directory(source) as root_fd, tarfile.open(fileobj=output, mode=mode, format=tarfile.PAX_FORMAT) as archive:
+    with _directory(source) as root_fd, tarfile.open(
+            fileobj=output, mode=mode, format=tarfile.PAX_FORMAT, bufsize=BLOCK) as archive:
         _add_json(archive, MARKER, {"format": FORMAT, "version": VERSION})
         for name, info, kind in _walk(source, reserved):
             _relative(name)
@@ -326,7 +327,8 @@ def _tar_reader(source):
         try:
             header = decoded.read(512)
             try:
-                with tarfile.open(fileobj=_PrefixReader(header, decoded), mode="r|") as archive:
+                with tarfile.open(
+                        fileobj=_PrefixReader(header, decoded), mode="r|", bufsize=BLOCK) as archive:
                     yield archive
             except tarfile.ReadError as error:
                 if header[:100].split(b"\0", 1)[0] == MARKER.encode():
