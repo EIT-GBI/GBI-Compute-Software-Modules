@@ -112,11 +112,16 @@ make GBI_MODULE_PATH=$HOME/local MODE=build neovim
 ```
 
 `make all` walks every discovered target without an `sm-opt-in` marker
-(today: `bat eza fish go ncdu neovim nu parallel-tar rclone rust uv zig`) — `cmake`,
-`llvm` and `zig-bootstrap` carry the marker, so ask for them by name. Under
-`MODE=build`, `all` installs `rust` and `zig` in default mode first — both
-*can* be built from source, but only against the opt-in `llvm` module, and
-everything else needs them — and then builds every target whose `module load`
-dependencies those two cover (today: `bat eza ncdu nu parallel-tar uv`);
-targets that need anything else are skipped and reported (`fish` and `neovim`
-load the opt-in `cmake`, and `go` and `rclone` have no build recipes).
+(today: `bat cargo-zigbuild cc eza fish gbi go java lfs make ncdu neovim
+nextflow nu parallel-tar rclone rust uv zig`) — `cmake`, `llvm` and
+`zig-bootstrap` carry the marker, so ask for them by name. The walk is ordered
+by the `module load` lines of the default-mode recipes (`tsort` over those
+edges: `cc` after `zig`, `make` after `cc`, `cargo-zigbuild` after `uv` and
+`cc`) and alphabetical otherwise. Under `MODE=build`, `all` installs `rust`
+and `zig` in default mode first — both *can* be built from source, but only
+against the opt-in `llvm` module, and everything else needs them — and then
+builds every target whose `module load` dependencies those two cover (today:
+`bat eza ncdu nu parallel-tar uv`); targets that need anything else are
+skipped and reported (`fish` and `neovim` load the opt-in `cmake`; `cargo-zigbuild`,
+`cc`, `gbi`, `go`, `java`, `lfs`, `make`, `nextflow` and `rclone` have no build
+recipes).

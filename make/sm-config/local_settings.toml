@@ -1,0 +1,5 @@
+name = "make"
+
+relocate = false
+destination = "{SM_ROOT}/make"
+modules = "{SM_ROOT}/modules"

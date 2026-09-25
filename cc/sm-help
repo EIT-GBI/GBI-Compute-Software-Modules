@@ -1,0 +1,3 @@
+cc, c++, ar, ranlib (+ ld on linux) over `zig cc` -- a build-essential that needs nothing from the host
+binaries target the fleet's oldest glibc (GLIBC_FLOOR in settings.toml: 2.35 = Ubuntu 22.04) and run on every host; zig ships the libc headers, so no libc6-dev anywhere
+c++ links libc++ statically: not for linking against host libstdc++ libraries -- that needs a real gcc; versioned by the zig release it wraps, which must be installed first ('make zig')

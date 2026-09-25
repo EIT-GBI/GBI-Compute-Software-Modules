@@ -99,9 +99,17 @@ idioms:
 - Build recipes set `variant = "compiled"` in `local_settings.toml` so source
   and binary installs of one version don't collide — and note Lmod then
   resolves a bare `module load <name>` to the `-compiled` one.
-- Build-mode dependencies are **only** declared as `module load` lines in
-  `sm-config-build/install.sh` — `make help` and `make all MODE=build` read
-  them from there.
+- Module dependencies are **only** declared as `module load` lines in
+  `install.sh` — `make help` reads them from there in both modes,
+  `make all MODE=build` from `sm-config-build/`, and the default-mode `make all`
+  orders its walk by the ones in `sm-config/` (a recipe lands after whatever
+  it loads). A default-mode recipe may load modules too — `cc` loads `zig`,
+  `make` loads `cc`, `cargo-zigbuild` loads `uv` and `cc`.
+- A recipe that needs a C compiler should `module load cc/<version>-zig` (see
+  `make/sm-config/install.sh`): the shims set `CC`/`CXX`/`AR`/`RANLIB`, need
+  nothing from the host, and pin the glibc floor. Keep zig's cache in the
+  staging dir (`export ZIG_GLOBAL_CACHE_DIR=$(pwd)/zig-cache`) so it is
+  cleaned up with it.
 
 ## Gotchas (each cost real time)
 
@@ -120,14 +128,32 @@ idioms:
   are correct by inspection, and state in your report which legs actually ran.
 - `make <name> MODE=build` on an sm-config-only recipe errors with a friendly
   stub — that's correct behavior, not a bug.
+- `module load <dep>` inside `install.sh` fails with "unknown module" although
+  the dep is installed in `./usr` ⇒ same stale-MODULEPATH cause as above, but
+  inside the install shell. Either re-run `make bootstrap` with
+  `GBI_MODULE_PATH` exported, or pass the Makefile's prelude knob for the test
+  install: `make <name> GBI_MODULE_PATH=$(pwd)/usr ML_INIT="source $(pwd)/opt/share/env.sh; module use $(pwd)/usr/modules"`.
+- `install.sh` runs with `BASH_ENV` pointing at simple-modules' strict-mode
+  prelude (`set -Eeuo pipefail`), and every non-interactive `bash` child
+  inherits it — `/bin/bash`-shebanged scripts such as autoconf's
+  `config.status` on Debian-family hosts then die on the first unset variable
+  (`CONFIG_FILES: unbound variable`). `unset BASH_ENV` before handing off to
+  autotools or anything else that spawns bash scripts (see
+  `make/sm-config/install.sh`); the current shell keeps its options and the
+  `to_lower`/`resolve_archive_name` helpers. macOS hides this: its
+  `/bin/sh` ignores `BASH_ENV`.
+- A smoke test of the form `<program> | grep -q pattern` can fail although the
+  output is right: `install.sh` runs under `set -o pipefail`, `grep -q` exits
+  on the first match, and the writer's SIGPIPE fails the pipeline. Capture to
+  a file, then grep the file (see `make/sm-config/install.sh`).
 - Cleanup of a test install: `make clean TARGET=<name> GBI_MODULE_PATH=./usr`.
 
 ## Docs checklist on promote
 
 1. `README.md` "Available modules" table — one row; the third column states
    MODE=build deps, or why there is no build mode.
-2. `README.md` — the two "(today: `...`)" target lists (alphabetical): the
-   `make all` walk list, and the MODE=build skipped/covered note.
+2. `docs/appendix.md` — the two "(today: `...`)" target lists (alphabetical):
+   the `make all` walk list, and the MODE=build skipped/covered note.
 3. `test/test_macos.sh` — hardcoded target lists: add to the default-mode
    block (with a comment if the platform lacks a binary, like eza/ncdu) and
    to the MODE=build block if a build recipe exists.

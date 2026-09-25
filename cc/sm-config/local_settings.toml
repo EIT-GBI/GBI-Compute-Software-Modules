@@ -1,0 +1,8 @@
+name = "cc"
+# versioned by the zig release it wraps, so the variant says what the front
+# end is -- a gcc-based sibling would be cc/<gcc version>-gnu
+variant = "zig"
+
+relocate = true
+destination = "{SM_ROOT}/cc"
+modules = "{SM_ROOT}/modules"

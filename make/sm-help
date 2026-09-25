@@ -1,0 +1,2 @@
+GNU make
+built from source through the cc module's zig shims (needs 'make cc' first) -- no host compiler, and the binary runs on every host of the fleet

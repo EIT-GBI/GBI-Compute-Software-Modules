@@ -280,7 +280,7 @@ and standalone.
 
 `make help` prints the live, auto-discovered version of this list — summaries
 come from each recipe's `sm-help`, versions from its `settings.toml`, and
-build dependencies from the `module load` lines of its `install.sh`.
+module dependencies from the `module load` lines of its `install.sh`.
 
 | Target | What it is | `MODE=build` |
 | --- | --- | --- |
@@ -300,6 +300,9 @@ build dependencies from the `module load` lines of its `install.sh`.
 | `java` | the Eclipse Temurin OpenJDK — `java`, `javac`, and a `JAVA_HOME` for JVM tools | no — bootstrapping a JDK from source needs an existing JDK |
 | `nextflow` | Nextflow — data-driven computational pipelines (standalone distribution) | no — upstream ships a single JVM executable; needs the `java` module at runtime |
 | `lfs` | the Lustre client utilities: `lfs`, `lctl`, `lfs_migrate`, `llstat` — Whamcloud's Ubuntu 24.04 `lustre-client-utils` deb (linux/amd64 only) plus the `libnl-genl-3` library the slurm images lack | no — the tools are useless without the host's Lustre kernel client, and compiling them needs its ABI headers |
+| `cc` | C/C++ compiler and binutils front ends over `zig cc`: `cc`, `c++`, `ar`, `ranlib` (+ `ld` on linux), pinned to the fleet's oldest glibc — a build-essential that needs nothing from the host, not even libc6-dev | no — a set of shims over the `zig` module, which it `depends_on`; versioned by that zig |
+| `make` | GNU make, built through the `cc` module's shims: no host compiler needed, and the binary runs on every host | no — the source build *is* the default: GNU make's tarball builds itself with its `build.sh`, no make required |
+| `cargo-zigbuild` | `cargo build` with zig as the linker — rust on hosts without a system linker; loading it also routes plain `cargo build` / `cargo install` and the `cc` crate through zig, pinned to the `cc` module's glibc floor | no — installed from the PyPI wheel with `uv`; `cargo install`ing it would need the very linker it provides |
 
 Upstream `eza` and `ncdu` ship no macOS binaries, so their default-mode recipes
 fail fast on darwin with a pointer to `make <target> MODE=build`.
@@ -331,8 +334,11 @@ root directory holding an `sm-config/` or `sm-config-build/` recipe, so the new
 name is immediately a target, walked by `all`, and listed by `make help`.
 Optionally add an `sm-help` file (line 1: summary, remaining lines: notes) to
 describe it in the help output, and an `sm-opt-in` marker file to keep it out
-of `make all`. Build-mode dependencies are not declared anywhere extra — they
-are read from the `module load` lines of `install.sh`.
+of `make all`. Module dependencies are not declared anywhere extra — they are
+read from the `module load` lines of `install.sh`, in either mode: `make help`
+lists them, and `make all` installs a default-mode recipe after whatever its
+`install.sh` loads (`cc` after `zig`, `make` after `cc`, `cargo-zigbuild`
+after `uv` and `cc`), alphabetically otherwise.
 
 ### From a template
 
