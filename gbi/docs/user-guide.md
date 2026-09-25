@@ -16,8 +16,10 @@ gbi --version
 gbi data roots
 ```
 
-This guide accompanies GBI 0.4.7. Use `gbi --version` to check the module you
-loaded, and `gbi data copy --help` for its supported options.
+This guide accompanies GBI 0.4.8. Use `gbi --version` to check the module you
+loaded. `gbi --help` and `gbi data --help` show the complete public flag
+reference grouped by command; each nested command's `--help` remains the
+authoritative detailed usage and example text.
 
 The `roots` command prints the configured user-facing paths. Use those aliases
 in commands instead of guessing an internal shard path.
@@ -119,8 +121,8 @@ paths must be plain paths without
 wildcards, and reserved transfer-state prefixes are rejected. The route does
 not support exclusions, packing, chunking or Object Storage source deletion.
 
-Use `gbi data copy --help` and `gbi data move --help` for the installed parser's
-current wording. If you need packing, exclusions or chunks, omit `--prefect`
+Use the nested command help for the installed parser's current wording. If you
+need packing, exclusions or chunks, omit `--prefect`
 and keep those options on the ordinary route. If you need direct individual
 Object Storage objects, keep `--prefect` and remove the unsupported options;
 do not approximate either route with a second command.
