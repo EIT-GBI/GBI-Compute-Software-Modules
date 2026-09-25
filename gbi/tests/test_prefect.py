@@ -54,8 +54,8 @@ class Prefect(unittest.TestCase):
                 self.options("lustre", "alluxio", flag)
         self.assertFalse(cli.parser().parse_args(["data", "copy", "a", "b"]).prefect)
 
-    def test_unsupported_filters_deletion_and_paths_refused(self):
-        for flags in (("--exclude", "*.tmp"), ("--delete-source",)):
+    def test_unsupported_packing_deletion_and_paths_refused(self):
+        for flags in (("--pack", "tar"), ("--delete-source",)):
             with self.assertRaises(ValueError):
                 prefect.prepare(self.options("lustre", "alluxio", *flags), self.site)
         for path in (self.base / "shared", self.site.roots["lustre"] / ".." / "other",
@@ -63,6 +63,24 @@ class Prefect(unittest.TestCase):
             options = self.options()
             options.source = str(path)
             with self.assertRaises(ValueError):
+                prefect.prepare(options, self.site)
+
+    def test_exclusions_preserve_selection_for_all_routes(self):
+        for source, target in (("lustre", "alluxio"), ("fss", "alluxio"),
+                               ("alluxio", "lustre"), ("alluxio", "fss")):
+            options = self.options(source, target, "--include", "*.pt", "--include", "*.pt.*",
+                                   "--exclude", "*.tmp", "--exclude", "unfinished*")
+            with self.subTest(source=source, target=target):
+                request = prefect.prepare(options, self.site)
+                self.assertEqual(request["include"], ["*.pt", "*.pt.*"])
+                self.assertEqual(request["exclude"], ["*.tmp", "unfinished*"])
+        self.assertNotIn("exclude", prefect.prepare(self.options(), self.site))
+
+    def test_invalid_exclusions_are_rejected_before_submission(self):
+        for patterns in (["subdir/*.pt"], [""], ["a\nb"], ["{a,b}"], ["x" * 256], ["*.tmp"] * 101):
+            options = self.options()
+            options.exclude = patterns
+            with self.subTest(patterns=patterns), self.assertRaisesRegex(ValueError, "--exclude"):
                 prefect.prepare(options, self.site)
 
     def test_fixed_layout_and_include_preserved(self):
@@ -73,10 +91,15 @@ class Prefect(unittest.TestCase):
             prefect.prepare(options, self.site)
 
     def test_dry_run_creates_no_state_or_submission(self):
-        with patch("gbi_data.prefect.exchange") as exchange:
-            self.assertEqual(prefect.start(self.options("lustre", "alluxio", "--dry-run"), self.site, self.home), 0)
+        output = io.StringIO()
+        with patch("gbi_data.prefect.exchange") as exchange, contextlib.redirect_stdout(output):
+            options = self.options("lustre", "alluxio", "--dry-run", "--include", "*.pt",
+                                   "--exclude", "unfinished*")
+            self.assertEqual(prefect.start(options, self.site, self.home), 0)
         exchange.assert_not_called()
         self.assertFalse(self.home.exists())
+        self.assertIn('Include basenames: ["*.pt"]', output.getvalue())
+        self.assertIn('Exclude basenames: ["unfinished*"]', output.getvalue())
 
     def test_socket_exchange_uses_saved_request_and_validates_reply(self):
         request = prefect.prepare(self.options(), self.site)
@@ -221,9 +244,11 @@ class Prefect(unittest.TestCase):
         with patch("gbi_data.prefect.exchange", side_effect=lost_reply), \
              patch("sys.stdout.isatty", return_value=False):
             with self.assertRaisesRegex(ValueError, "lost reply"):
-                prefect.start(self.options(), self.site, self.home)
+                prefect.start(self.options("lustre", "alluxio", "--include", "*.pt",
+                                           "--exclude", "unfinished*"), self.site, self.home)
         run_dir = next((self.home / "runs").iterdir())
         persisted = (run_dir / "request.json").read_bytes()
+        self.assertEqual(sent[0]["exclude"], ["unfinished*"])
         response = {"version": 1, "state": "RUNNING", "terminal": False}
         with patch("gbi_data.prefect.exchange", return_value=response) as exchange:
             self.assertEqual(prefect.submit(run_dir, self.site), 0)

@@ -118,3 +118,20 @@ paths.
 See [SPEC.md](../SPEC.md), [ARCHITECTURE.md](../ARCHITECTURE.md) and the
 repository [AGENTS.md](../../AGENTS.md) for implementation boundaries and
 harness rules.
+### Python archive codec package
+
+`pyproject.toml` builds the existing `gbi_data` archive implementation as the
+dependency-free `gbi-archive-codec` wheel. The package boundary reuses
+`gbi_data.archives` and its selection helper without copying codec source; the
+Prefect Object Storage backend does not consume this wheel yet. It contains no
+installed CLI executable or `gbi` SDK; researchers should load the normal module.
+From the repository root, test the isolated wheel with an interpreter that has
+`pip`, `setuptools>=61` and `wheel` installed:
+
+```bash
+python -B -m unittest discover -s gbi/tests -p test_archive_package.py -v
+```
+
+The test builds and installs only into a temporary directory, checks that the
+wheel contains the unchanged codec source, and exercises tar and gzip with
+include/exclude filters. It skips when offline build tooling is unavailable.

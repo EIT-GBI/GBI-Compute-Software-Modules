@@ -16,8 +16,12 @@ gbi --version
 gbi data roots
 ```
 
-This guide accompanies GBI 0.4.7. Use `gbi --version` to check the module you
+This guide accompanies GBI 0.4.8. Use `gbi --version` to check the module you
 loaded, and `gbi data copy --help` for its supported options.
+
+Prefect exclusions are new in this version and require the matching site broker
+and flow update. Until your site enables them, a request with exclusions is
+rejected before submission; the filters are never silently ignored.
 
 The `roots` command prints the configured user-facing paths. Use those aliases
 in commands instead of guessing an internal shard path.
@@ -90,7 +94,7 @@ rejects the option. Normal source, destination and collision checks still apply.
 | Option | Ordinary automatic / Slurm | Existing allocation | Prefect |
 | --- | --- | --- | --- |
 | `--include` | Yes, recursive filename globs | Yes | Yes, up to 100 plain globs |
-| `--exclude` | Yes; exclusions win | Yes | No |
+| `--exclude` | Yes; exclusions win | Yes | Yes, with updated site broker and flows |
 | `--pack tar/gzip` | Yes | Yes | No |
 | `--pack-small` | Yes; use with `--dry-run` to review | Yes | No |
 | `--chunk-size SIZE` | Yes for regular files and new packs | Yes | No |
@@ -117,10 +121,10 @@ the Prefect archive-from-Lustre operation, whose relative names may differ.
 Different names are otherwise available only on the ordinary route. Prefect
 paths must be plain paths without
 wildcards, and reserved transfer-state prefixes are rejected. The route does
-not support exclusions, packing, chunking or Object Storage source deletion.
+not yet support packing, chunking or Object Storage source deletion.
 
 Use `gbi data copy --help` and `gbi data move --help` for the installed parser's
-current wording. If you need packing, exclusions or chunks, omit `--prefect`
+current wording. If you need packing or chunks, omit `--prefect`
 and keep those options on the ordinary route. If you need direct individual
 Object Storage objects, keep `--prefect` and remove the unsupported options;
 do not approximate either route with a second command.
@@ -371,19 +375,25 @@ data.move(
     "/your/object/run",
     include=["*.pt", "*.pt.*"],
     prefect=True,
+    exclude="unfinished*",
 )
 ```
 
-The Prefect call cannot use `pack`, `pack_small`, `chunk_size`, `exclude` or
+Inside a Slurm allocation this still submits a separate managed transfer job
+as your user. That transfer may wait for cluster resources while your Python
+call waits for completion; allow for queue time in the calling job's time limit.
+No notebook or browser session is required.
+
+The Prefect call cannot yet use `pack`, `pack_small`, `chunk_size` or
 `delete_source`. It is a managed migration submission, so a lost reply is
 recovered with `gbi data retry TRANSFER_ID`, not by blindly submitting a new
 copy. Its flow receipts remain the authority for per-file verification.
 
-Objects copied through the ordinary Alluxio/Object Storage route may not have
-the Prefect metadata required by the direct route. To reuse such legacy
-objects, use the ordinary route so GBI can perform its full destination
-readback and collision checks; do not add `--prefect` just because the files
-are in Object Storage.
+When archiving, Prefect needs integrity metadata to reuse an object already at
+the destination. An object uploaded through Alluxio or another tool may lack
+that metadata. Use the ordinary route to verify and reuse such a destination.
+Restoring ordinary objects through Prefect does not require that archive-upload
+metadata; the restore still verifies object identity, size and copied content.
 
 ## Cached usage
 
@@ -407,10 +417,15 @@ separate maintained owner process and is not started by this command.
 ### “unsupported” or “cannot be combined”
 
 Check the route matrix and the installed `--help`. The most common cases are
-using `--prefect` with `--pack`, `--exclude`, `--chunk-size` or
+using `--prefect` with `--pack`, `--chunk-size` or
 `--delete-source`. Remove those options and use the ordinary route, or change
 the operation to one the Prefect route supports. `--pack` and `--pack-small`
 also cannot be combined.
+
+If a Prefect exclusion request reports an unsupported submission field or says
+exclusions are not enabled, the site's broker or flows still need updating.
+Keep the exclusion and use the ordinary route until that update is installed;
+removing it would change which files you transfer or delete.
 
 ### The destination already exists
 

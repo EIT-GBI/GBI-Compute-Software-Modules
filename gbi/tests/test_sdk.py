@@ -68,9 +68,12 @@ class SDK(unittest.TestCase):
         data.copy("source", "target", pack_small=True, dry_run=True)
         self.assertTrue(self.parsed().pack_small)
         self.assertTrue(self.parsed().dry_run)
-        data.move("source", "target", prefect=True)
+        data.move("source", "target", prefect=True, include=["*.pt", "*.pt.*"],
+                  exclude="unfinished*")
         self.assertTrue(self.parsed().prefect)
         self.assertTrue(self.parsed().wait)
+        self.assertEqual(self.parsed().include, ["*.pt", "*.pt.*"])
+        self.assertEqual(self.parsed().exclude, ["unfinished*"])
 
     def test_failure_raises_original_exit_code(self):
         with patch.dict(os.environ, {"GBI_SDK_TEST_FAIL": "1"}):

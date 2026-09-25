@@ -38,8 +38,6 @@ class _NoRedirect(urlrequest.HTTPRedirectHandler):
 
 def prepare(options, site):
     unsupported = []
-    if options.exclude:
-        unsupported.append("--exclude")
     unsupported.extend(flag for flag, key in (("--pack", "pack"), ("--pack-small", "pack_small"),
                                                ("--chunk-size", "chunk_size"))
                       if getattr(options, key, None))
@@ -48,10 +46,12 @@ def prepare(options, site):
         raise ValueError(f"--prefect cannot be combined with {flags}; omit --prefect for an ordinary transfer")
     if options.delete_source:
         raise ValueError("--prefect cannot be combined with --delete-source; use an ordinary move to request source deletion")
-    if len(options.include) > 100 or any(
-            not pattern or len(pattern.encode()) > 255 or not pattern.isprintable()
-            or any(character in pattern for character in "/\\{}") for pattern in options.include):
-        raise ValueError("Prefect include patterns must be quoted file-name globs (at most 100 patterns)")
+    for name in ("include", "exclude"):
+        patterns = getattr(options, name)
+        if len(patterns) > 100 or any(
+                not pattern or len(pattern.encode()) > 255 or not pattern.isprintable()
+                or any(character in pattern for character in "/\\{}") for pattern in patterns):
+            raise ValueError(f"Prefect --{name} requires quoted file-name globs (at most 100 patterns)")
 
     def personal(path):
         path = Path(path).expanduser().absolute()
@@ -81,9 +81,14 @@ def prepare(options, site):
             raise ValueError("--prefect requires plain paths without wildcard characters")
         if any(part.startswith((".gbi", ".prefect", "prefect-transfer-dev")) for part in value.split("/")):
             raise ValueError("transfer state and development prefixes are reserved")
-    return {"version": 1, "action": "submit", "request_id": str(uuid.uuid4()),
-            "operation": operation, "verb": options.verb, "source": source,
-            "destination": target, "include": options.include}
+    request = {"version": 1, "action": "submit", "request_id": str(uuid.uuid4()),
+               "operation": operation, "verb": options.verb, "source": source,
+               "destination": target, "include": options.include}
+    # Keep existing requests unchanged; older brokers must reject an unknown
+    # selection field rather than silently submit a broader transfer.
+    if options.exclude:
+        request["exclude"] = options.exclude
+    return request
 
 
 def _validate_result(raw):
@@ -244,6 +249,9 @@ def submit(run_dir, site, wait=False):
 def start(options, site, home):
     request = prepare(options, site)
     print(f"Prefect {request['operation']}: {request['source']} → {request['destination']}")
+    for selection in ("include", "exclude"):
+        if request.get(selection):
+            print(f"{selection.capitalize()} basenames: {json.dumps(request[selection])}")
     print("Sources: delete verified filesystem originals." if options.verb == "move" and request["operation"].startswith("archive-")
           else "Sources: keep originals.")
     if options.dry_run:

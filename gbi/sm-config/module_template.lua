@@ -14,7 +14,8 @@ data.move() verifies then removes selected filesystem originals; both calls wait
 
 Use --pack tar or --pack gzip to make a portable archive. Restore with copy.
 Use --prefect / Python prefect=True for direct individual Object Storage files;
-this route cannot use packing, exclusions, chunks or --delete-source.
+this route cannot use packing, chunks or --delete-source. Prefect exclusions
+require an updated site broker and flow deployment.
 Inside a Slurm job, ordinary CLI and Python calls reuse the current allocation.
 
 Command help: gbi data copy --help

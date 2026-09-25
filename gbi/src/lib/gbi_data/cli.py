@@ -93,8 +93,9 @@ def parser():
                 "only detaches the display. Reconnect with: gbi data status ID --watch\n\n"
                 "--prefect submits individual files through the personal Object Storage route;\n"
                 "it does not create tar/gzip archives. FSS archives and all restores require\n"
-                "matching relative paths. Exclusions, packing, chunks, and deleting Object Storage\n"
+                "matching relative paths. Packing, chunks, and deleting Object Storage\n"
                 "originals are unavailable with --prefect; omit it for an ordinary transfer.\n"
+                "Prefect exclusions require an updated site broker and flow deployment.\n"
                 "After a lost submission reply: gbi data retry ID (same saved request).\n\n"
                 f"Examples:\n  gbi data {verb} SOURCE DESTINATION --dry-run\n"
                 f"  gbi data {verb} SOURCE DESTINATION --detach\n"
@@ -109,7 +110,7 @@ def parser():
         selection.add_argument("--include", action="append", default=[], metavar="GLOB",
                                help="select matching basenames (case-sensitive; repeatable)")
         selection.add_argument("--exclude", action="append", default=[], metavar="GLOB",
-                               help="skip matching basenames (repeatable; wins over --include; ordinary route only)")
+                               help="skip matching basenames (repeatable; wins over --include)")
         archive = command.add_mutually_exclusive_group()
         archive.add_argument("--pack", choices=("tar", "gzip"),
                              help="pack one directory into .gbi.tar or .gbi.tar.gz; very large file lists need smaller folders")

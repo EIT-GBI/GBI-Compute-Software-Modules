@@ -46,7 +46,8 @@ allocation and is normally unnecessary because allocation reuse is automatic.
 
 Use `--prefect` for a managed personal Object Storage migration. It writes
 individual objects directly and does not create tar archives. The Prefect route
-is intentionally narrower; see the route matrix in
+supports repeatable include and exclude filters (exclusions require the updated
+site broker and flows). See the route matrix in
 [the user guide](docs/user-guide.md).
 Ordinary routing can use any mounted path your Unix account can access; the
 configured roots are path and storage-type hints. Prefect applies stricter
