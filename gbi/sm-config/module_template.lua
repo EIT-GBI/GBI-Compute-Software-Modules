@@ -5,6 +5,7 @@ verified sources. Alluxio originals stay unless --delete-source is explicit.
   gbi data move SOURCE DESTINATION
   gbi data copy SOURCE DESTINATION
   gbi data status JOB_ID --watch
+  gbi data retry TRANSFER_ID
   gbi data roots
   gbi data usage [PATH] --depth N --limit N
 
