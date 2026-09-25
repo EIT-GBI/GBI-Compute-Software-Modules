@@ -25,6 +25,27 @@ class CLIHelp(unittest.TestCase):
         self.assertIn("ordinary transfer", copy)
         self.assertNotIn("_run", data)
 
+    def test_overviews_explain_all_public_flags_without_another_help_command(self):
+        for arguments in ((), ("data",)):
+            with self.subTest(arguments=arguments):
+                text = self.help_text(*arguments)
+                normalized = " ".join(text.split())
+                for flag in ("--include GLOB", "--exclude GLOB", "--pack {tar,gzip}",
+                             "--pack-small", "--chunk-size SIZE", "--delete-source",
+                             "--dry-run", "--detach", "--wait", "--local", "--prefect",
+                             "--watch", "--depth DEPTH", "--limit LIMIT"):
+                    self.assertIn(flag, text)
+                for explanation in ("matching any supplied pattern", "wins over --include",
+                                    "tar is uncompressed, gzip compresses",
+                                    "transfer the rest as individual files",
+                                    "verified resumable parts", "ordinary move only",
+                                    "run inside the current Slurm allocation",
+                                    "follow until the transfer finishes",
+                                    "levels below PATH", "top N folders at each level"):
+                    self.assertIn(explanation, normalized)
+                self.assertIn("unavailable with --prefect", normalized)
+                self.assertNotIn("_run", text)
+
     def test_usage_help_defines_path_and_top_n_levels(self):
         usage = self.help_text("data", "usage")
         self.assertIn("relative to your own Lustre root", usage)
