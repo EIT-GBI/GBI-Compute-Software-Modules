@@ -190,9 +190,16 @@ representable metadata also agrees. Existing directory permissions are kept.
 Special files, unsafe member paths and conflicting destinations fail clearly.
 
 Packing streams directly to its destination unless chunking is requested.
+Before opening an output, GBI checks that its file list and source metadata fit
+the archive's 64 MiB metadata limits. A directory with millions of small files
+can exceed these limits even when its payload is small. If this happens, the
+source and any existing destination are kept. Choose smaller source folders or
+preview `--pack-small --dry-run` to pack suitable subfolders; normal copy/move
+restores their original directory layout. `--chunk-size` splits payload bytes
+and does not increase the metadata limit.
 Archive restore uses Slurm when the decoded size is unknown; an existing
-allocation is reused. Progress shows packing, verification and extraction as
-separate phases. The file count treats each archive as one transfer unit, while
+allocation is reused. Progress shows metadata checks, packing, verification and
+extraction as separate phases. The file count treats each archive as one transfer unit, while
 verified bytes count the selected logical payload.
 
 ## Call GBI from Python inside a Slurm job
@@ -385,6 +392,8 @@ is labelled as a lower bound and does not authorize packing; narrow the source i
 the scan budget is exceeded.
 The worker rechecks qualification and verifies the resulting archive before any
 source removal. A mixed restore unpacks generated archives alongside loose files.
+Qualification includes conservative archive metadata budgets, so a small
+payload alone does not qualify a directory containing too many entries.
 
 ## Resume large files or archives in verified parts
 
@@ -600,8 +609,8 @@ GBI_SITE_PARTITION=site-partition make gbi
 
 For a shared cluster installation, run the recipe as a software maintainer
 from the reviewed release checkout and add `GBI_MODULE_PATH=/site/shared/software`
-to the `make` command. Software goes under `gbi/0.4.3` and the modulefile under
-`modules/gbi/0.4.3.lua` in that tree. Use the same install root as the cluster's
+to the `make` command. Software goes under `gbi/0.4.4` and the modulefile under
+`modules/gbi/0.4.4.lua` in that tree. Use the same install root as the cluster's
 existing rclone module. When its `modules` directory is already in the shared
 Lmod environment, users only need `module load gbi`; no per-user installation,
 container rebuild or login-node restart is required. Check `module show gbi`,

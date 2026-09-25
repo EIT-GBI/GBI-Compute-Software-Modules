@@ -7,6 +7,7 @@ Use --detach to submit to Slurm; add --wait to wait for completion.
 Use --include and --exclude with quoted file-name patterns to select files.
 Use --pack tar or --pack gzip to create a GBI archive; copy restores it automatically.
 Use --pack-small --dry-run to review small-subdirectory packing and destination layout.
+If an archive's file list is too large, choose smaller folders or preview --pack-small.
 Use --chunk-size 64MiB for verified resumable parts; repeat the command to resume.
 Use --prefect for a managed personal-storage migration; --wait follows its state.
 Omit --prefect to verify and reuse existing files copied through ordinary GBI/Alluxio.

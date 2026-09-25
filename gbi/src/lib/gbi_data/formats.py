@@ -122,6 +122,8 @@ def _source_bytes(manifest):
 
 def _pack_direct(task, source, target, journal_path, journal, report, settle):
     options = _pack_options(task)
+    report("checking archive metadata")
+    archives.check_metadata_budget(source, **options)
     if os.path.lexists(target):
         if journal.get("phase") == "writing" and journal.get("owned") == _identity(target):
             _owned_remove(target, journal["owned"], Path(task["target_root"]))
@@ -152,6 +154,9 @@ def _stage_archive(task, source, target, state, key, report):
     scratch = Path(task["scratch_root"])
     if state == scratch or scratch not in state.parents or state.resolve() != state or scratch.resolve() != scratch:
         raise ValueError("archive staging requires the configured Lustre scratch state")
+    options = _pack_options(task)
+    report("checking archive metadata")
+    archives.check_metadata_budget(source, **options)
     staging = state / "format-staging" / key
     staging.mkdir(parents=True, exist_ok=True, mode=0o700)
     if staging.resolve() != staging:
@@ -161,7 +166,6 @@ def _stage_archive(task, source, target, state, key, report):
     if not name.endswith(suffix):
         raise ValueError(f"packed output must use an exact {suffix} pathname")
     payload, journal_path = staging / name, staging / "stage.json"
-    options = _pack_options(task)
     intent = {"source": str(source), "options": options}
     if journal_path.exists():
         saved = json.loads(journal_path.read_text())

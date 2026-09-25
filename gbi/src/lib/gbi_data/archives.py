@@ -103,6 +103,89 @@ def _add_json(archive, name, value):
     archive.addfile(member, io.BytesIO(data))
 
 
+def _metadata_entry(name, info, kind, target=None):
+    """Describe an entry without reading payload; SHA256 has a fixed width."""
+    entry = {"path": name, "type": kind, "mode": stat.S_IMODE(info.st_mode) & 0o777,
+             "mtime_ns": info.st_mtime_ns, "size": 0 if kind == "directory" else info.st_size}
+    if kind != "directory":
+        entry["sha256"] = "0" * 64
+    if target is not None:
+        entry["target"] = target
+    return entry
+
+
+def _manifest_size(entries_bytes, count):
+    envelope = len(_json({"format": FORMAT, "version": VERSION, "entries": []}))
+    return envelope + entries_bytes + max(0, count - 1)
+
+
+def check_metadata_budget(source, compression=None, includes=(), exclusions=(), reserved_names=(), max_bytes=None):
+    """Reject oversized metadata before a caller opens or replaces an output.
+
+    Read names, file metadata and symlink targets only. Packing still rechecks
+    the live source and enforces both bounds; this estimate never authorizes
+    source deletion or destination reuse.
+    """
+    if compression not in (None, "tar", "gzip", "tar.gz"):
+        raise ArchiveError("compression must be tar or gzip")
+    source = Path(source)
+    if source.is_symlink() or not source.is_dir() or source.resolve() != source.absolute():
+        raise ArchiveError("archive source must be a directory without symlink parents")
+    reserved = (".gbi", ".prefect-*", "transfer-locks", *reserved_names)
+    directories, hardlinks = {}, {}
+    required, nonempty = set(), set()
+    entries_bytes = count = observation_bytes = selected_bytes = 0
+
+    def account(entry):
+        nonlocal entries_bytes, count
+        entries_bytes += len(_json(entry))
+        count += 1
+        if _manifest_size(entries_bytes, count) > MAX_MANIFEST:
+            raise ArchiveError("archive manifest exceeds the 64 MiB supported limit; "
+                               "choose smaller source folders or use --pack-small")
+
+    with _directory(source) as root_fd:
+        root_before = _observation(os.fstat(root_fd))
+        for name, info, kind in _walk(source, reserved):
+            _relative(name)
+            observation_bytes += len(_json([name, _observation(info)]))
+            if observation_bytes > MAX_MANIFEST:
+                raise ArchiveError("source observation inventory exceeds the 64 MiB supported limit; "
+                                   "choose smaller source folders or use --pack-small")
+            nonempty.add(str(PurePosixPath(name).parent))
+            if kind == "directory":
+                directories[name] = info
+                continue
+            if not matches(Path(name).name, includes, exclusions):
+                continue
+            if kind == "special":
+                raise ArchiveError(f"selected source is an unsupported special file: {name!r}")
+            selected_bytes += info.st_size
+            if max_bytes is not None and selected_bytes > max_bytes:
+                raise ArchiveError("selected source exceeds the foreground byte budget; source kept; retry through Slurm")
+            target = None
+            if kind == "symlink":
+                with _parent(root_fd, name, create=False) as (parent, leaf):
+                    target = os.readlink(leaf, dir_fd=parent)
+            elif (info.st_dev, info.st_ino) in hardlinks:
+                kind, target = "hardlink", hardlinks[(info.st_dev, info.st_ino)]
+            else:
+                hardlinks[(info.st_dev, info.st_ino)] = name
+            account(_metadata_entry(name, info, kind, target))
+            required.update(str(parent) for parent in PurePosixPath(name).parents if str(parent) != ".")
+        required.update(name for name in directories
+                        if name not in nonempty and matches(Path(name).name, includes, exclusions))
+        for name in list(required):
+            required.update(str(parent) for parent in PurePosixPath(name).parents if str(parent) != ".")
+        for name, info in directories.items():
+            if name in required:
+                account(_metadata_entry(name, info, "directory"))
+        if _observation(os.fstat(root_fd)) != root_before or _observation(source.lstat()) != root_before:
+            raise ArchiveError("source directory changed during archive preflight; source kept")
+    return {"entries": count, "manifest_bytes": _manifest_size(entries_bytes, count),
+            "observation_bytes": observation_bytes}
+
+
 def pack(source, output, compression=None, includes=(), exclusions=(), reserved_names=(), max_bytes=None):
     """Stream a directory into standard tar/tar+gzip; return cleanup observations.
 

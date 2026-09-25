@@ -1,5 +1,6 @@
 """Encoded logical transfers reuse worker receipts, locks and cleanup rules."""
 
+import hashlib
 import io
 import json
 import os
@@ -60,6 +61,80 @@ class Formats(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "no longer qualifies"):
             transfer(task)
         self.assertFalse(Path(task["format_target"]).exists())
+
+    def test_manifest_limit_is_rejected_before_payload_or_target_for_tar_and_gzip(self):
+        for index in range(20):
+            (self.source / f"tiny-{index}").write_bytes(b"x")
+
+        before = sorted((path.relative_to(self.source).as_posix(), path.read_bytes())
+                        for path in self.source.iterdir())
+        with patch.object(archives, "MAX_MANIFEST", 2048), \
+                patch.object(archives._HashReader, "read",
+                              side_effect=AssertionError("payload read before metadata preflight")):
+            for pack, suffix in (("tar", ".gbi.tar"), ("gzip", ".gbi.tar.gz")):
+                for chunk_size in (None, 4096):
+                    with self.subTest(pack=pack, chunk_size=chunk_size):
+                        task = self.task(pack=pack, chunk_size=chunk_size,
+                                         format_target=str(self.target_root / ("bundle" + suffix)))
+                        with self.assertRaisesRegex(ValueError, "manifest|observation"):
+                            transfer(task)
+                        self.assertFalse(Path(task["format_target"]).exists())
+                        self.assertFalse(Path(task["receipt"]).exists())
+                        self.assertFalse((self.state / "format-staging").exists())
+                        self.assertEqual(before, sorted(
+                            (path.relative_to(self.source).as_posix(), path.read_bytes())
+                            for path in self.source.iterdir()))
+                        self.assertEqual(list((self.state / "pending").iterdir()), [])
+
+    def test_source_observation_limit_is_rejected_before_target_creation(self):
+        before = sorted(path.name for path in self.source.iterdir())
+        for index in range(100):
+            (self.source / f"empty-{index}").mkdir()
+
+        task = self.task()
+        with patch.object(archives, "MAX_MANIFEST", 4096):
+            with self.assertRaisesRegex(ValueError, "manifest|observation"):
+                transfer(task)
+        self.assertFalse(Path(task["format_target"]).exists())
+        self.assertFalse(Path(task["receipt"]).exists())
+        self.assertEqual(sorted(path.name for path in self.source.iterdir()),
+                         sorted(before + [f"empty-{index}" for index in range(100)]))
+
+    def test_owned_partial_is_retained_until_metadata_preflight_passes(self):
+        for index in range(20):
+            (self.source / f"tiny-{index}").write_bytes(b"x")
+        task = self.task()
+        target = Path(task["format_target"])
+        target.write_bytes(b"owned partial archive")
+        key = hashlib.sha256(os.fsencode(target)).hexdigest()
+        journal_path = self.state / "pending" / (key + ".format.json")
+        intent = {"source": str(self.source), "target": str(target), "action": "pack",
+                  "pack": "tar", "chunk_size": None, "include": [], "exclude": []}
+        journal = {"intent": intent, "phase": "writing", "owned": formats._identity(target)}
+        journal_path.write_text(json.dumps(journal))
+        with patch.object(archives, "MAX_MANIFEST", 2048):
+            with self.assertRaisesRegex(ValueError, "manifest|observation"):
+                transfer(task)
+        self.assertEqual(target.read_bytes(), b"owned partial archive")
+        self.assertEqual(json.loads(journal_path.read_text()), journal)
+        self.assertFalse(Path(task["receipt"]).exists())
+
+        result = transfer(task)
+        self.assertFalse(result["deleted"])
+        self.assertTrue(target.exists())
+        self.assertEqual([record["event"] for record in self.records()], ["verified"])
+
+    def test_foreign_destination_is_never_overwritten_on_metadata_failure(self):
+        for index in range(20):
+            (self.source / f"tiny-{index}").write_bytes(b"x")
+        task = self.task()
+        target = Path(task["format_target"])
+        target.write_bytes(b"foreign destination")
+        with patch.object(archives, "MAX_MANIFEST", 2048):
+            with self.assertRaisesRegex(ValueError, "manifest|observation"):
+                transfer(task)
+        self.assertEqual(target.read_bytes(), b"foreign destination")
+        self.assertFalse(Path(task["receipt"]).exists())
 
     def test_progress_exposes_verified_part_counts_and_restore_phases(self):
         updates = []

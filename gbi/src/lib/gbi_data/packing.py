@@ -12,6 +12,7 @@ from pathlib import Path, PurePosixPath
 import stat
 import time
 
+from . import archives
 from .selection import matches
 
 
@@ -92,7 +93,9 @@ def plan(source, policy, includes=(), exclusions=(), reserved_names=(), allow_ro
         observations[relative] = initial
         record = {"complete": True, "reasons": [], "regular_files": 0,
                   "selected_entries": 0, "bytes": 0, "large_files": 0,
-                  "special_files": 0, "children": []}
+                  "special_files": 0, "children": [], "metadata_bytes": 0,
+                  "metadata_entries": 0, "observation_bytes": 0,
+                  "hardlink_entries": 0}
         directories[relative] = record
         if depth >= policy.max_depth:
             record["complete"] = False
@@ -115,6 +118,8 @@ def plan(source, policy, includes=(), exclusions=(), reserved_names=(), allow_ro
                     try:
                         info = child.stat(follow_symlinks=False)
                         observations[name] = _fingerprint(info)
+                        record["observation_bytes"] += len(
+                            archives._json([name, list(observations[name])]))
                         if stat.S_ISDIR(info.st_mode):
                             child_fd = os.open(child.name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
                             try:
@@ -124,13 +129,23 @@ def plan(source, policy, includes=(), exclusions=(), reserved_names=(), allow_ro
                             finally:
                                 os.close(child_fd)
                             record["children"].append(name)
+                            record["metadata_bytes"] += nested["metadata_bytes"]
+                            record["metadata_entries"] += nested["metadata_entries"]
+                            record["observation_bytes"] += nested["observation_bytes"]
+                            record["hardlink_entries"] += nested["hardlink_entries"]
                             for key in ("regular_files", "selected_entries", "bytes", "large_files", "special_files"):
                                 record[key] += nested[key]
+                            directory_entry = archives._metadata_entry(name, info, "directory")
+                            record["metadata_bytes"] += len(archives._json(directory_entry))
+                            record["metadata_entries"] += 1
                             if not nested["complete"]:
                                 record["complete"] = False
                                 record["reasons"].append("descendant discovery is incomplete or changed")
                         elif matches(child.name, includes, exclusions):
                             kind = "file" if stat.S_ISREG(info.st_mode) else "symlink" if stat.S_ISLNK(info.st_mode) else "special"
+                            target = None
+                            if kind == "symlink":
+                                target = os.readlink(child.name, dir_fd=fd)
                             selected[name] = {"type": kind, "bytes": info.st_size if kind == "file" else 0}
                             record["selected_entries"] += 1
                             if kind == "file":
@@ -139,6 +154,12 @@ def plan(source, policy, includes=(), exclusions=(), reserved_names=(), allow_ro
                                 record["large_files"] += int(info.st_size > policy.small_file_bytes)
                             elif kind == "special":
                                 record["special_files"] += 1
+                            if kind in ("file", "symlink"):
+                                metadata_entry = archives._metadata_entry(name, info, kind, target)
+                                record["metadata_bytes"] += len(archives._json(metadata_entry))
+                                record["metadata_entries"] += 1
+                                if stat.S_ISREG(info.st_mode) and info.st_nlink > 1:
+                                    record["hardlink_entries"] += 1
                     except (OSError, ValueError) as error:
                         record["complete"] = False
                         record["reasons"].append(f"cannot qualify {name!r}: {type(error).__name__}")
@@ -187,6 +208,12 @@ def plan(source, policy, includes=(), exclusions=(), reserved_names=(), allow_ro
     finally:
         os.close(root_fd)
 
+    max_name = max(all_names, key=lambda name: len(archives._json(name)), default="")
+    regular_probe = {"path": max_name, "type": "file", "mode": 0,
+                     "mtime_ns": 0, "size": 0, "sha256": "0" * 64}
+    hardlink_probe = {**regular_probe, "type": "hardlink", "target": max_name}
+    hardlink_metadata_allowance = (len(archives._json(hardlink_probe))
+                                   - len(archives._json(regular_probe)))
     candidates, unqualified = [], []
     packed_roots, covered_ancestors = set(), set()
     for relative in sorted(directories, key=lambda name: (-name.count("/"), name == ".", name)):
@@ -204,11 +231,19 @@ def plan(source, policy, includes=(), exclusions=(), reserved_names=(), allow_ro
             reasons.append(f"selected bytes exceed the {policy.max_archive_bytes}-byte archive budget")
         if record["special_files"]:
             reasons.append("selected special files are unsupported")
+        hardlink_allowance = record["hardlink_entries"] * hardlink_metadata_allowance
+        manifest_bytes = archives._manifest_size(record["metadata_bytes"] + hardlink_allowance,
+                                                 record["metadata_entries"])
+        if record["observation_bytes"] > archives.MAX_MANIFEST:
+            reasons.append("source observation metadata exceeds the archive manifest limit")
+        if manifest_bytes > archives.MAX_MANIFEST:
+            reasons.append("archive entry metadata exceeds the archive manifest limit")
         archive_relative = (source.name if relative == "." else relative) + ".gbi.tar"
         if archive_relative in all_names or os.path.lexists(source / archive_relative):
             reasons.append("planned archive name collides with an existing source entry")
         summary = {"source_relative": relative, "regular_files": record["regular_files"],
                    "selected_entries": record["selected_entries"], "bytes": record["bytes"],
+                   "metadata_bytes": manifest_bytes, "observation_bytes": record["observation_bytes"],
                    "totals_kind": "observed" if record["complete"] else "observed_lower_bound"}
         if not record["complete"] or reasons:
             unqualified.append({**summary, "reasons": reasons or ["discovery incomplete"]})
