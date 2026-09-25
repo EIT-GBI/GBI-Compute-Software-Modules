@@ -39,10 +39,10 @@ sm_versions() {
         | head -n 1 | tr -d '"'
 }
 
-# `module load` lines of the build-mode install script, version suffixes
-# (e.g. zig/0.16.0) stripped
+# `module load` lines of the install script of <target>/<mode dir>, version
+# suffixes (e.g. zig/0.16.0) stripped
 sm_deps() {
-    local f="${ROOT}/$1/sm-config-build/install.sh"
+    local f="${ROOT}/$1/$2/install.sh"
     [ -f "$f" ] || return 0
     sed -n 's/^[[:space:]]*module load[[:space:]]*//p' "$f" \
         | tr ' \t' '\n\n' | sed -e '/^$/d' -e 's,/.*,,' | sort -u \
@@ -60,14 +60,19 @@ print_target() {
 
     if [ -f "${ROOT}/${t}/sm-config/settings.toml" ]; then
         versions=$(sm_versions "$t" sm-config)
-        bullets+=("default: [${versions}]")
+        deps=$(sm_deps "$t" sm-config)
+        if [ -n "$deps" ]; then
+            bullets+=("default: [${versions}], loads modules: ${deps}")
+        else
+            bullets+=("default: [${versions}]")
+        fi
     else
         bullets+=("source build only -- always use MODE=build")
     fi
 
     if [ -f "${ROOT}/${t}/sm-config-build/settings.toml" ]; then
         versions=$(sm_versions "$t" sm-config-build)
-        deps=$(sm_deps "$t")
+        deps=$(sm_deps "$t" sm-config-build)
         if [ -n "$deps" ]; then
             bullets+=("MODE=build: [${versions}], loads modules: ${deps}")
         else

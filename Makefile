@@ -70,13 +70,16 @@ AUX_TARGETS := $(filter $(ALL_RECIPES),$(sort $(notdir $(patsubst %/sm-opt-in,%,
                    $(wildcard $(MKFILE_DIR)*/sm-opt-in)))))
 TARGETS     := $(filter-out $(AUX_TARGETS),$(ALL_RECIPES))
 
-# Build-mode module dependencies of a target, read from the `module load`
-# lines of its install script -- the recipe itself is the source of truth, so
-# this cannot drift. Version suffixes (e.g. zig/0.16.0) are stripped.
-sm_deps = $(sort $(foreach w,\
-              $(shell sed -n 's,^[[:space:]]*module load[[:space:]]*,,p' \
-                  $(MKFILE_DIR)$(1)/sm-config-build/install.sh 2>/dev/null),\
-              $(firstword $(subst /, ,$(w)))))
+# Module dependencies of a target, read from the `module load` lines of its
+# install script -- the recipe itself is the source of truth, so this cannot
+# drift. Version suffixes (e.g. zig/0.16.0) are stripped. sm_deps_in takes
+# the recipe dir to read (sm-config or sm-config-build); sm_deps is the
+# build-mode view that `make help` and the MODE=build `all` use.
+sm_deps_in = $(sort $(foreach w,\
+                 $(shell sed -n 's,^[[:space:]]*module load[[:space:]]*,,p' \
+                     $(MKFILE_DIR)$(1)/$(2)/install.sh 2>/dev/null),\
+                 $(firstword $(subst /, ,$(w)))))
+sm_deps = $(call sm_deps_in,$(1),sm-config-build)
 
 # Build steps
 .PHONY: all install update bootstrap check clean realclean help $(ALL_RECIPES)
@@ -122,9 +125,20 @@ all:
 		$(MAKE) $$target;          \
 	done
 else
+# Default-mode recipes `module load` other modules while installing, too (cc
+# loads zig, make loads cc, cargo-zigbuild loads uv and cc, and anything
+# rendered from templates/cargo or templates/uv loads rust or uv), so a plain
+# alphabetical walk would reach them before what they need is installed.
+# Every `module load` edge is read from the recipes (nothing is listed by
+# hand); tsort orders the targets those edges touch so that each lands after
+# what it loads, and every other target follows alphabetically.
+ALL_EDGES  = $(foreach t,$(TARGETS),\
+                 $(foreach d,$(filter $(TARGETS),$(call sm_deps_in,$(t),sm-config)),$(d) $(t)))
+ALL_LINKED = $(shell printf '%s\n' $(ALL_EDGES) | tsort)
+ALL_ORDER  = $(ALL_LINKED) $(filter-out $(ALL_LINKED),$(TARGETS))
 all:
-	@for target in $(TARGETS); do \
-		$(MAKE) $$target;         \
+	@for target in $(ALL_ORDER); do \
+		$(MAKE) $$target;           \
 	done
 endif
 #------------------------------------------------------------------------------

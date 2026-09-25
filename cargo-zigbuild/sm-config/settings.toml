@@ -1,0 +1,39 @@
+[env]
+# Install straight into the final prefix (no staging): `uv tool install`
+# writes absolute paths into the tool's shims and venv, so the tree must not
+# move after the install
+TOOL_DIR     = "{SITE_DESTINATION}/{INSTALL_VERSION_VARIANT}/opt"
+TOOL_BIN_DIR = "{SITE_DESTINATION}/{INSTALL_VERSION_VARIANT}/bin"
+# Self-contained python: never symlink the venv against whatever python the
+# installing machine happens to have -- always use a uv-managed one, and keep
+# it inside the module tree (shared by every version of this module) so the
+# tool works for every user of the module
+UV_PYTHON_PREFERENCE  = "only-managed"
+UV_PYTHON_INSTALL_DIR = "{SITE_DESTINATION}/python"
+VERSION = "{INSTALL_VERSION}"
+# The cc module whose pinned target the linker wrapper bakes in, and whose
+# shims are the CC/CXX behind crates that compile C along the way. Keep in
+# step with cc/sm-config/settings.toml.
+CC_MODULE = "0.16.0-zig"
+
+[install]
+versions = ["0.23.4"]
+prefix = "{SITE_DESTINATION}"
+# note: this is Lua regex: you will need to escape - and + (using %)
+format = "^{INSTALL_VERSION_VARIANT}$"
+# install.sh already installs into the final destination => the relocate pass
+# sees source == destination and leaves the tree in place
+destination = "{SITE_DESTINATION}/{INSTALL_VERSION_VARIANT}"
+stage = false
+
+[module]
+PATH = "{INSTALL_DIR}/bin"
+INSTALL_VERSION = "{INSTALL_VERSION}"
+CC_MODULE = "0.16.0-zig"
+# the host's triple, for the CARGO_TARGET_<triple>_LINKER the modulefile sets
+RUNTIME_TARGET_TRIPLE = "{RUNTIME_TARGET_TRIPLE}"
+
+[post]
+# no staging dir is used => nothing to relocate or clean up
+safe = true
+clean = false

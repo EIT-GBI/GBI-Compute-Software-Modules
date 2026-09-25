@@ -1,0 +1,5 @@
+name = "cargo-zigbuild"
+
+relocate = true
+destination = "{SM_ROOT}/cargo-zigbuild"
+modules = "{SM_ROOT}/modules"

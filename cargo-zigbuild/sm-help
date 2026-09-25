@@ -1,0 +1,3 @@
+cargo build with zig as the linker: rust on hosts without a system linker, binaries pinned to the cc module's glibc floor
+rendered from templates/uv -- installed with uv (build time); runs on the cc module, hence zig; load a rust module yourself
+loading it routes plain `cargo build` / `cargo install` for the host target through the zig linker (CARGO_TARGET_<triple>_LINKER)
