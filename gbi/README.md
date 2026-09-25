@@ -341,6 +341,14 @@ Alluxio ownership/presentation. The login broker binds the request to your
 authorized route. On Tokyo, the transfer's Slurm job runs as your Unix user,
 including FSS transfers through a legacy home-directory name.
 
+Files previously copied through ordinary GBI or Alluxio can lack the saved
+checksum and file metadata that Prefect needs to reuse them. To continue a
+transfer into such a destination, omit `--prefect` (or `prefect=True` in
+Python). The ordinary route fully reads back existing files and reuses them
+only when their content matches; a move deletes each unchanged source only
+after verification. Prefect retains sources when required destination
+metadata is missing or differs.
+
 For checkpoint-only selection, use the exact patterns you need, for example
 `include=["*.pt", "*.pt.*"]`; do not broaden this to `*.pt*`, which also matches
 `.ptx`. The patterns form a union: a file matching either is selected, and one
@@ -474,9 +482,9 @@ they are not a replacement for the flows' durable receipts.
 
 ## Existing files and interruptions
 
-An existing identical regular-file destination is independently checked and
-reused. Its first full destination digest is retained through the final
-identity check; any destination change before the receipt fails the transfer.
+Ordinary GBI transfers independently check and reuse an existing identical
+regular-file destination. Its first full destination digest is retained through
+the final identity check; any destination change before the receipt fails the transfer.
 This avoids a duplicate full destination read on the reuse path without
 changing parent safety checks, transfer concurrency, or conflict handling. A
 different destination is preserved and reported as a failure; the CLI never
