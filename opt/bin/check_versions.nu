@@ -248,7 +248,7 @@ def main [
     let commands = ($needs | each {|r|
         let mode_arg = if $r.mode == "build" { " MODE=build" } else { "" }
         let variant_arg = if ($r.mode == "default") and ($variant == "musl") { " VARIANT=musl" } else { "" }
-        $"make ($r.target)($mode_arg)($variant_arg) MODULE_PATH=($sm_root)"
+        $"make ($r.target)($mode_arg)($variant_arg) GBI_MODULE_PATH=($sm_root)"
     } | uniq)
 
     if $json {
