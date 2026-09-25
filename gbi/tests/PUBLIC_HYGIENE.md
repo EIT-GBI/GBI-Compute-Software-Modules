@@ -2,8 +2,9 @@
 
 Run `python3 gbi/tests/public_hygiene.py` from a checkout. The GitHub Action runs
 the same check and its fixture tests on pushes and pull requests, with read-only
-repository permission and no cloud access. Python's standard library is the
-only scanner dependency; the pinned official checkout action obtains the code.
+repository permission and no cloud access. The scanner uses only the standard
+library for ordinary files. The hygiene workflow installs pinned `pypdf` for
+tracked PDF inspection; GBI itself has no PDF runtime dependency.
 
 The scan reads Git-tracked files under `gbi/`, `rclone/` and `.github/`, plus the
 repository README and agent guide. That includes Python source/tests, module
@@ -13,9 +14,12 @@ recipes are outside this CLI check. An empty or unreadable scan fails.
 It rejects recognisable cloud resource identifiers, literal Object Storage
 namespace/bucket URL paths, private IPv4 addresses,
 literal usernames in personal storage/workstation paths, private-key headers,
-and generated `site.conf` files. Diagnostics contain the filename, line and rule,
-not the matching content. Localhost, documentation address ranges, public URLs,
-generic fixture names and `$USER`/`<username>` path placeholders are allowed.
+and generated `site.conf` files. Tracked PDFs are parsed with `pypdf`; page
+text, document metadata and annotation URI values use the same rules. Missing
+PDF parsing support and invalid PDFs fail closed. Diagnostics contain the
+filename, line and rule, not the matching content. Localhost, documentation
+address ranges, public URLs, generic fixture names and `$USER`/`<username>` path
+placeholders are allowed.
 Runtime configuration remains injected by the maintained install recipe.
 
 This is a regression guard, not a complete secret detector. Arbitrary usernames,
@@ -28,8 +32,11 @@ Run the fixture tests with:
 
 ```sh
 python3 -m unittest discover -s gbi/tests -p test_public_hygiene.py
+python3 -m pip install 'pypdf==6.19.0'
 ```
 
 Fixtures exercise allowed examples, Python/help/recipe/documentation leaks,
-generated configuration, empty scope, unreadable text and symlinks. Temporary
-repositories use the caller's `TMPDIR`; set it inside your permitted workspace.
+generated configuration, PDF metadata and annotation leaks, invalid PDFs, empty
+scope, unreadable text and symlinks. Temporary repositories use the system
+temporary directory supplied by the test runner; do not put caches or virtual
+environments in the repository.

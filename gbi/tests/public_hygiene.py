@@ -25,14 +25,9 @@ PRIVATE_NETWORKS = tuple(ipaddress.ip_network(value) for value in
                           ((192 << 24) + (168 << 16), 16)))
 
 
-def scan_file(path):
-    """Return (line, rule), never the potentially sensitive matching text."""
-    if path.is_symlink():
-        return [(0, "symlink in public scan scope; review its target explicitly")]
-    if path.name == "site.conf":
-        return [(0, "generated site configuration must not be committed")]
+def _scan_lines(lines):
     findings = []
-    for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+    for number, line in lines:
         for label, pattern in PATTERNS.items():
             if pattern.search(line):
                 findings.append((number, label))
@@ -45,6 +40,44 @@ def scan_file(path):
                 findings.append((number, "private IPv4 address"))
                 break
     return findings
+
+
+def _scan_pdf(path):
+    """Scan PDF page text, metadata and annotation URI values fail-closed."""
+    try:
+        from pypdf import PdfReader
+    except ImportError:
+        return [(0, "PDF parser unavailable; cannot scan safely")]
+    try:
+        reader = PdfReader(str(path), strict=True)
+        findings = []
+        for page_number, page in enumerate(reader.pages, 1):
+            text = page.extract_text() or ""
+            findings.extend(_scan_lines(
+                (page_number, line) for line in text.splitlines()))
+            annotations = page.get("/Annots", ()) or ()
+            for annotation in annotations:
+                item = annotation.get_object()
+                action = item.get("/A", {})
+                uri = action.get("/URI") if action else None
+                if uri is not None:
+                    findings.extend(_scan_lines(((page_number, str(uri)),)))
+        metadata = reader.metadata or {}
+        findings.extend(_scan_lines((0, str(value)) for value in metadata.values()))
+        return findings
+    except Exception:
+        return [(0, "PDF could not be parsed safely")]
+
+
+def scan_file(path):
+    """Return (line, rule), never the potentially sensitive matching text."""
+    if path.is_symlink():
+        return [(0, "symlink in public scan scope; review its target explicitly")]
+    if path.name == "site.conf":
+        return [(0, "generated site configuration must not be committed")]
+    if path.suffix.lower() == ".pdf":
+        return _scan_pdf(path)
+    return _scan_lines(enumerate(path.read_text(encoding="utf-8").splitlines(), 1))
 
 
 def scan_repository(root):

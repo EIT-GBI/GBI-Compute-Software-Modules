@@ -26,6 +26,22 @@ from .storage import Site, overlap
 from .transfer import ensure_parent, receipt, write_json
 
 
+class _ArgumentParser(argparse.ArgumentParser):
+    """Keep argparse's usage output, but make common mode conflicts actionable."""
+
+    def error(self, message):
+        conflict = re.search(r"argument (--\S+): not allowed with argument (--\S+)", message)
+        if conflict:
+            arguments = conflict.groups()
+            if any(argument in {"--detach", "--local", "--prefect"} for argument in arguments):
+                alternative = "choose one execution mode (omit all three for automatic selection)"
+            else:
+                alternative = "choose one archive format or omit both for an ordinary file transfer"
+            message = (f"unsupported option combination: {arguments[0]} and {arguments[1]}; "
+                       + alternative)
+        super().error(message)
+
+
 def byte_size(value):
     match = re.fullmatch(r"([1-9][0-9]*)([KMGT]?)(?:i?B)?", value, re.IGNORECASE)
     if not match:
@@ -34,17 +50,37 @@ def byte_size(value):
 
 
 def parser():
-    result = argparse.ArgumentParser(prog="gbi", description="Move data between your HPC filesystems.")
+    result = _ArgumentParser(
+        prog="gbi",
+        description="Move, archive, restore, and inspect your own HPC data.",
+        epilog=("Examples:\n"
+                "  gbi data copy SOURCE DESTINATION --dry-run\n"
+                "  gbi data move SOURCE DESTINATION --detach --wait\n"
+                "  gbi data status TRANSFER_ID --watch\n"
+                "  gbi data usage projects --depth 2 --limit 10\n\n"
+                "Start with `gbi data copy --help` or `gbi data usage --help`.\n"
+                "Ordinary transfers use site classification and normal Unix permissions;\n"
+                "--prefect additionally requires both paths to be personal storage roots."),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
     result.add_argument("--version", action="version", version=__version__)
-    data = result.add_subparsers(dest="command", required=True).add_parser("data")
+    data = result.add_subparsers(dest="command", required=True).add_parser(
+        "data", help="move data, inspect transfer state, or report usage",
+        description=("Public data commands. `copy` keeps the source; `move` removes only sources\n"
+                     "whose verified deletion policy allows it. `status` and `retry` use a saved\n"
+                     "transfer ID; `usage` reads the owner-scoped Lustre snapshot."),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
     verbs = data.add_subparsers(dest="verb", required=True, metavar="{copy,move,status,retry,roots,usage}")
     for verb in ("copy", "move"):
         command = verbs.add_parser(
             verb, help=f"{verb} a file or directory to a destination",
             description=(
-                "Copy and independently verify each file." if verb == "copy" else
-                "Copy and independently verify each file before removing its source.\n"
-                "Alluxio/Object Storage originals stay unless --delete-source is given."
+                ("Copy SOURCE to DESTINATION and independently verify every file.\n"
+                 "SOURCE and DESTINATION may be files or directories; the source remains." if verb == "copy" else
+                "Copy SOURCE to DESTINATION and independently verify every file before removing\n"
+                "eligible sources. Alluxio/Object Storage originals remain unless --delete-source\n"
+                "is explicitly requested.")
             ),
             formatter_class=argparse.RawDescriptionHelpFormatter,
             epilog=(
@@ -55,10 +91,10 @@ def parser():
                 "use Slurm (site settings may differ). Existing allocations are reused.\n"
                 "Ctrl-C stops foreground work; when following a submitted Slurm job, it\n"
                 "only detaches the display. Reconnect with: gbi data status ID --watch\n\n"
-                "--prefect submits individual files; it does not create tar/gzip archives.\n"
-                "FSS archives\n"
-                "and restores require matching relative paths. Exclusions, packing, chunks\n"
-                "and deleting Object Storage originals are unavailable on this route.\n"
+                "--prefect submits individual files through the personal Object Storage route;\n"
+                "it does not create tar/gzip archives. FSS archives and all restores require\n"
+                "matching relative paths. Exclusions, packing, chunks, and deleting Object Storage\n"
+                "originals are unavailable with --prefect; omit it for an ordinary transfer.\n"
                 "After a lost submission reply: gbi data retry ID (same saved request).\n\n"
                 f"Examples:\n  gbi data {verb} SOURCE DESTINATION --dry-run\n"
                 f"  gbi data {verb} SOURCE DESTINATION --detach\n"
@@ -67,44 +103,69 @@ def parser():
                 f"  gbi data {verb} SOURCE DESTINATION --include '*.pt' --exclude 'temp*'"
             ),
         )
-        command.add_argument("source")
-        command.add_argument("destination")
-        command.add_argument("--include", action="append", default=[], metavar="GLOB",
-                             help="select matching file names; case-sensitive, repeat for alternatives")
-        command.add_argument("--exclude", action="append", default=[], metavar="GLOB",
-                             help="skip matching file names; case-sensitive, repeatable, overrides --include")
+        command.add_argument("source", help="source file or directory path")
+        command.add_argument("destination", help="destination file or directory path")
+        selection = command.add_argument_group("selection")
+        selection.add_argument("--include", action="append", default=[], metavar="GLOB",
+                               help="select matching basenames (case-sensitive; repeatable)")
+        selection.add_argument("--exclude", action="append", default=[], metavar="GLOB",
+                               help="skip matching basenames (repeatable; wins over --include; ordinary route only)")
         archive = command.add_mutually_exclusive_group()
         archive.add_argument("--pack", choices=("tar", "gzip"),
                              help="pack one directory into .gbi.tar or .gbi.tar.gz; very large file lists need smaller folders")
         archive.add_argument("--pack-small", action="store_true",
                              help="pack small-file subdirectories that fit archive limits; preview with --dry-run")
         command.add_argument("--chunk-size", type=byte_size, metavar="SIZE",
-                             help="store verified, resumable parts of this size, e.g. 64MiB (adds .gbi-chunks)")
+                             help="verified resumable parts, e.g. 64MiB (ordinary route only)")
         command.add_argument("--delete-source", action="store_true",
-                             help="explicitly allow source deletion when moving OUT of Alluxio/Object Storage")
+                             help="allow deletion when moving out of Alluxio/Object Storage (ordinary move only)")
         command.add_argument("--dry-run", action="store_true", help="show route and policy without writing")
         execution = command.add_mutually_exclusive_group()
-        execution.add_argument("--detach", action="store_true", help="submit to Slurm and return immediately, unless --wait is given")
-        command.add_argument("--wait", action="store_true", help="wait for completion, including with --detach or in scripts")
-        execution.add_argument("--local", action="store_true", help="execute inside an existing Slurm allocation")
+        execution.add_argument("--detach", action="store_true", help="submit to Slurm; return after submission unless --wait")
+        command.add_argument("--wait", action="store_true", help="wait for completion (also valid with --detach or --prefect)")
+        execution.add_argument("--local", action="store_true", help="run inside the current Slurm allocation")
         execution.add_argument("--prefect", action="store_true",
-                               help="submit a personal Object Storage migration through Prefect; no UI or credentials needed")
-    status = verbs.add_parser("status", help="show a transfer's progress")
+                               help="submit a personal Object Storage migration through Prefect")
+    status = verbs.add_parser(
+        "status", help="show a saved transfer's progress",
+        description="Show progress for a Slurm job ID or printed transfer ID.",
+        epilog="Examples:\n  gbi data status 123456\n  gbi data status TRANSFER_ID --watch",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
     status.add_argument("job_id", metavar="JOB_OR_TRANSFER_ID",
                         help="Slurm job ID, or a printed transfer ID when the job has several transfers")
     status.add_argument("--watch", action="store_true", help="follow until the transfer finishes")
-    retry = verbs.add_parser("retry", help="resend an unchanged saved Prefect request after a lost reply")
+    retry = verbs.add_parser(
+        "retry", help="resend one unchanged saved Prefect request after a lost reply",
+        description="Retry only a saved Prefect request; ordinary transfers are rerun with their original command.",
+        epilog="Example:\n  gbi data retry TRANSFER_ID --wait",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
     retry.add_argument("job_id", metavar="TRANSFER_ID")
     retry.add_argument("--wait", action="store_true", help="wait for the existing migration's result")
-    verbs.add_parser("roots", help="show your available storage paths")
+    verbs.add_parser(
+        "roots", help="show your available personal storage roots",
+        description="Print the configured personal Lustre, FSS, and Object Storage roots.",
+        epilog="Example:\n  gbi data roots",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
     usage_command = verbs.add_parser(
         "usage", help="show live quota and your cached Lustre folder usage",
-        description="Show your live Lustre quota and the latest owner-scoped inventory snapshot.",
+        description=("Show live quota for your UID and a cached, owner-scoped Lustre folder report.\n"
+                     "PATH is relative to your own Lustre root; omit it for the root report.\n"
+                     "The folder report is apparent bytes from the dated snapshot, not live\n"
+                     "recursive usage."),
+        epilog=("Examples:\n  gbi data usage\n  gbi data usage projects --depth 2 --limit 10"),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    usage_command.add_argument("path", nargs="?", help="directory relative to your own Lustre root")
-    usage_command.add_argument("--depth", type=int, default=1, help="folder levels below the selected root (default: 1)")
-    usage_command.add_argument("--limit", type=int, default=20, help="top folders returned at each level (default: 20)")
-    # Internal entrypoint used by the generated batch script.
+    usage_command.add_argument("path", nargs="?", metavar="PATH",
+                               help="directory below your own Lustre root (default: root)")
+    usage_command.add_argument("--depth", type=int, default=1,
+                               help="levels below PATH to show (default: 1)")
+    usage_command.add_argument("--limit", type=int, default=20,
+                               help="top N folders at each level (default: 20)")
+    # Internal entrypoint used by the generated batch script.  The public
+    # subparser metavar above intentionally leaves this choice undocumented.
     run = verbs.add_parser("_run")
     run.add_argument("run_dir", type=Path)
     return result
