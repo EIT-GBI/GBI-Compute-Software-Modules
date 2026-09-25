@@ -14,6 +14,16 @@ tar xf downloaded.tar.gz -C downloaded --strip-components=1
 
 cd downloaded
 
+# simple-modules runs this script with BASH_ENV pointing at its strict-mode
+# prelude (set -Eeuo pipefail), and every non-interactive bash started from
+# here inherits it. On Debian-family hosts autoconf picks /bin/bash for
+# config.status, and build.sh below re-runs config.status -- which then
+# dies in nounset mode on an autoconf string that reads $CONFIG_FILES before
+# assigning it ("CONFIG_FILES: unbound variable"). configure itself is
+# immune only because its preamble unsets BASH_ENV before re-executing.
+# Drop it for the children; this shell keeps its options and helpers.
+unset BASH_ENV
+
 # GNU make is the one program that cannot assume a make: its tarball ships
 # build.sh for exactly this case. Configure as usual (CC/AR/RANLIB come from
 # the cc module's environment), compile with the script, then let the fresh

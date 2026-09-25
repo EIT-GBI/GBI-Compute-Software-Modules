@@ -133,6 +133,15 @@ idioms:
   inside the install shell. Either re-run `make bootstrap` with
   `GBI_MODULE_PATH` exported, or pass the Makefile's prelude knob for the test
   install: `make <name> GBI_MODULE_PATH=$(pwd)/usr ML_INIT="source $(pwd)/opt/share/env.sh; module use $(pwd)/usr/modules"`.
+- `install.sh` runs with `BASH_ENV` pointing at simple-modules' strict-mode
+  prelude (`set -Eeuo pipefail`), and every non-interactive `bash` child
+  inherits it — `/bin/bash`-shebanged scripts such as autoconf's
+  `config.status` on Debian-family hosts then die on the first unset variable
+  (`CONFIG_FILES: unbound variable`). `unset BASH_ENV` before handing off to
+  autotools or anything else that spawns bash scripts (see
+  `make/sm-config/install.sh`); the current shell keeps its options and the
+  `to_lower`/`resolve_archive_name` helpers. macOS hides this: its
+  `/bin/sh` ignores `BASH_ENV`.
 - A smoke test of the form `<program> | grep -q pattern` can fail although the
   output is right: `install.sh` runs under `set -o pipefail`, `grep -q` exits
   on the first match, and the writer's SIGPIPE fails the pipeline. Capture to
