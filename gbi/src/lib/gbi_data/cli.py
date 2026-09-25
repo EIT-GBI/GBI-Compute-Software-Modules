@@ -90,7 +90,8 @@ def parser():
         execution.add_argument("--prefect", action="store_true",
                                help="submit a personal Object Storage migration through Prefect; no UI or credentials needed")
     status = verbs.add_parser("status", help="show a transfer's progress")
-    status.add_argument("job_id")
+    status.add_argument("job_id", metavar="JOB_OR_TRANSFER_ID",
+                        help="Slurm job ID, or a printed transfer ID when the job has several transfers")
     status.add_argument("--watch", action="store_true", help="follow until the transfer finishes")
     retry = verbs.add_parser("retry", help="resend an unchanged saved Prefect request after a lost reply")
     retry.add_argument("job_id", metavar="TRANSFER_ID")
@@ -552,9 +553,13 @@ def main():
             source_hash.update(path.name.encode() + b"\0" + path.read_bytes())
         specification["code_sha256"] = source_hash.hexdigest()
         specification["version"] = __version__
+        if mode == "allocation":
+            specification["allocation_job_id"] = os.environ["SLURM_JOB_ID"]
         write_json(run_dir / "request.json", specification)
         if mode != "slurm":
-            if mode == "inline":
+            if mode == "allocation":
+                print(f"Transfer {run_dir.name}. Reconnect: gbi data status {run_dir.name} --watch", flush=True)
+            else:
                 print(f"Transfer {run_dir.name}. History: gbi data status {run_dir.name}")
             return run(run_dir, site, home)
         command = [sys.executable, "-B", "-m", "gbi_data.cli", "data", "_run", str(run_dir)]

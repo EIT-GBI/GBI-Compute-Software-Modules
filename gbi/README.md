@@ -88,6 +88,13 @@ Ctrl-C detaches only the display. Reconnect using the printed transfer ID:
 gbi data status TRANSFER_ID --watch
 ```
 
+For ordinary transfers inside an existing Slurm job, each transfer prints its
+own ID before running. Use `gbi data status JOB_ID` while that job has one active transfer.
+If several transfers match, the command lists their IDs so you can choose
+which one to inspect. Exact transfer IDs also work after completion.
+For transfers started with an older module, use the transfer ID from their
+log; loading a newer module does not change already-running transfers.
+
 The display shows verified files and bytes, active transfer bytes, average
 verified throughput and bytes removed from the source. It shows a percentage
 only after file discovery finishes. Verified throughput includes copy and
@@ -609,8 +616,8 @@ GBI_SITE_PARTITION=site-partition make gbi
 
 For a shared cluster installation, run the recipe as a software maintainer
 from the reviewed release checkout and add `GBI_MODULE_PATH=/site/shared/software`
-to the `make` command. Software goes under `gbi/0.4.4` and the modulefile under
-`modules/gbi/0.4.4.lua` in that tree. Use the same install root as the cluster's
+to the `make` command. Software goes under `gbi/0.4.5` and the modulefile under
+`modules/gbi/0.4.5.lua` in that tree. Use the same install root as the cluster's
 existing rclone module. When its `modules` directory is already in the shared
 Lmod environment, users only need `module load gbi`; no per-user installation,
 container rebuild or login-node restart is required. Check `module show gbi`,
