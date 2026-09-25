@@ -18,9 +18,11 @@ jobs:
       - name: Check scanner fixtures
         env:
           PYTHONDONTWRITEBYTECODE: "1"
-          TMPDIR: ${{ github.workspace }}/.hygiene-tmp
+          TMPDIR: ${{ runner.temp }}/gbi-hygiene
         run: |
           mkdir -p "$TMPDIR"
+          python3 -m pip install --disable-pip-version-check --no-input \
+            'pypdf==6.19.0'
           python3 -m unittest discover -s gbi/tests -p test_public_hygiene.py
       - name: Scan tracked public CLI files
         run: python3 gbi/tests/public_hygiene.py

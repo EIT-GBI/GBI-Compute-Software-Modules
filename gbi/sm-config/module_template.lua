@@ -11,6 +11,14 @@ verified sources. Alluxio originals stay unless --delete-source is explicit.
 
 Python: from gbi import data; data.copy(source, destination)
 data.move() verifies then removes selected filesystem originals; both calls wait.
+
+Use --pack tar or --pack gzip to make a portable archive. Restore with copy.
+Use --prefect / Python prefect=True for direct individual Object Storage files;
+this route cannot use packing, exclusions, chunks or --delete-source.
+Inside a Slurm job, ordinary CLI and Python calls reuse the current allocation.
+
+Command help: gbi data copy --help
+Guide and PDF: https://github.com/EIT-GBI/GBI-Compute-Software-Modules/tree/main/gbi/docs
 ]])
 whatis("Name: gbi")
 whatis("Version: {{{INSTALL_VERSION}}}")

@@ -37,10 +37,17 @@ class _NoRedirect(urlrequest.HTTPRedirectHandler):
 
 
 def prepare(options, site):
-    if options.exclude or any(getattr(options, key, None) for key in ("pack", "pack_small", "chunk_size")):
-        raise ValueError("--prefect does not support exclusions, packing or chunks; use an ordinary transfer")
+    unsupported = []
+    if options.exclude:
+        unsupported.append("--exclude")
+    unsupported.extend(flag for flag, key in (("--pack", "pack"), ("--pack-small", "pack_small"),
+                                               ("--chunk-size", "chunk_size"))
+                      if getattr(options, key, None))
+    if unsupported:
+        flags = ", ".join(unsupported)
+        raise ValueError(f"--prefect cannot be combined with {flags}; omit --prefect for an ordinary transfer")
     if options.delete_source:
-        raise ValueError("--prefect retains Object Storage originals; --delete-source is not supported")
+        raise ValueError("--prefect cannot be combined with --delete-source; use an ordinary move to request source deletion")
     if len(options.include) > 100 or any(
             not pattern or len(pattern.encode()) > 255 or not pattern.isprintable()
             or any(character in pattern for character in "/\\{}") for pattern in options.include):
@@ -66,9 +73,9 @@ def prepare(options, site):
     elif source_kind == "alluxio" and target_kind in ("lustre", "fss"):
         operation = "stage-" + target_kind
     else:
-        raise ValueError("--prefect needs one personal Object Storage path and one Lustre or FSS path")
+        raise ValueError("--prefect needs one personal Object Storage path and one personal Lustre or FSS path")
     if operation != "archive-lustre" and source != target:
-        raise ValueError("Prefect FSS archives and restores require matching relative source and destination paths")
+        raise ValueError("--prefect FSS archives and all restores require matching relative source and destination paths; omit --prefect to rename")
     for value in (source, target):
         if len(value.encode()) > 4096 or not value.isprintable() or any(character in value for character in "\\*?[]{}"):
             raise ValueError("--prefect requires plain paths without wildcard characters")
