@@ -197,6 +197,9 @@ representable metadata also agrees. Existing directory permissions are kept.
 Special files, unsafe member paths and conflicting destinations fail clearly.
 
 Packing streams directly to its destination unless chunking is requested.
+Tar packing and readback use larger I/O blocks automatically to reduce
+small-call overhead on mounted storage; no extra flag is needed. Complete
+checksum verification still runs before a move removes any source files.
 Before opening an output, GBI checks that its file list and source metadata fit
 the archive's 64 MiB metadata limits. A directory with millions of small files
 can exceed these limits even when its payload is small. If this happens, the
@@ -616,8 +619,8 @@ GBI_SITE_PARTITION=site-partition make gbi
 
 For a shared cluster installation, run the recipe as a software maintainer
 from the reviewed release checkout and add `GBI_MODULE_PATH=/site/shared/software`
-to the `make` command. Software goes under `gbi/0.4.5` and the modulefile under
-`modules/gbi/0.4.5.lua` in that tree. Use the same install root as the cluster's
+to the `make` command. Software goes under `gbi/0.4.6` and the modulefile under
+`modules/gbi/0.4.6.lua` in that tree. Use the same install root as the cluster's
 existing rclone module. When its `modules` directory is already in the shared
 Lmod environment, users only need `module load gbi`; no per-user installation,
 container rebuild or login-node restart is required. Check `module show gbi`,
