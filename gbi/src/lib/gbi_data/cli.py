@@ -75,9 +75,9 @@ def parser():
                              help="skip matching file names; case-sensitive, repeatable, overrides --include")
         archive = command.add_mutually_exclusive_group()
         archive.add_argument("--pack", choices=("tar", "gzip"),
-                             help="pack a directory into an exact .gbi.tar or .gbi.tar.gz destination")
+                             help="pack one directory into .gbi.tar or .gbi.tar.gz; very large file lists need smaller folders")
         archive.add_argument("--pack-small", action="store_true",
-                             help="pack qualifying small-file subdirectories; preview their layout with --dry-run")
+                             help="pack small-file subdirectories that fit archive limits; preview with --dry-run")
         command.add_argument("--chunk-size", type=byte_size, metavar="SIZE",
                              help="store verified, resumable parts of this size, e.g. 64MiB (adds .gbi-chunks)")
         command.add_argument("--delete-source", action="store_true",

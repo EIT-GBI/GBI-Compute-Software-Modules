@@ -131,6 +131,42 @@ class Packing(unittest.TestCase):
         result = packing.plan(self.source, self.policy, includes=["*.txt"])
         self.assertEqual([c["source_relative"] for c in result["candidates"]], ["small"])
 
+    def test_metadata_budget_rejects_wide_subtree_but_keeps_safe_sibling(self):
+        wide = self.source / ("wide-" + "x" * 100)
+        wide.mkdir()
+        for index in range(3):
+            (wide / f"file-{index}.txt").write_bytes(b"x")
+        self.files("safe")
+
+        with patch.object(packing.archives, "MAX_MANIFEST", 700):
+            result = packing.plan(self.source, self.policy)
+
+        self.assertEqual([item["source_relative"] for item in result["candidates"]], ["safe"])
+        rejected = next(item for item in result["unqualified"]
+                        if item["source_relative"] == wide.name)
+        self.assertGreater(rejected["metadata_bytes"], 700)
+        self.assertTrue(any("entry metadata" in reason for reason in rejected["reasons"]))
+        self.assertEqual(result["loose_selected"], [f"{wide.name}/file-{i}.txt" for i in range(3)])
+
+    def test_hardlinks_keep_file_totals_and_use_conservative_metadata_allowance(self):
+        hard = self.source / "hard"
+        hard.mkdir()
+        (hard / "file-0.txt").write_bytes(b"x")
+        (hard / "file-1.txt").hardlink_to(hard / "file-0.txt")
+        (hard / "file-2.txt").write_bytes(b"x")
+        self.files("safe")
+
+        with patch.object(packing.archives, "MAX_MANIFEST", 570):
+            result = packing.plan(self.source, self.policy)
+
+        self.assertEqual([item["source_relative"] for item in result["candidates"]], ["safe"])
+        rejected = next(item for item in result["unqualified"]
+                        if item["source_relative"] == "hard")
+        self.assertEqual(rejected["regular_files"], 3)
+        self.assertEqual(rejected["selected_entries"], 3)
+        self.assertEqual(rejected["bytes"], 3)
+        self.assertGreater(rejected["metadata_bytes"], 570)
+
     def test_policy_and_plan_are_explicit_and_deterministic(self):
         self.files("small")
         with self.assertRaises(ValueError):

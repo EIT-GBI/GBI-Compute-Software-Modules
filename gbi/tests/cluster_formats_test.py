@@ -99,7 +99,8 @@ def selective_case(roots, config, execute):
     plan, _ = json.JSONDecoder().raw_decode(result.stdout[result.stdout.index("{"):])
     if ([row["archive_relative"] for row in plan["candidates"]] != ["small.gbi.tar"]
             or [row["restore_relative"] for row in plan["candidates"]] != ["small"]
-            or plan["loose_selected"] != ["large.bin"] or not plan["complete"]):
+            or plan["loose_selected_summary"] != {"entry_count": 1, "examples": ["large.bin"]}
+            or not plan["complete"]):
         raise AssertionError("unexpected selective dry-run layout")
     execute("selective-copy", arguments, expected_receipts=2)
     if {path.name for path in destination.iterdir()} != {"small.gbi.tar", "large.bin"}:

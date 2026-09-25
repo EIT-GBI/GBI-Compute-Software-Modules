@@ -52,6 +52,19 @@ class Archives(unittest.TestCase):
                 self.assertEqual((target / "empty").stat().st_mtime_ns, 1700000000123456789)
                 archives.restore(stream, target)  # identical retry
 
+    def test_metadata_budget_matches_stored_manifest_for_mixed_entries(self):
+        self.fixture()
+        for compression in (None, "gzip"):
+            with self.subTest(compression=compression):
+                budget = archives.check_metadata_budget(self.source, compression=compression)
+                stream, _ = self.packed(compression=compression)
+                stream.seek(0)
+                mode = "r:gz" if compression == "gzip" else "r:"
+                with tarfile.open(fileobj=stream, mode=mode) as archive:
+                    manifest_bytes = archive.extractfile(archives.MANIFEST).read()
+                self.assertEqual(len(manifest_bytes), budget["manifest_bytes"])
+                self.assertLessEqual(budget["observation_bytes"], archives.MAX_MANIFEST)
+
     def test_filtered_hardlink_without_primary(self):
         self.fixture()
         stream, packed = self.packed()
