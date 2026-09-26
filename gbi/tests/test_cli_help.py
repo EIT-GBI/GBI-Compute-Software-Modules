@@ -2,12 +2,25 @@
 
 import contextlib
 import io
+from pathlib import Path
 import unittest
 
 from gbi_data import cli
 
 
 class CLIHelp(unittest.TestCase):
+    def test_module_help_describes_typed_prefect_options_and_compatibility(self):
+        template = Path(__file__).resolve().parents[1] / "sm-config/module_template.lua"
+        text = " ".join(template.read_text().split())
+        for explanation in ("--pack, --pack-small, --chunk-size and exclusions",
+                            "updated site broker/flows",
+                            "Restores detect archives/chunks automatically",
+                            "--job-size small", "compatible with older deployments",
+                            "unsupported requested options fail closed",
+                            "(--delete-source) is unavailable with Prefect"):
+            self.assertIn(explanation, text)
+        self.assertNotIn("cannot use packing", text)
+
     def help_text(self, *arguments):
         output = io.StringIO()
         with contextlib.redirect_stdout(output), self.assertRaises(SystemExit) as raised:

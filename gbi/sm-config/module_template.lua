@@ -13,9 +13,12 @@ Python: from gbi import data; data.copy(source, destination)
 data.move() verifies then removes selected filesystem originals; both calls wait.
 
 Use --pack tar or --pack gzip to make a portable archive. Restore with copy.
-Use --prefect / Python prefect=True for direct individual Object Storage files;
-this route cannot use packing, chunks or --delete-source. Prefect exclusions
-require an updated site broker and flow deployment.
+Use --prefect / Python prefect=True for managed Object Storage transfers.
+Prefect archives support --pack, --pack-small, --chunk-size and exclusions with
+updated site broker/flows. Restores detect archives/chunks automatically; use
+--job-size small for a smaller restore reservation. Plain requests remain
+compatible with older deployments; unsupported requested options fail closed.
+Object Storage source removal (--delete-source) is unavailable with Prefect.
 Inside a Slurm job, ordinary CLI and Python calls reuse the current allocation.
 
 Command help: gbi data copy --help
