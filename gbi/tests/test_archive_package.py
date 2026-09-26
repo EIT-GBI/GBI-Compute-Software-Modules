@@ -38,7 +38,8 @@ class ArchivePackageTest(unittest.TestCase):
             wheels = tuple(wheelhouse.glob("*.whl"))
             self.assertEqual(len(wheels), 1)
             with zipfile.ZipFile(wheels[0]) as wheel:
-                for name in ("archives.py", "selection.py"):
+                for name in ("__init__.py", "archives.py", "chunks.py", "packing.py",
+                             "selection.py", "storage.py", "formats.py", "transfer.py"):
                     self.assertEqual(wheel.read("gbi_data/" + name),
                                      (project / "src/lib/gbi_data" / name).read_bytes())
             subprocess.run(
@@ -54,7 +55,7 @@ class ArchivePackageTest(unittest.TestCase):
 from pathlib import Path
 from importlib.metadata import version
 import sys
-from gbi_data import archives, __version__
+from gbi_data import archives, chunks, formats, packing, __version__
 assert version("gbi-archive-codec") == __version__
 source, archive, restored = map(Path, sys.argv[1:4])
 compression = sys.argv[4] or None

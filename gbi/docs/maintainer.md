@@ -123,7 +123,9 @@ harness rules.
 `pyproject.toml` builds the existing `gbi_data` archive implementation as the
 dependency-free `gbi-archive-codec` wheel. The package boundary reuses
 `gbi_data.archives` and its selection helper without copying codec source; the
-Prefect Object Storage backend does not consume this wheel yet. It contains no
+candidate Prefect Object Storage backend consumes the same codec package; its
+publication, image pin and runtime acceptance are separate from local tests.
+It contains no
 installed CLI executable or `gbi` SDK; researchers should load the normal module.
 From the repository root, test the isolated wheel with an interpreter that has
 `pip`, `setuptools>=61` and `wheel` installed:
@@ -135,3 +137,60 @@ python -B -m unittest discover -s gbi/tests -p test_archive_package.py -v
 The test builds and installs only into a temporary directory, checks that the
 wheel contains the unchanged codec source, and exercises tar and gzip with
 include/exclude filters. It skips when offline build tooling is unavailable.
+
+Codec callers may explicitly set `selection_mode="relative"` on
+`archives.check_metadata_budget`, `archives.pack`, `archives.restore` and
+`packing.plan`. This matches source-relative POSIX path segments: `*.pt` selects
+only root files, `nested/*.pt` selects one level and `**/*.pt` selects any depth.
+It follows the Prefect transfer core's segment matching; include patterns form
+a union and exclusions win. Patterns do not implicitly select a directory's
+descendants. Selected empty directories and ancestors needed by selected entries
+are preserved. Restore patterns are relative to the archive's stored root.
+Use the same mode and filters for preflight and packing. For a selected subtree,
+`check_metadata_budget` and `pack` accept `selection_prefix="parent/subtree"`
+in relative mode: patterns still match original-root paths, while archived
+member names remain subtree-relative. The prefix must be a canonical relative
+POSIX path, or empty. The default remains `basename`,
+including for all ordinary CLI and SDK calls. This codec option does not itself
+enable portable Prefect transfers or add a public CLI flag.
+
+Preflight also returns `selected_bytes`, counting selected file, symlink and
+hardlink logical sizes as an upper bound on payload bytes. Archive headers,
+metadata and compression overhead still need a separate output bound.
+`archives.cleanup_source(..., on_remove=callback)` can record each successfully
+unlinked non-directory entry for partial-failure accounting; the callback must
+not mutate that entry. Full readback and source-stability checks still apply.
+
+`chunks.parse_manifest(encoded, completion=None, *, complete=True)` validates
+raw manifest and completion-marker JSON bytes without filesystem or payload I/O.
+It returns the manifest with computed `state` (`complete` or `incomplete`) and
+uses the existing version-1 format, checksum binding, part-count and byte limits.
+The default requires a matching completion marker. `complete=False` permits a
+missing or truncated JSON marker for resume; a parsed but mismatched marker or
+an oversized marker still fails. `chunks.read_manifest` delegates to this parser
+and additionally checks filesystem directories and no-follow regular files.
+Transport adapters must bound reads themselves and independently verify payloads;
+parsing metadata alone does not prove a transfer complete or authorize cleanup.
+The internal `_ChunkReader(store, manifest, *, open_part=None)` accepts an
+optional transport callback receiving each part record and returning a binary
+reader supporting `readinto` and `close`. It retains sequential per-part size,
+SHA-256 and full-stream checks; callers must drain the reader to verify the full
+stream and separately pin/recheck remote metadata. The filesystem default is
+unchanged.
+
+The 0.4.9 candidate broker forwards positive integer `chunk_size` only for
+archives; default `None` is omitted. For an un-packed direct regular file, the
+CLI verifies personal-root metadata without symlink traversal and sends
+`source_is_file=True`; otherwise it omits the field. The backend validates the
+same shape and grants the exact generated `.gbi-chunks` store, not its parent.
+Whole-pack targets also gain that suffix; directory targets retain their prefix
+and encode selected members independently. Restore format detection is automatic.
+Typed deployment schema checks and replay identity include both fields. Never
+drop a rejected option to make an older deployment accept the request.
+
+`formats._owned_remove(path, identity, root)` and `_owned_rmdir` use a shared
+descriptor-relative no-follow ancestor walk and inode/type checks before unlink
+or rmdir. Regular files must have one link. Capture `_identity(path)` before
+payload or other cleanup and retain it; recapturing afterwards could authorize
+a replacement. The ordinary worker binds stage/pending journals and stage
+directories this way. These helpers do not authorize Object Storage deletion.

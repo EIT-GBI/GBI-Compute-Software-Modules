@@ -54,8 +54,34 @@ class Prefect(unittest.TestCase):
                 self.options("lustre", "alluxio", flag)
         self.assertFalse(cli.parser().parse_args(["data", "copy", "a", "b"]).prefect)
 
-    def test_unsupported_packing_deletion_and_paths_refused(self):
-        for flags in (("--pack", "tar"), ("--delete-source",)):
+    def test_restore_job_size_preserves_default_and_explicit_named_values(self):
+        for target in ("lustre", "fss"):
+            self.assertNotIn("job_size", prefect.prepare(self.options("alluxio", target), self.site))
+            for size in ("small", "large"):
+                request = prefect.prepare(self.options("alluxio", target, "--job-size", size), self.site)
+                self.assertEqual(request["job_size"], size)
+
+    def test_job_size_refuses_archive_ordinary_and_unknown_requests(self):
+        for source in ("lustre", "fss"):
+            with self.assertRaisesRegex(ValueError, "only.*restores"):
+                prefect.prepare(self.options(source, "alluxio", "--job-size", "small"), self.site)
+        ordinary = cli.parser().parse_args(["data", "copy", "missing", "also-missing", "--job-size", "small"])
+        with self.assertRaisesRegex(ValueError, "only.*restores"):
+            cli.plan(ordinary, self.site)
+        with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+            self.options("alluxio", "lustre", "--job-size", "medium")
+
+    def test_restore_job_size_dry_run_displays_choice_without_state(self):
+        output = io.StringIO()
+        with patch("gbi_data.prefect.exchange") as exchange, contextlib.redirect_stdout(output):
+            options = self.options("alluxio", "lustre", "--job-size", "small", "--dry-run")
+            self.assertEqual(prefect.start(options, self.site, self.home), 0)
+        exchange.assert_not_called()
+        self.assertFalse(self.home.exists())
+        self.assertIn("Restore job size: small", output.getvalue())
+
+    def test_unsupported_deletion_and_paths_refused(self):
+        for flags in (("--delete-source",),):
             with self.assertRaises(ValueError):
                 prefect.prepare(self.options("lustre", "alluxio", *flags), self.site)
         for path in (self.base / "shared", self.site.roots["lustre"] / ".." / "other",
@@ -64,6 +90,100 @@ class Prefect(unittest.TestCase):
             options.source = str(path)
             with self.assertRaises(ValueError):
                 prefect.prepare(options, self.site)
+
+    def test_chunk_file_directory_and_renamed_destination(self):
+        for source in ("lustre", "fss"):
+            options = self.options(source, "alluxio", "--chunk-size", "64MiB")
+            options.destination += "-renamed"
+            path = Path(options.source)
+            path.write_bytes(b"payload")
+            request = prefect.prepare(options, self.site)
+            self.assertEqual(request["chunk_size"], 64 * 1024 * 1024)
+            self.assertTrue(request["source_is_file"])
+            self.assertEqual(request["destination"], "experiment-renamed")
+            options.destination += ".gbi-chunks"
+            with self.assertRaisesRegex(ValueError, "automatic"):
+                prefect.prepare(options, self.site)
+            path.unlink()
+            path.mkdir()
+            self.assertNotIn("source_is_file", prefect.prepare(options, self.site))
+
+    def test_chunked_gzip_keeps_exact_target_without_file_shape(self):
+        options = self.options("lustre", "alluxio", "--pack", "gzip", "--chunk-size", "64MiB", "--dry-run")
+        options.destination += ".gbi.tar.gz"
+        request = prefect.prepare(options, self.site)
+        self.assertEqual(request["archive_format"], "gzip")
+        self.assertEqual(request["destination"], "experiment.gbi.tar.gz")
+        self.assertNotIn("source_is_file", request)
+        self.assertTrue(request["dry_run"])
+
+    def test_chunk_shape_rejects_symlinks_and_invalid_or_restore_options(self):
+        options = self.options("lustre", "alluxio", "--chunk-size", "64MiB")
+        actual = self.site.roots["lustre"] / "actual"
+        actual.mkdir()
+        (actual / "file").write_bytes(b"payload")
+        Path(options.source).symlink_to(actual, target_is_directory=True)
+        for source in (options.source, str(Path(options.source) / "file")):
+            options.source = source
+            with self.assertRaisesRegex(ValueError, "symlinks"):
+                prefect.prepare(options, self.site)
+        for size in (True, False, 0, -1, 1.5, "64MiB"):
+            options.chunk_size = size
+            with self.assertRaisesRegex(ValueError, "positive integer"):
+                prefect.prepare(options, self.site)
+        for target in ("lustre", "fss"):
+            with self.assertRaisesRegex(ValueError, "only.*archives"):
+                prefect.prepare(self.options("alluxio", target, "--chunk-size", "64MiB"), self.site)
+
+    def test_portable_archive_formats_and_default_omission(self):
+        for source in ("lustre", "fss"):
+            default = prefect.prepare(self.options(source, "alluxio"), self.site)
+            self.assertTrue({"archive_format", "pack_small", "packing_policy", "dry_run", "chunk_size", "source_is_file"}.isdisjoint(default))
+            for compression, suffix in (("tar", ".gbi.tar"), ("gzip", ".gbi.tar.gz")):
+                options = self.options(source, "alluxio", "--pack", compression)
+                options.destination += suffix
+                request = prefect.prepare(options, self.site)
+                self.assertEqual(request["archive_format"], compression)
+                self.assertEqual(request["destination"], "experiment" + suffix)
+                self.assertNotIn("pack_small", request)
+                self.assertNotIn("dry_run", request)
+
+    def test_small_file_policy_matches_ordinary_site_settings(self):
+        options = self.options("lustre", "alluxio", "--pack-small")
+        Path(options.source).mkdir()
+        self.site.values.update(pack_small_bytes="2048", pack_min_files="7", pack_max_bytes="65536",
+                                inline_scan_entries="321", inline_probe_seconds="2.5")
+        request = prefect.prepare(options, self.site)
+        self.assertTrue(request["pack_small"])
+        self.assertEqual(request["packing_policy"], cli.plan(options, self.site)["packing_policy"])
+        self.assertNotIn("archive_format", request)
+
+    def test_packing_rejects_restore_and_invalid_destination_before_submission(self):
+        for target in ("lustre", "fss"):
+            for flags in (("--pack", "tar"), ("--pack-small",)):
+                with self.subTest(target=target, flags=flags), self.assertRaisesRegex(ValueError, "only.*archives"):
+                    prefect.prepare(self.options("alluxio", target, *flags), self.site)
+        with self.assertRaisesRegex(ValueError, "exact destination"):
+            prefect.prepare(self.options("lustre", "alluxio", "--pack", "gzip"), self.site)
+
+    def test_managed_packing_dry_run_saves_exact_request_and_wait_choice(self):
+        for flags in (("--pack-small",), ("--pack", "tar"), ("--chunk-size", "64MiB")):
+            options = self.options("fss", "alluxio", *flags, "--dry-run", "--wait")
+            if options.chunk_size:
+                Path(options.source).mkdir()
+            if options.pack:
+                options.destination += ".gbi.tar"
+            output = io.StringIO()
+            with patch("gbi_data.prefect.submit", return_value=0) as submit, contextlib.redirect_stdout(output):
+                self.assertEqual(prefect.start(options, self.site, self.home), 0)
+            run_dir, site, wait = submit.call_args.args
+            request = json.loads((run_dir / "request.json").read_text())["broker_request"]
+            self.assertTrue(request["dry_run"])
+            self.assertTrue(wait)
+            self.assertIs(site, self.site)
+            self.assertIn("tracking records", output.getvalue())
+            self.assertIn("no data, receipt, destination writes", output.getvalue())
+            self.assertNotIn("no migration submitted", output.getvalue())
 
     def test_exclusions_preserve_selection_for_all_routes(self):
         for source, target in (("lustre", "alluxio"), ("fss", "alluxio"),
@@ -83,12 +203,27 @@ class Prefect(unittest.TestCase):
             with self.subTest(patterns=patterns), self.assertRaisesRegex(ValueError, "--exclude"):
                 prefect.prepare(options, self.site)
 
-    def test_fixed_layout_and_include_preserved(self):
-        options = self.options("fss", "alluxio", "--include", "*.pt", "--include", "*.txt")
-        self.assertEqual(prefect.prepare(options, self.site)["include"], ["*.pt", "*.txt"])
-        options.destination = str(self.site.roots["alluxio"] / "renamed")
-        with self.assertRaisesRegex(ValueError, "matching relative"):
-            prefect.prepare(options, self.site)
+    def test_distinct_destination_and_filters_preserved_for_all_routes(self):
+        for source, target in (("lustre", "alluxio"), ("fss", "alluxio"),
+                               ("alluxio", "lustre"), ("alluxio", "fss")):
+            with self.subTest(source=source, target=target):
+                options = self.options(source, target, "--include", "*.pt", "--exclude", "*.tmp")
+                options.destination = str(self.site.roots[target] / "renamed/subdir")
+                request = prefect.prepare(options, self.site)
+                self.assertEqual(request["source"], "experiment")
+                self.assertEqual(request["destination"], "renamed/subdir")
+                self.assertEqual(request["include"], ["*.pt"])
+                self.assertEqual(request["exclude"], ["*.tmp"])
+
+    def test_distinct_destination_stays_inside_personal_root_and_rejects_reserved_paths(self):
+        for value in (self.base / "other", self.site.roots["fss"] / ".." / "other",
+                      self.site.roots["fss"] / ".prefect-receipts/data",
+                      self.site.roots["fss"] / "renamed" / "transfer-locks/data",
+                      self.site.roots["fss"] / "renamed/*.pt"):
+            options = self.options("alluxio", "fss")
+            options.destination = str(value)
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                prefect.prepare(options, self.site)
 
     def test_dry_run_creates_no_state_or_submission(self):
         output = io.StringIO()
@@ -254,6 +389,41 @@ class Prefect(unittest.TestCase):
             self.assertEqual(prefect.submit(run_dir, self.site), 0)
         self.assertEqual(exchange.call_args.args[1], sent[0])
         self.assertEqual((run_dir / "request.json").read_bytes(), persisted)
+
+    def test_restore_retry_keeps_saved_job_size_and_request_identity(self):
+        options = self.options("alluxio", "lustre", "--job-size", "small")
+        options.destination = str(self.site.roots["lustre"] / "restored/subdir")
+        with patch("gbi_data.prefect.exchange", side_effect=ValueError("lost")), \
+             patch("sys.stdout.isatty", return_value=False):
+            with self.assertRaises(ValueError):
+                prefect.start(options, self.site, self.home)
+        run_dir = next((self.home / "runs").iterdir())
+        persisted = (run_dir / "request.json").read_bytes()
+        saved = prefect.stored_request(run_dir)
+        self.assertEqual(saved["job_size"], "small")
+        self.assertEqual(saved["destination"], "restored/subdir")
+        options.job_size = "large"
+        options.destination = str(self.site.roots["lustre"] / "later-change")
+        with patch("gbi_data.prefect.exchange", return_value={"version": 1, "state": "RUNNING", "terminal": False}) as exchange:
+            self.assertEqual(prefect.submit(run_dir, self.site), 0)
+        self.assertEqual(exchange.call_args.args[1], saved)
+        self.assertEqual((run_dir / "request.json").read_bytes(), persisted)
+
+    def test_packing_plan_retry_preserves_original_policy_and_dry_run(self):
+        options = self.options("fss", "alluxio", "--pack-small", "--dry-run")
+        with patch("gbi_data.prefect.exchange", side_effect=ValueError("lost")), \
+                patch("sys.stdout.isatty", return_value=False):
+            with self.assertRaisesRegex(ValueError, "lost"):
+                prefect.start(options, self.site, self.home)
+        run_dir = next((self.home / "runs").iterdir())
+        saved = prefect.stored_request(run_dir)
+        self.assertTrue(saved["pack_small"] and saved["dry_run"])
+        self.site.values["pack_min_files"] = "999"
+        options.dry_run = False
+        response = {"version": 1, "state": "RUNNING", "terminal": False}
+        with patch("gbi_data.prefect.exchange", return_value=response) as exchange:
+            self.assertEqual(prefect.submit(run_dir, self.site), 0)
+        self.assertEqual(exchange.call_args.args[1], saved)
 
     def test_status_recovers_by_request_id_without_resubmission(self):
         with patch("gbi_data.prefect.exchange", side_effect=ValueError("lost")), \

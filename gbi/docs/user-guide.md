@@ -16,12 +16,15 @@ gbi --version
 gbi data roots
 ```
 
-This guide accompanies GBI 0.4.9. Use `gbi --version` to check the module you
+This guide describes the GBI 0.4.9 candidate. The cluster installation was
+0.4.8 at the 2026-09-26 documentation update. Candidate source support does not
+establish installation or end-to-end acceptance. Use `gbi --version` to check the module you
 loaded, and `gbi data copy --help` for its supported options.
 
-Prefect exclusions are new in this version and require the matching site broker
-and flow update. Until your site enables them, a request with exclusions is
-rejected before submission; the filters are never silently ignored.
+Prefect exclusions, renamed destinations, restore job sizes and portable
+archives/chunks require the matching site broker and flow update. Until your site enables
+them, unsupported requests are rejected before submission; options are never
+silently ignored.
 
 The `roots` command prints the configured user-facing paths. Use those aliases
 in commands instead of guessing an internal shard path.
@@ -74,8 +77,8 @@ flag is used.
 - `--local` is a guard that requires an existing allocation. It is not needed
   when automatic allocation reuse already applies.
 - `--prefect` selects the identity-bound managed Object Storage route. It is a
-  separate migration submission, not a tar archive and not a way to submit an
-  ordinary filesystem-to-filesystem copy.
+  separate migration submission, with individual objects by default. It cannot
+  submit an ordinary filesystem-to-filesystem copy.
 
 A foreground Ctrl-C stops the foreground operation. If the terminal is
 following a submitted Slurm job, Ctrl-C detaches the display; the job keeps
@@ -95,11 +98,12 @@ rejects the option. Normal source, destination and collision checks still apply.
 | --- | --- | --- | --- |
 | `--include` | Yes, recursive filename globs | Yes | Yes, up to 100 plain globs |
 | `--exclude` | Yes; exclusions win | Yes | Yes, with updated site broker and flows |
-| `--pack tar/gzip` | Yes | Yes | No |
-| `--pack-small` | Yes; use with `--dry-run` to review | Yes | No |
-| `--chunk-size SIZE` | Yes for regular files and new packs | Yes | No |
+| `--pack tar/gzip` | Yes | Yes | Archives only; updated broker/flows |
+| `--pack-small` | Yes; use with `--dry-run` to review | Yes | Archives only; same site policy; updated broker/flows |
+| `--chunk-size SIZE` | Yes for regular files and new packs | Yes | Archives only; updated broker/flows |
+| `--job-size small/large` | No | No | Restores only; updated broker/flows |
 | `--delete-source` | Move only; required for Object Storage sources | Same | No |
-| `--dry-run` | Yes; no transfer output is written | Yes | Yes |
+| `--dry-run` | Yes; no transfer output is written | Yes | Local preview, or managed plan with packing/chunking |
 | `--detach` | Yes; submits Slurm | New job; cannot combine with `--local` | No |
 | `--wait` | Yes | Yes | Yes |
 | `--local` | Requires an allocation | Yes | No |
@@ -109,24 +113,40 @@ rejects the option. Normal source, destination and collision checks still apply.
 with `--detach` and is the normal SDK behavior. The CLI parser rejects options
 that cannot be combined before it starts a transfer.
 
-The Prefect route sends individual files directly to or from personal Object
+The Prefect route sends individual files by default directly to or from personal Object
 Storage through the identity-bound broker. The ordinary route copies through
 the configured Lustre, FSS or Alluxio/Object Storage mounts. Ordinary routing
 is not limited to personal roots: any mounted path that the Unix account can
 access may be classified and used. Prefect requires
-one personal Lustre or FSS path and one personal Object Storage path. Within
-Prefect, every archive or restore request, including a restore to Lustre,
-must use matching relative source and destination paths. The one exception is
-the Prefect archive-from-Lustre operation, whose relative names may differ.
-Different names are otherwise available only on the ordinary route. Prefect
-paths must be plain paths without
-wildcards, and reserved transfer-state prefixes are rejected. The route does
-not yet support packing, chunking or Object Storage source deletion.
+one personal Lustre or FSS path and one personal Object Storage path. Source
+and destination relative names may differ; FSS archives and restores require
+the updated broker and flow for renamed destinations. Equal-path requests
+retain their existing behavior. Prefect paths must be plain paths without
+wildcards, and reserved transfer-state prefixes are rejected. The candidate route
+supports archive `--pack tar/gzip`, `--pack-small` and `--chunk-size` with the
+matching broker and flow update. Object Storage source deletion remains
+unsupported; this update does not grant delete authority.
+Explicit packing requires the exact destination filename `.gbi.tar` or
+`.gbi.tar.gz`. Small-file packing uses the same site thresholds as the ordinary
+route and cannot be combined with whole-directory packing.
+
+`--prefect --dry-run` with packing or chunking submits a managed metadata-only plan:
+it creates Prefect/local tracking records but no data, receipts, destination
+writes or source deletions. Use `--wait`, or inspect the printed run ID. Plain
+`--prefect --dry-run` remains a local preview and submits nothing. Unsupported
+site versions reject portable options before creating a run; source support
+does not mean the update is already installed.
+
+For a modest restore inventory, `--prefect --job-size small` requests 2 CPUs and
+16 GiB; `--job-size large` requests 8 CPUs and 48 GiB. Omit the option to keep
+the existing deployment setting (large for these restores). This changes only
+the separate restore job's reservation, not its time limit or the caller's
+allocation, and does not guarantee an immediate start.
 
 Use `gbi data copy --help` and `gbi data move --help` for the installed parser's
-current wording. If you need packing or chunks, omit `--prefect`
-and keep those options on the ordinary route. If you need direct individual
-Object Storage objects, keep `--prefect` and remove the unsupported options;
+current wording. If your site has not enabled portable Prefect archives/chunks,
+omit `--prefect` for packing or chunking. If you need direct individual Object
+Storage objects, keep `--prefect` without packing or chunking;
 do not approximate either route with a second command.
 
 ## Selecting files
@@ -165,7 +185,7 @@ format with gzip compression. The destination name must end exactly in
 Start with tar for many small files: one sequential archive reduces per-file
 storage operations. Choose gzip when compression saves enough space to justify
 its CPU cost. Checkpoints may compress poorly, so gzip is not automatically
-faster. Large individual checkpoints can also suit the direct Prefect route;
+faster. Large individual checkpoints can also suit the default Prefect route;
 it keeps them as individual objects. Compare a representative finished folder
 before choosing a format for a large collection.
 
@@ -248,8 +268,32 @@ configured Lustre scratch area, outside the destination; it is not staged on a
 local temporary disk.
 
 Chunking can be combined with creating a new packed archive, which adds the
-chunk suffix to that archive output. It cannot be used to restore an already
-encoded archive or chunk store. It is not accepted by the Prefect route.
+chunk suffix to that archive output. Restore an already encoded archive or
+chunk store without `--pack`, `--pack-small` or `--chunk-size`; detection is
+automatic, including on the updated Prefect route.
+
+Candidate Prefect chunks need matching broker and archive/restore flows. For a
+direct regular file, leave `.gbi-chunks` off the target; the backend adds it.
+The CLI rejects symlinks and symlink parents and identifies the file so access
+covers only its exact store prefix. Whole-pack targets keep `.gbi.tar` or
+`.gbi.tar.gz`; chunking adds `.gbi-chunks`. Directory targets remain prefixes;
+selected files are encoded independently, after optional `--pack-small` grouping.
+
+```bash
+gbi data copy /your/lustre/checkpoint.bin /your/object/saved.bin \
+  --prefect --chunk-size 64MiB --wait
+gbi data copy /your/fss/run /your/object/run.gbi.tar.gz \
+  --prefect --pack gzip --chunk-size 64MiB --wait
+gbi data copy /your/object/run.gbi.tar.gz.gbi-chunks /your/lustre/restored \
+  --prefect --job-size small --wait
+```
+
+These examples retain their sources. Partial stores cannot be restored before
+completion. A move removes only selected, unchanged filesystem originals after
+verification and its receipt. After an interrupted cleanup, inspect receipts
+and retained sources before submitting another run. If the remaining files
+would change a previous packing layout, the retry fails closed; it does not
+silently combine packed and loose versions of the same logical path.
 
 ## Status, waiting and retry
 
@@ -296,17 +340,19 @@ The complete public signatures are:
 
 ```text
 copy(source, destination, *, include=(), exclude=(), pack=None,
-     pack_small=False, chunk_size=None, dry_run=False, prefect=False)
+     pack_small=False, chunk_size=None, dry_run=False, prefect=False,
+     job_size=None)
 
 move(source, destination, *, include=(), exclude=(), pack=None,
      pack_small=False, chunk_size=None, dry_run=False, prefect=False,
-     delete_source=False)
+     delete_source=False, job_size=None)
 ```
 
 `source` and `destination` accept strings or `pathlib.Path`. `include` and
 `exclude` accept one string or an iterable of strings. `pack` is `None`, `tar`
-or `gzip`; `chunk_size` is a positive size string such as `64MiB`. Boolean
+or `gzip`; `chunk_size` is positive integer bytes or a size string such as `64MiB`. Boolean
 arguments must be actual booleans.
+`job_size` is `None`, `small` or `large` and applies only to Prefect restores.
 
 Both functions add `--wait`, stream the CLI's progress to the current output,
 and return `subprocess.CompletedProcess` when the CLI exits successfully. A
@@ -364,8 +410,8 @@ data.move(
 ### Python Prefect alternative
 
 Set `prefect=True` when the source and destination meet the personal route
-rules. The call submits individual objects through the site's local broker or
-authenticated compute-job HTTPS endpoint. It does not create a tar archive.
+rules. By default, it submits individual objects through the site's local broker
+or authenticated compute-job HTTPS endpoint; packing requires an explicit option.
 
 ```python
 from gbi import data
@@ -384,8 +430,10 @@ as your user. That transfer may wait for cluster resources while your Python
 call waits for completion; allow for queue time in the calling job's time limit.
 No notebook or browser session is required.
 
-The Prefect call cannot yet use `pack`, `pack_small`, `chunk_size` or
-`delete_source`. It is a managed migration submission, so a lost reply is
+The candidate Prefect call supports archive `pack`, `pack_small` and
+`chunk_size` with updated site broker/flows, but not `delete_source`. With packing or chunking,
+`dry_run=True` waits for a managed metadata-only plan and creates tracking
+records only. It is a managed migration submission, so a lost reply is
 recovered with `gbi data retry TRANSFER_ID`, not by blindly submitting a new
 copy. Its flow receipts remain the authority for per-file verification.
 
@@ -417,8 +465,9 @@ separate maintained owner process and is not started by this command.
 ### “unsupported” or “cannot be combined”
 
 Check the route matrix and the installed `--help`. The most common cases are
-using `--prefect` with `--pack`, `--chunk-size` or
-`--delete-source`. Remove those options and use the ordinary route, or change
+using `--prefect` with `--delete-source`, packing/chunking on a restore, or
+requesting candidate options against an older broker/flow. Remove `--prefect`
+to use the ordinary route, or change
 the operation to one the Prefect route supports. `--pack` and `--pack-small`
 also cannot be combined.
 
@@ -492,8 +541,8 @@ marked tar or gzip container with a manifest and relative member paths. A
 A **source fingerprint** is the metadata identity checked before deletion.
 **Readback** is reopening the destination and verifying it independently.
 **Object Storage originals** are the files exposed through the personal
-Alluxio/Object Storage mount. **Prefect route** means the direct individual
-object migration submitted through the site's identity-bound broker.
+Alluxio/Object Storage mount. **Prefect route** means a direct Object Storage
+migration submitted through the site's identity-bound broker.
 
 GBI protects sources through per-file verification and source rechecks. It does
 not promise atomic whole-tree transactions: a large transfer can have verified

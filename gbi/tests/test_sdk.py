@@ -75,12 +75,45 @@ class SDK(unittest.TestCase):
         self.assertEqual(self.parsed().include, ["*.pt", "*.pt.*"])
         self.assertEqual(self.parsed().exclude, ["unfinished*"])
 
+    def test_prefect_portable_options_and_managed_preview_use_existing_flags(self):
+        for transfer in (data.copy, data.move):
+            transfer("source", "target.gbi.tar.gz", prefect=True, pack="gzip", dry_run=True)
+            options = self.parsed()
+            self.assertEqual(options.pack, "gzip")
+            self.assertTrue(options.prefect and options.dry_run and options.wait)
+            transfer("source", "target", prefect=True, pack_small=True)
+            options = self.parsed()
+            self.assertTrue(options.pack_small and options.prefect and options.wait)
+            self.assertFalse(options.dry_run)
+            transfer("source", "target.gbi.tar.gz", prefect=True, pack="gzip", chunk_size=67108864)
+            options = self.parsed()
+            self.assertEqual(options.chunk_size, 67108864)
+            self.assertTrue(options.prefect and options.wait)
+            self.assertEqual(options.destination, "target.gbi.tar.gz")
+
     def test_failure_raises_original_exit_code(self):
         with patch.dict(os.environ, {"GBI_SDK_TEST_FAIL": "1"}):
             with self.assertRaises(subprocess.CalledProcessError) as raised:
                 data.move("source", "target")
         self.assertEqual(raised.exception.returncode, 23)
         self.assertEqual(raised.exception.cmd[2], "move")
+
+    def test_prefect_restore_job_size_is_forwarded_only_when_explicit(self):
+        data.copy("source", "target", prefect=True)
+        self.assertIsNone(self.parsed().job_size)
+        for transfer in (data.copy, data.move):
+            for size in ("small", "large"):
+                transfer("source", "target", prefect=True, job_size=size)
+                self.assertEqual(self.parsed().job_size, size)
+                self.assertTrue(self.parsed().wait)
+
+    def test_invalid_job_size_never_launches_a_process(self):
+        for size in ("", "medium", True, 2, []):
+            with self.subTest(size=size), self.assertRaisesRegex(ValueError, "job_size"):
+                data.copy("source", "target", prefect=True, job_size=size)
+        with self.assertRaisesRegex(ValueError, "prefect=True"):
+            data.copy("source", "target", job_size="small")
+        self.assertFalse(self.log.exists())
 
     def test_ambiguous_deletion_value_never_launches_a_process(self):
         with self.assertRaisesRegex(TypeError, "delete_source must be a boolean"):

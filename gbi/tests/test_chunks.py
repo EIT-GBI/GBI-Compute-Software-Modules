@@ -2,6 +2,7 @@
 
 import hashlib
 from contextlib import contextmanager
+import io
 import json
 import os
 import shutil
@@ -11,6 +12,111 @@ import unittest
 from unittest.mock import patch
 
 from gbi_data import chunks
+
+
+class ManifestParsing(unittest.TestCase):
+    def setUp(self):
+        self.manifest = {
+            "format": chunks.FORMAT, "version": chunks.VERSION,
+            "original_name": "original.dat", "size": 3, "chunk_size": 2,
+            "sha256": hashlib.sha256(b"abc").hexdigest(),
+            "source": "/source/original.dat", "source_fingerprint": [1, 2, 3, 4, 5],
+            "parts": [
+                {"name": "00000000.part", "size": 2,
+                 "sha256": hashlib.sha256(b"ab").hexdigest()},
+                {"name": "00000001.part", "size": 1,
+                 "sha256": hashlib.sha256(b"c").hexdigest()},
+            ],
+        }
+        self.encoded = chunks._encoded(self.manifest)
+        self.completion = chunks._encoded(chunks._completion(self.manifest, self.encoded))
+
+    def test_complete_validation_has_no_filesystem_io(self):
+        with patch.object(chunks, "_directory", side_effect=AssertionError("filesystem I/O")), \
+                patch.object(chunks, "_regular", side_effect=AssertionError("filesystem I/O")):
+            self.assertEqual(chunks.parse_manifest(self.encoded, self.completion),
+                             {**self.manifest, "state": "complete"})
+
+    def test_malformed_and_foreign_manifests_are_rejected_for_resume_too(self):
+        cases = [b"{", b"null", b"[]", b"{}"]
+        for key, value in (("format", "foreign"), ("version", 999),
+                           ("original_name", "../escape"), ("size", -1),
+                           ("chunk_size", 0), ("sha256", "bad"),
+                           ("source_fingerprint", []), ("parts", [])):
+            cases.append(chunks._encoded({**self.manifest, key: value}))
+        cases.append(chunks._encoded({**self.manifest, "parts": self.manifest["parts"][::-1]}))
+        for encoded in cases:
+            for complete in (True, False):
+                with self.subTest(encoded=encoded, complete=complete), self.assertRaises(ValueError):
+                    chunks.parse_manifest(encoded, self.completion, complete=complete)
+
+    def test_missing_or_unfinished_marker_is_incomplete_only_for_resume(self):
+        for marker in (None, b"", b'{"format":'):
+            with self.subTest(marker=marker):
+                self.assertEqual(chunks.parse_manifest(self.encoded, marker, complete=False)["state"],
+                                 "incomplete")
+                with self.assertRaisesRegex(ValueError, "incomplete"):
+                    chunks.parse_manifest(self.encoded, marker)
+        self.assertEqual(chunks.parse_manifest(self.encoded, self.completion,
+                                              complete=False)["state"], "complete")
+
+    def test_foreign_mismatched_and_oversized_markers_are_never_resumable(self):
+        foreign = {**chunks._completion(self.manifest, self.encoded), "format": "foreign"}
+        for marker in (b"null", b"{}", chunks._encoded(foreign), b" " * 4097):
+            for complete in (True, False):
+                with self.subTest(marker=marker[:80], complete=complete), \
+                        self.assertRaisesRegex(ValueError, "does not match"):
+                    chunks.parse_manifest(self.encoded, marker, complete=complete)
+        changed = chunks._encoded({**self.manifest, "original_name": "renamed.dat"})
+        with self.assertRaisesRegex(ValueError, "does not match"):
+            chunks.parse_manifest(changed, self.completion, complete=False)
+
+    def test_manifest_and_part_limits_are_preserved(self):
+        with patch.object(chunks, "MAX_MANIFEST_BYTES", len(self.encoded) - 1):
+            with self.assertRaisesRegex(ValueError, "manifest exceeds"):
+                chunks.parse_manifest(self.encoded, self.completion, complete=False)
+        with patch.object(chunks, "MAX_PARTS", 1):
+            with self.assertRaisesRegex(ValueError, "too many chunks"):
+                chunks.parse_manifest(self.encoded, self.completion, complete=False)
+
+    def test_transport_reader_opens_parts_in_order_and_closes_them(self):
+        opened = []
+        streams = [io.BytesIO(b"ab"), io.BytesIO(b"c")]
+
+        def open_part(part):
+            opened.append(part)
+            return streams[len(opened) - 1]
+
+        with chunks._ChunkReader(None, self.manifest, open_part=open_part) as reader:
+            self.assertEqual(reader.read(), b"abc")
+            self.assertTrue(reader.verified)
+        self.assertEqual(opened, self.manifest["parts"])
+        self.assertTrue(all(stream.closed for stream in streams))
+
+    def test_transport_reader_rejects_corrupt_truncated_and_oversized_parts(self):
+        for payload in (b"ax", b"a", b"abc"):
+            stream = io.BytesIO(payload)
+            with self.subTest(payload=payload), \
+                    chunks._ChunkReader(None, self.manifest, open_part=lambda part: stream) as reader:
+                with self.assertRaisesRegex(ValueError, "corrupt chunk"):
+                    reader.read()
+                self.assertFalse(reader.verified)
+            self.assertTrue(stream.closed)
+
+    def test_transport_reader_rejects_wrong_full_checksum(self):
+        streams = iter([io.BytesIO(b"ab"), io.BytesIO(b"c")])
+        with chunks._ChunkReader(None, {**self.manifest, "sha256": "0" * 64},
+                                 open_part=lambda part: next(streams)) as reader:
+            with self.assertRaisesRegex(ValueError, "full reconstructed checksum"):
+                reader.read()
+            self.assertFalse(reader.verified)
+
+    def test_transport_reader_early_close_does_not_claim_verification(self):
+        stream = io.BytesIO(b"ab")
+        with chunks._ChunkReader(None, self.manifest, open_part=lambda part: stream) as reader:
+            self.assertEqual(reader.read(1), b"a")
+        self.assertTrue(stream.closed)
+        self.assertFalse(reader.verified)
 
 
 class Chunks(unittest.TestCase):
@@ -53,6 +159,15 @@ class Chunks(unittest.TestCase):
         self.assertEqual(self.target.read_bytes(), self.payload)
         self.assertEqual(result["sha256"], manifest["sha256"])
         self.assertEqual(self.source.read_bytes(), self.payload)
+
+    def test_filesystem_reader_delegates_to_pure_parser(self):
+        self.write()
+        with patch.object(chunks, "parse_manifest", wraps=chunks.parse_manifest) as parse:
+            result = chunks.read_manifest(self.store)
+        parse.assert_called_once_with((self.store / "manifest.json").read_bytes(),
+                                      (self.store / ".gbi" / "complete.json").read_bytes(),
+                                      complete=True)
+        self.assertEqual(result["state"], "complete")
 
     def test_interruption_resumes_verified_part_without_rewriting(self):
         self.interrupt()
