@@ -67,18 +67,14 @@ def _completion(manifest, encoded):
             "parts": len(manifest["parts"])}
 
 
-def read_manifest(store, *, complete=True):
-    """Recognize and validate a manifest without interpreting arbitrary files."""
-    store = Path(store).absolute()
-    _directory(store)
+def parse_manifest(encoded, completion=None, *, complete=True):
+    """Validate manifest/marker JSON bytes without filesystem or payload I/O."""
+    if len(encoded) > MAX_MANIFEST_BYTES:
+        raise ValueError("chunk manifest exceeds the supported 16 MiB limit")
     try:
-        with os.fdopen(_regular(store / "manifest.json"), "rb") as source:
-            encoded = source.read(MAX_MANIFEST_BYTES + 1)
-            if len(encoded) > MAX_MANIFEST_BYTES:
-                raise ValueError("chunk manifest exceeds the supported 16 MiB limit")
-            manifest = json.loads(encoded)
-    except (OSError, json.JSONDecodeError) as error:
-        raise ValueError(f"not a readable GBI chunk manifest: {store}") from error
+        manifest = json.loads(encoded)
+    except json.JSONDecodeError as error:
+        raise ValueError("not a readable GBI chunk manifest") from error
     try:
         if manifest["format"] != FORMAT or manifest["version"] != VERSION:
             raise ValueError("unsupported chunk format/version")
@@ -102,25 +98,43 @@ def read_manifest(store, *, complete=True):
                     part["size"] != min(chunk_size, size - index * chunk_size) or
                     not re.fullmatch("[0-9a-f]{64}", part["sha256"])):
                 raise ValueError("invalid chunk order, size or checksum")
-        _directory(store / ".gbi")
-        _directory(store / ".gbi" / "parts")
     except (KeyError, TypeError, AttributeError) as error:
         raise ValueError("not a valid GBI chunk manifest") from error
     manifest["state"] = "incomplete"
-    marker = store / ".gbi" / "complete.json"
-    if marker.exists() or marker.is_symlink():
+    if completion is not None:
         try:
-            with os.fdopen(_regular(marker), "rb") as stream:
-                content = stream.read(4097)
-                if len(content) > 4096 or json.loads(content) != _completion(manifest, encoded):
-                    raise ValueError("chunk completion marker does not match manifest")
+            if len(completion) > 4096 or json.loads(completion) != _completion(manifest, encoded):
+                raise ValueError("chunk completion marker does not match manifest")
             manifest["state"] = "complete"
-        except (OSError, json.JSONDecodeError) as error:
+        except json.JSONDecodeError as error:
             if complete:
                 raise ValueError("chunk completion marker is unreadable or incomplete") from error
     if complete and manifest["state"] != "complete":
         raise ValueError("chunk transfer is incomplete; resume it before restoring")
     return manifest
+
+
+def read_manifest(store, *, complete=True):
+    """Recognize a safe filesystem store and validate its manifest and marker."""
+    store = Path(store).absolute()
+    _directory(store)
+    try:
+        with os.fdopen(_regular(store / "manifest.json"), "rb") as source:
+            encoded = source.read(MAX_MANIFEST_BYTES + 1)
+    except OSError as error:
+        raise ValueError(f"not a readable GBI chunk manifest: {store}") from error
+    _directory(store / ".gbi")
+    _directory(store / ".gbi" / "parts")
+    completion = None
+    marker = store / ".gbi" / "complete.json"
+    if marker.exists() or marker.is_symlink():
+        try:
+            with os.fdopen(_regular(marker), "rb") as stream:
+                completion = stream.read(4097)
+        except OSError as error:
+            if complete:
+                raise ValueError("chunk completion marker is unreadable or incomplete") from error
+    return parse_manifest(encoded, completion, complete=complete)
 
 
 @contextmanager
@@ -355,9 +369,10 @@ def write_chunks(source, store, *, state, chunk_size=DEFAULT_CHUNK_SIZE,
 
 
 class _ChunkReader(io.RawIOBase):
-    def __init__(self, store, manifest):
+    def __init__(self, store, manifest, *, open_part=None):
         super().__init__()
         self.store, self.manifest = store, manifest
+        self.open_part = open_part
         self.index = 0
         self.part = None
         self.part_hash = hashlib.sha256()
@@ -379,11 +394,15 @@ class _ChunkReader(io.RawIOBase):
                         raise ValueError("full reconstructed checksum differs")
                     self.verified = True
                     return 0
-                path = self.store / ".gbi" / "parts" / self.manifest["parts"][self.index]["name"]
-                try:
-                    self.part = os.fdopen(_regular(path), "rb")
-                except OSError as error:
-                    raise ValueError(f"missing or unreadable chunk: {path}") from error
+                part = self.manifest["parts"][self.index]
+                if self.open_part is not None:
+                    self.part = self.open_part(part)
+                else:
+                    path = self.store / ".gbi" / "parts" / part["name"]
+                    try:
+                        self.part = os.fdopen(_regular(path), "rb")
+                    except OSError as error:
+                        raise ValueError(f"missing or unreadable chunk: {path}") from error
                 self.part_hash = hashlib.sha256()
                 self.part_size = 0
             size = self.part.readinto(buffer)

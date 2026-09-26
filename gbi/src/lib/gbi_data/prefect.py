@@ -1,11 +1,13 @@
 """Explicit personal migrations through the identity-binding local broker."""
 
 import errno
+from dataclasses import asdict
 import json
 import os
 from pathlib import Path
 import socket
 import ssl
+import stat
 import subprocess
 import sys
 import time
@@ -14,7 +16,7 @@ from urllib import request as urlrequest
 from urllib.parse import urlsplit
 import uuid
 
-from . import deadlines, jobs
+from . import deadlines, jobs, packing
 from .transfer import write_json
 
 
@@ -37,21 +39,14 @@ class _NoRedirect(urlrequest.HTTPRedirectHandler):
 
 
 def prepare(options, site):
-    unsupported = []
-    if options.exclude:
-        unsupported.append("--exclude")
-    unsupported.extend(flag for flag, key in (("--pack", "pack"), ("--pack-small", "pack_small"),
-                                               ("--chunk-size", "chunk_size"))
-                      if getattr(options, key, None))
-    if unsupported:
-        flags = ", ".join(unsupported)
-        raise ValueError(f"--prefect cannot be combined with {flags}; omit --prefect for an ordinary transfer")
     if options.delete_source:
         raise ValueError("--prefect cannot be combined with --delete-source; use an ordinary move to request source deletion")
-    if len(options.include) > 100 or any(
-            not pattern or len(pattern.encode()) > 255 or not pattern.isprintable()
-            or any(character in pattern for character in "/\\{}") for pattern in options.include):
-        raise ValueError("Prefect include patterns must be quoted file-name globs (at most 100 patterns)")
+    for name in ("include", "exclude"):
+        patterns = getattr(options, name)
+        if len(patterns) > 100 or any(
+                not pattern or len(pattern.encode()) > 255 or not pattern.isprintable()
+                or any(character in pattern for character in "/\\{}") for pattern in patterns):
+            raise ValueError(f"Prefect --{name} requires quoted file-name globs (at most 100 patterns)")
 
     def personal(path):
         path = Path(path).expanduser().absolute()
@@ -74,16 +69,71 @@ def prepare(options, site):
         operation = "stage-" + target_kind
     else:
         raise ValueError("--prefect needs one personal Object Storage path and one personal Lustre or FSS path")
-    if operation != "archive-lustre" and source != target:
-        raise ValueError("--prefect FSS archives and all restores require matching relative source and destination paths; omit --prefect to rename")
+    pack, pack_small = getattr(options, "pack", None), getattr(options, "pack_small", False)
+    if pack not in (None, "tar", "gzip") or type(pack_small) is not bool:
+        raise ValueError("packing requires --pack tar/gzip or --pack-small")
+    if pack and pack_small:
+        raise ValueError("choose --pack or --pack-small, not both")
+    if (pack or pack_small) and not operation.startswith("archive-"):
+        raise ValueError("packing is supported only for Prefect archives from Lustre or FSS")
+    chunk_size = getattr(options, "chunk_size", None)
+    if chunk_size is not None and (type(chunk_size) is not int or chunk_size < 1
+                                   or not operation.startswith("archive-")):
+        raise ValueError("--chunk-size requires positive integer bytes and is supported only for Prefect archives")
+    if pack:
+        suffix = ".gbi.tar.gz" if pack == "gzip" else ".gbi.tar"
+        if not target.endswith(suffix):
+            raise ValueError(f"--pack {pack} needs an exact destination filename ending in {suffix}")
+    job_size = getattr(options, "job_size", None)
+    if job_size is not None and (job_size not in ("small", "large") or not operation.startswith("stage-")):
+        raise ValueError("--job-size small or large is supported only for --prefect restores to Lustre or FSS")
     for value in (source, target):
         if len(value.encode()) > 4096 or not value.isprintable() or any(character in value for character in "\\*?[]{}"):
             raise ValueError("--prefect requires plain paths without wildcard characters")
-        if any(part.startswith((".gbi", ".prefect", "prefect-transfer-dev")) for part in value.split("/")):
+        if any(part == "transfer-locks" or part.startswith((".gbi", ".prefect", "prefect-transfer-dev"))
+               for part in value.split("/")):
             raise ValueError("transfer state and development prefixes are reserved")
-    return {"version": 1, "action": "submit", "request_id": str(uuid.uuid4()),
-            "operation": operation, "verb": options.verb, "source": source,
-            "destination": target, "include": options.include}
+    request = {"version": 1, "action": "submit", "request_id": str(uuid.uuid4()),
+               "operation": operation, "verb": options.verb, "source": source,
+               "destination": target, "include": options.include}
+    # Keep existing requests unchanged; older brokers must reject an unknown
+    # selection field rather than silently submit a broader transfer.
+    if options.exclude:
+        request["exclude"] = options.exclude
+    if job_size is not None:
+        request["job_size"] = job_size
+    if pack:
+        request["archive_format"] = pack
+    if chunk_size is not None:
+        request["chunk_size"] = chunk_size
+        if not (pack or pack_small):
+            # The backend needs an exact store grant for a direct file, not a
+            # broader parent grant. Never infer that shape through symlinks.
+            path = site.roots[source_kind]
+            site.check_root(path)
+            for component in source.split("/"):
+                path = path / component
+                mode = path.lstat().st_mode
+                if stat.S_ISLNK(mode):
+                    raise ValueError("Prefect chunk sources must not traverse symlinks")
+            if stat.S_ISREG(mode):
+                if target.endswith(".gbi-chunks"):
+                    raise ValueError("omit the automatic .gbi-chunks suffix from a direct file destination")
+                request["source_is_file"] = True
+            elif not stat.S_ISDIR(mode):
+                raise ValueError("Prefect chunk source must be a regular file or directory")
+    if pack_small:
+        request["pack_small"] = True
+        request["packing_policy"] = asdict(packing.PackingPolicy(
+            small_file_bytes=int(site.values["pack_small_bytes"]),
+            min_files=int(site.values["pack_min_files"]),
+            max_archive_bytes=int(site.values["pack_max_bytes"]),
+            max_entries=int(site.values["inline_scan_entries"]),
+            max_seconds=float(site.values["inline_probe_seconds"]),
+        ))
+    if options.dry_run and (pack or pack_small or chunk_size is not None):
+        request["dry_run"] = True
+    return request
 
 
 def _validate_result(raw):
@@ -244,11 +294,25 @@ def submit(run_dir, site, wait=False):
 def start(options, site, home):
     request = prepare(options, site)
     print(f"Prefect {request['operation']}: {request['source']} → {request['destination']}")
-    print("Sources: delete verified filesystem originals." if options.verb == "move" and request["operation"].startswith("archive-")
+    if "job_size" in request:
+        print(f"Restore job size: {request['job_size']}")
+    if "archive_format" in request:
+        destination_kind = "chunk store" if request.get("chunk_size") else "object"
+        print(f"Archive format: {request['archive_format']}; exact destination {destination_kind}.")
+    if request.get("pack_small"):
+        print(f"Small-file packing policy: {json.dumps(request['packing_policy'], sort_keys=True)}")
+    if "chunk_size" in request:
+        print(f"Chunk size: {request['chunk_size']} bytes; encoded stores use the .gbi-chunks suffix.")
+    for selection in ("include", "exclude"):
+        if request.get(selection):
+            print(f"{selection.capitalize()} basenames: {json.dumps(request[selection])}")
+    print("Sources: delete verified filesystem originals." if not options.dry_run and options.verb == "move" and request["operation"].startswith("archive-")
           else "Sources: keep originals.")
-    if options.dry_run:
+    if options.dry_run and not request.get("dry_run"):
         print("Dry run: no migration submitted and no files written.")
         return 0
+    if request.get("dry_run"):
+        print("Managed dry run: creates Prefect/run tracking records only; no data, receipt, destination writes or source deletions.")
     site.check_root(site.roots["lustre"])
     run_dir = home / "runs" / (time.strftime("%Y%m%dT%H%M%SZ", time.gmtime()) + "-" + uuid.uuid4().hex[:12])
     deadlines.event("saving Prefect request", run_dir, records=str(run_dir))

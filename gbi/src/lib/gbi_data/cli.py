@@ -116,10 +116,16 @@ def parser():
                 "Choose at most one of --detach, --local and --prefect.\n"
                 "Choose either --pack or --pack-small; they cannot be combined.\n"
                 "Restore archives/chunks to Lustre or FSS without packing/chunking flags.\n\n"
-                "--prefect submits individual files through the personal Object Storage route;\n"
-                "it does not create tar/gzip archives. FSS archives and all restores require\n"
-                "matching relative paths. Exclusions, packing, chunks, and deleting Object Storage\n"
-                "originals are unavailable with --prefect; omit it for an ordinary transfer.\n"
+                "--prefect submits personal Object Storage transfers. Archive packing/chunking\n"
+                "requires updated broker/flows. With either, --dry-run submits a managed plan\n"
+                "and creates tracking records, but no data/receipt/destination writes or deletions.\n"
+                "Without packing/chunking, Prefect --dry-run remains a local route preview.\n"
+                "For a file or whole pack, chunking adds .gbi-chunks to the named target.\n"
+                "Direct chunked files must be regular files without symlink traversal.\n"
+                "Renamed FSS archives/restores require updated broker/flows. Deleting\n"
+                "Object Storage originals remains unavailable with --prefect.\n"
+                "Omit --prefect for explicit Object Storage deletion on an ordinary transfer.\n"
+                "Prefect exclusions require an updated site broker and flow deployment.\n"
                 "After a lost submission reply: gbi data retry ID (same saved request).\n\n"
                 f"Examples:\n  gbi data {verb} SOURCE DESTINATION --dry-run\n"
                 f"  gbi data {verb} SOURCE DESTINATION --detach\n"
@@ -134,23 +140,25 @@ def parser():
         selection.add_argument("--include", action="append", default=[], metavar="GLOB",
                                help="select basenames matching any supplied pattern; quote globs such as '*.pt' (case-sensitive; repeatable; default: all files)")
         selection.add_argument("--exclude", action="append", default=[], metavar="GLOB",
-                               help="skip matching basenames (repeatable; wins over --include; ordinary route only)")
+                               help="skip matching basenames (repeatable; wins over --include)")
         archive = command.add_mutually_exclusive_group()
         archive.add_argument("--pack", choices=("tar", "gzip"),
-                             help="pack one directory: tar is uncompressed, gzip compresses; destination must end in .gbi.tar or .gbi.tar.gz (ordinary route only)")
+                             help="pack one directory: tar is uncompressed, gzip compresses; exact destination must end in .gbi.tar or .gbi.tar.gz (Prefect archives require updated broker/flow)")
         archive.add_argument("--pack-small", action="store_true",
-                             help="automatically pack eligible small-file subdirectories; transfer the rest as individual files; preview with --dry-run (ordinary route only)")
+                             help="automatically pack eligible small-file subdirectories; transfer the rest as individual files; --prefect --dry-run submits a managed plan (requires updated broker/flow)")
         command.add_argument("--chunk-size", type=byte_size, metavar="SIZE",
-                             help="verified resumable parts, e.g. 64MiB (ordinary route only)")
+                             help="verified resumable parts, e.g. 64MiB; Prefect archives require updated broker/flows; omit on restore")
         command.add_argument("--delete-source", action="store_true",
                              help="allow deletion when moving out of Alluxio/Object Storage (ordinary move only)")
-        command.add_argument("--dry-run", action="store_true", help="show route and policy without writing")
+        command.add_argument("--dry-run", action="store_true", help="preview without data writes; Prefect packing/chunking submits a metadata-only plan and creates tracking records")
         execution = command.add_mutually_exclusive_group()
         execution.add_argument("--detach", action="store_true", help="submit to Slurm; return after submission unless --wait")
         command.add_argument("--wait", action="store_true", help="wait for completion (also valid with --detach or --prefect)")
         execution.add_argument("--local", action="store_true", help="run inside the current Slurm allocation")
         execution.add_argument("--prefect", action="store_true",
                                help="submit a personal Object Storage migration through Prefect")
+        command.add_argument("--job-size", choices=("small", "large"),
+                             help="Prefect restores only: small reserves 2 CPUs/16 GiB; large reserves 8 CPUs/48 GiB (default: existing deployment setting, currently large; requires updated broker and flow)")
     status = verbs.add_parser(
         "status", help="show a saved transfer's progress",
         description="Show progress for a Slurm job ID or printed transfer ID.",
@@ -199,6 +207,8 @@ def parser():
 
 
 def plan(options, site):
+    if getattr(options, "job_size", None) is not None:
+        raise ValueError("--job-size is supported only for --prefect restores to Lustre or FSS")
     deadlines.event("resolving source", options.source)
     source, source_kind, source_root = site.classify(options.source)
     deadlines.event("resolving destination", options.destination)

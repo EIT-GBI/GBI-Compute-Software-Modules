@@ -44,6 +44,11 @@ class CLIHelp(unittest.TestCase):
                                     "levels below PATH", "top N folders at each level"):
                     self.assertIn(explanation, normalized)
                 self.assertIn("unavailable with --prefect", normalized)
+                self.assertIn("Prefect archives require updated broker/flows", normalized)
+                self.assertIn("Without packing/chunking", normalized)
+                self.assertIn("chunking adds .gbi-chunks", normalized)
+                self.assertIn("without symlink traversal", normalized)
+                self.assertNotIn("ordinary route only", normalized)
                 self.assertNotIn("_run", text)
 
     def test_usage_help_defines_path_and_top_n_levels(self):

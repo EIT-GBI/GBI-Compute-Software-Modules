@@ -13,7 +13,6 @@ import stat
 import time
 
 from . import archives
-from .selection import matches
 
 
 @dataclass(frozen=True)
@@ -59,7 +58,8 @@ def _stat(root_fd, name):
         os.close(fd)
 
 
-def plan(source, policy, includes=(), exclusions=(), reserved_names=(), allow_root=False):
+def plan(source, policy, includes=(), exclusions=(), reserved_names=(), allow_root=False,
+         *, selection_mode="basename"):
     """Return a deterministic dry-run model; write nothing and follow no links.
 
     The wall-time bound is checked between filesystem calls. Invoke through the
@@ -67,6 +67,7 @@ def plan(source, policy, includes=(), exclusions=(), reserved_names=(), allow_ro
     Execution must requalify this plan and let archive packing reconcile source
     observations; a dry-run is not a durable permission to delete any source.
     """
+    select = archives._selection(includes, exclusions, selection_mode)
     if not isinstance(policy, PackingPolicy):
         raise TypeError("policy must be a PackingPolicy with explicit thresholds")
     source = Path(source).absolute()
@@ -141,7 +142,7 @@ def plan(source, policy, includes=(), exclusions=(), reserved_names=(), allow_ro
                             if not nested["complete"]:
                                 record["complete"] = False
                                 record["reasons"].append("descendant discovery is incomplete or changed")
-                        elif matches(child.name, includes, exclusions):
+                        elif select(name):
                             kind = "file" if stat.S_ISREG(info.st_mode) else "symlink" if stat.S_ISLNK(info.st_mode) else "special"
                             target = None
                             if kind == "symlink":
@@ -163,8 +164,7 @@ def plan(source, policy, includes=(), exclusions=(), reserved_names=(), allow_ro
                     except (OSError, ValueError) as error:
                         record["complete"] = False
                         record["reasons"].append(f"cannot qualify {name!r}: {type(error).__name__}")
-            if not saw_child and matches(source.name if relative == "." else PurePosixPath(relative).name,
-                                         includes, exclusions):
+            if not saw_child and select(source.name if relative == "." else relative):
                 selected[relative] = {"type": "directory", "bytes": 0}
                 record["selected_entries"] += 1
             if _fingerprint(os.fstat(fd)) != initial:

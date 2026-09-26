@@ -102,18 +102,38 @@ def _readback(operation, seconds):
             time.sleep(min(1, max(0, deadline - time.monotonic())))
 
 
-def _owned_remove(path, identity, root):
+def _owned_cleanup(path, identity, root, *, directory):
+    path, root = Path(path), Path(root)
     check_parent(path, root)
-    info = path.lstat()
-    if _identity(path) != identity or not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
-        raise ValueError(f"owned temporary output changed; retained: {path}")
-    path.unlink()
+    # Pin every ancestor, including those above root: a pathname check followed
+    # by pathname cleanup can otherwise be redirected by a parent rename/link.
+    with archives._directory(Path(path.anchor)) as anchor:
+        with archives._parent(anchor, path.relative_to(path.anchor).as_posix(), create=False) as (parent, leaf):
+            info = os.stat(leaf, dir_fd=parent, follow_symlinks=False)
+            current = [info.st_dev, info.st_ino, stat.S_IFMT(info.st_mode)]
+            valid_type = (stat.S_ISDIR(info.st_mode) if directory else
+                          stat.S_ISREG(info.st_mode) and info.st_nlink == 1)
+            if current != identity or not valid_type:
+                raise ValueError(f"owned temporary output changed; retained: {path}")
+            (os.rmdir if directory else os.unlink)(leaf, dir_fd=parent)
+
+
+def _owned_remove(path, identity, root):
+    _owned_cleanup(path, identity, root, directory=False)
+
+
+def _owned_rmdir(path, identity, root):
+    _owned_cleanup(path, identity, root, directory=True)
 
 
 def _pack_options(task):
-    return {"compression": task.get("pack", "tar"), "includes": list(task.get("include", ())),
+    options = {"compression": task.get("pack", "tar"), "includes": list(task.get("include", ())),
             "exclusions": list(task.get("exclude", ())), "reserved_names": list(task.get("reserved_names", ())),
             "max_bytes": task.get("max_bytes")}
+    for key in ("selection_mode", "selection_prefix"):
+        if key in task:
+            options[key] = task[key]
+    return options
 
 
 def _source_bytes(manifest):
@@ -168,6 +188,7 @@ def _stage_archive(task, source, target, state, key, report):
     payload, journal_path = staging / name, staging / "stage.json"
     intent = {"source": str(source), "options": options}
     if journal_path.exists():
+        journal_identity = _identity(journal_path)
         saved = json.loads(journal_path.read_text())
         if saved.get("intent") != intent:
             raise ValueError(f"retained archive stage is incomplete or belongs to another intent; inspect {staging}")
@@ -178,7 +199,7 @@ def _stage_archive(task, source, target, state, key, report):
             # Incomplete stages have never been uploaded. Rebuild only our
             # inode, from a freshly hashed source; never reuse partial bytes.
             _owned_remove(payload, saved["owned"], state)
-            journal_path.unlink()
+            _owned_remove(journal_path, journal_identity, state)
         elif saved.get("phase") == "complete":
             archives.verify_source(source, saved["manifest"])
             # Include selected content hashes: coarse source mtimes alone cannot
@@ -200,12 +221,14 @@ def _stage_archive(task, source, target, state, key, report):
     required = archives.MAX_MANIFEST + 1024 * 1024
     source_evidence = {"root": archives._observation(source.lstat()), "observations": {}, "reserved": list(reserved)}
     observation_bytes = 0
+    selected = archives._selection(options["includes"], options["exclusions"],
+                                   options.get("selection_mode", "basename"), options.get("selection_prefix", ""))
     for name, info, kind in archives._walk(source, reserved):
         source_evidence["observations"][name] = archives._observation(info)
         observation_bytes += len(archives._json([name, source_evidence["observations"][name]]))
         if observation_bytes > archives.MAX_MANIFEST:
             raise ValueError("source staging inventory exceeds the supported 64 MiB bound")
-        if kind != "directory" and not matches(Path(name).name, options["includes"], options["exclusions"]):
+        if kind != "directory" and not selected(name):
             continue
         required += 4096 + (((info.st_size + 511) // 512) * 512 if kind == "file" else 0)
     required = required + required // 100 + 1024 * 1024
@@ -417,7 +440,7 @@ def transfer(task):
                 else:
                     report("checking Lustre archive staging")
                     payload, manifest, saved, stage_journal = _stage_archive(task, source, target, state, key, report)
-                    staging = (payload, saved, stage_journal)
+                    staging = (payload, saved, stage_journal, _identity(stage_journal), _identity(payload.parent))
                     chunks.write_chunks(payload, target, state=state, chunk_size=task["chunk_size"], settle_seconds=settle,
                                         progress=lambda p: report(f"verified archive parts {p['parts']}/{p['total_parts']}",
                                                                   p["bytes"], p["total_bytes"]))
@@ -462,6 +485,7 @@ def transfer(task):
                   "kind": action, "bytes": source_size, "reused": reused, "time": time.time(), **evidence}
         journal.update(phase="verified", record=record)
         write_json(journal_path, journal)
+        journal_identity = _identity(journal_path)
         receipt(Path(task["receipt"]), record)
         if task.get("delete") and not retained_reason:
             report("rechecking source before cleanup", source_size, source_size)
@@ -502,16 +526,16 @@ def transfer(task):
                            chunk_snapshot[0]["size"] if action == "restore_chunks" else before[3])
             receipt(Path(task["receipt"]), {**record, "event": "deleted", "time": time.time()})
         if staging:
-            payload, saved, stage_journal = staging
+            payload, saved, stage_journal, stage_journal_identity, stage_directory_identity = staging
             if digest(payload) != saved["sha256"]:
                 raise ValueError("accepted archive stage changed; stage retained for inspection")
             _owned_remove(payload, saved["owned"], state)
-            stage_journal.unlink()
+            _owned_remove(stage_journal, stage_journal_identity, state)
             try:
-                payload.parent.rmdir()
+                _owned_rmdir(payload.parent, stage_directory_identity, state)
             except OSError:
                 pass
-        journal_path.unlink()
+        _owned_remove(journal_path, journal_identity, state)
         return {"bytes": source_size, "source_size": source_size, "deleted": deleted,
                 "reused": reused, "retained_reason": retained_reason, "freed_bytes": freed_bytes,
                 **{key: evidence[key] for key in ("restored_bytes", "verified_container_bytes") if key in evidence}}

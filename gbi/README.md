@@ -50,12 +50,80 @@ allocation it reuses that allocation. `--detach` submits a separate Slurm job;
 allocation and is normally unnecessary because allocation reuse is automatic.
 
 Use `--prefect` for a managed personal Object Storage migration. It writes
-individual objects directly and does not create tar archives. The Prefect route
-is intentionally narrower; see the route matrix in
+individual objects by default; archive `--pack tar/gzip`, `--pack-small` and `--chunk-size`
+require matching updated broker and flow deployments. The Prefect route
+supports repeatable include and exclude filters (exclusions require the updated
+site broker and flows). See the route matrix in
 [the user guide](docs/user-guide.md).
 Ordinary routing can use any mounted path your Unix account can access; the
 configured roots are path and storage-type hints. Prefect applies stricter
 personal-root rules.
+
+This source documents the **0.4.9 candidate**, not an installed feature release.
+The cluster installation was 0.4.8 when this guide was updated on 2026-09-26.
+Check `gbi --version`; candidate options also need the matching broker and all
+affected archive/restore flows. Passing source tests is not runtime acceptance.
+
+You may choose a different destination within your own destination root. FSS
+archives and restores require the matching broker and flow update for this;
+older deployments reject the renamed request before submission. For example:
+
+```bash
+gbi data copy /your/fss/experiment /your/object/saved-experiment --prefect --wait
+gbi data copy /your/object/saved-experiment /your/lustre/restored-experiment --prefect --wait
+```
+
+These copy commands retain their sources. Renaming does not change include/
+exclude selection, source-deletion rules or destination collision checks.
+
+For a Prefect restore to Lustre or FSS, `--job-size small` requests 2 CPUs and
+16 GiB instead of the existing `large` reservation (8 CPUs and 48 GiB):
+
+```bash
+gbi data copy /your/object/run /your/lustre/run --prefect --job-size small --wait
+```
+
+The Python equivalent is `data.copy(source, destination, prefect=True,
+job_size="small")`. This option requires the matching site broker and restore
+flow update; unsupported deployments reject it before submission. Omit it to
+preserve the deployment's existing setting. The option applies only to restores,
+does not change the time limit, and does not guarantee immediate scheduling.
+
+With the portable archive update, `--prefect --pack gzip` uses the exact
+`.gbi.tar.gz` destination you name; `--pack-small` uses the ordinary site's
+small-file packing policy. They cannot be combined, and apply to archives from
+Lustre/FSS, not restores. For example:
+
+```bash
+gbi data copy /your/fss/run /your/object/run.gbi.tar.gz --prefect --pack gzip --wait
+gbi data copy /your/lustre/run /your/object/run --prefect --pack-small --dry-run --wait
+```
+
+A **Prefect packing/chunking dry run** submits a metadata-only planning run and creates
+Prefect/local tracking records, but no data, receipts, destination writes or
+source deletions. Without packing or chunking, `--prefect --dry-run` remains a local route
+preview with no submission. Use the printed run ID to inspect a non-waiting
+plan. Python `data.copy(..., prefect=True, pack_small=True, dry_run=True)` waits
+for the managed plan. Older deployments fail closed; these source changes do
+not establish that your site has installed the update. Object Storage source
+deletion remains unavailable with Prefect; no delete authority is granted.
+
+Candidate chunk support uses the same portable store for raw files and packed
+archives. A direct file must be regular and have no symlink path components;
+the CLI checks its type so the backend can grant only its exact store prefix.
+Leave `.gbi-chunks` off a direct file target: it is added automatically, as it
+is to a whole-pack target. Directory members are encoded independently.
+
+```bash
+gbi data copy /your/lustre/checkpoint.bin /your/object/saved.bin --prefect --chunk-size 64MiB --wait
+gbi data copy /your/fss/run /your/object/run.gbi.tar.gz --prefect --pack gzip --chunk-size 64MiB --wait
+gbi data copy /your/object/run.gbi.tar.gz.gbi-chunks /your/lustre/restored --prefect --job-size small --wait
+```
+
+Restore detection is automatic; omit packing and chunk-size flags on restores.
+Existing different data is never overwritten. After an interrupted move,
+inspect retained sources and receipts before starting another run; a changed
+packing layout fails closed rather than creating conflicting logical outputs.
 
 ## Select and package
 

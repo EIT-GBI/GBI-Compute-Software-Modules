@@ -63,6 +63,47 @@ def _reserved(name, patterns):
     return any(fnmatch.fnmatchcase(part, pattern) for part in name.split("/") for pattern in patterns)
 
 
+def _selection(includes, exclusions, mode, selection_prefix=""):
+    if not isinstance(selection_prefix, str):
+        raise ArchiveError("selection_prefix must be a relative path or empty")
+    if selection_prefix:
+        _relative(selection_prefix)
+        if mode != "relative" or "\\" in selection_prefix:
+            raise ArchiveError("selection_prefix requires relative mode and a POSIX path")
+    if mode == "basename":
+        return lambda name: matches(PurePosixPath(name).name, includes, exclusions)
+    if mode != "relative":
+        raise ArchiveError("selection_mode must be basename or relative")
+    patterns = []
+    for group in (includes, exclusions):
+        compiled = []
+        for pattern in group:
+            parts = _relative(pattern).split("/")
+            if ("{" in pattern or "}" in pattern
+                    or any("**" in part and part != "**" for part in parts)):
+                raise ArchiveError("relative selection requires plain globs with whole-segment **")
+            compiled.append(parts)
+        patterns.append(compiled)
+
+    def match(parts, pattern):
+        # Segment matching agrees with transfer_core.operations.matches_parts.
+        # Keep reachable positions instead of recursively revisiting ** paths.
+        positions = {0}
+        for segment in pattern:
+            if segment == "**":
+                positions = set(range(min(positions), len(parts) + 1)) if positions else set()
+            else:
+                positions = {i + 1 for i in positions
+                             if i < len(parts) and fnmatch.fnmatchcase(parts[i], segment)}
+        return len(parts) in positions
+
+    def selected(name):
+        parts = ((selection_prefix + "/" if selection_prefix else "") + name).split("/")
+        return (not patterns[0] or any(match(parts, p) for p in patterns[0])) and not any(
+            match(parts, p) for p in patterns[1])
+    return selected
+
+
 def _walk(root, reserved=()):
     # No scandir recursion through a symlink. Directory identity is checked
     # before and after walking, and once more after the complete archive closes.
@@ -119,13 +160,15 @@ def _manifest_size(entries_bytes, count):
     return envelope + entries_bytes + max(0, count - 1)
 
 
-def check_metadata_budget(source, compression=None, includes=(), exclusions=(), reserved_names=(), max_bytes=None):
+def check_metadata_budget(source, compression=None, includes=(), exclusions=(), reserved_names=(), max_bytes=None,
+                          *, selection_mode="basename", selection_prefix=""):
     """Reject oversized metadata before a caller opens or replaces an output.
 
     Read names, file metadata and symlink targets only. Packing still rechecks
     the live source and enforces both bounds; this estimate never authorizes
     source deletion or destination reuse.
     """
+    selected = _selection(includes, exclusions, selection_mode, selection_prefix)
     if compression not in (None, "tar", "gzip", "tar.gz"):
         raise ArchiveError("compression must be tar or gzip")
     source = Path(source)
@@ -156,7 +199,7 @@ def check_metadata_budget(source, compression=None, includes=(), exclusions=(), 
             if kind == "directory":
                 directories[name] = info
                 continue
-            if not matches(Path(name).name, includes, exclusions):
+            if not selected(name):
                 continue
             if kind == "special":
                 raise ArchiveError(f"selected source is an unsupported special file: {name!r}")
@@ -174,7 +217,7 @@ def check_metadata_budget(source, compression=None, includes=(), exclusions=(), 
             account(_metadata_entry(name, info, kind, target))
             required.update(str(parent) for parent in PurePosixPath(name).parents if str(parent) != ".")
         required.update(name for name in directories
-                        if name not in nonempty and matches(Path(name).name, includes, exclusions))
+                        if name not in nonempty and selected(name))
         for name in list(required):
             required.update(str(parent) for parent in PurePosixPath(name).parents if str(parent) != ".")
         for name, info in directories.items():
@@ -183,15 +226,19 @@ def check_metadata_budget(source, compression=None, includes=(), exclusions=(), 
         if _observation(os.fstat(root_fd)) != root_before or _observation(source.lstat()) != root_before:
             raise ArchiveError("source directory changed during archive preflight; source kept")
     return {"entries": count, "manifest_bytes": _manifest_size(entries_bytes, count),
-            "observation_bytes": observation_bytes}
+            "observation_bytes": observation_bytes, "selected_bytes": selected_bytes}
 
 
-def pack(source, output, compression=None, includes=(), exclusions=(), reserved_names=(), max_bytes=None):
+def pack(source, output, compression=None, includes=(), exclusions=(), reserved_names=(), max_bytes=None,
+         *, selection_mode="basename", selection_prefix=""):
     """Stream a directory into standard tar/tar+gzip; return cleanup observations.
 
     Output is caller-owned. Publish it only after success and independent
     ``verify_archive`` readback. This function never deletes sources.
+    Filters match recursive basenames by default; ``selection_mode="relative"``
+    matches source-relative POSIX segments, with ** spanning zero or more levels.
     """
+    selected = _selection(includes, exclusions, selection_mode, selection_prefix)
     if compression not in (None, "tar", "gzip", "tar.gz"):
         raise ArchiveError("compression must be tar or gzip")
     source = Path(source)
@@ -216,7 +263,7 @@ def pack(source, output, compression=None, includes=(), exclusions=(), reserved_
             if kind == "directory":
                 directories[name] = info
                 continue
-            if not matches(path.name, includes, exclusions):
+            if not selected(name):
                 continue
             if kind == "special":
                 raise ArchiveError(f"selected source is an unsupported special file: {name!r}")
@@ -265,7 +312,7 @@ def pack(source, output, compression=None, includes=(), exclusions=(), reserved_
                     if str(parent) != "."}
         nonempty = {str(PurePosixPath(name).parent) for name in observations}
         required.update(name for name in directories
-                        if name not in nonempty and matches(Path(name).name, includes, exclusions))
+                        if name not in nonempty and selected(name))
         for name in list(required):
             required.update(str(parent) for parent in PurePosixPath(name).parents if str(parent) != ".")
         for name, info in directories.items():
@@ -555,11 +602,13 @@ def _verify_source_content(root_fd, entry, before, allow_ctime_change=False):
             raise ArchiveError("source checksum changed since packing; source kept")
 
 
-def cleanup_source(source, manifest, stored_archive, destination_unchanged=None):
+def cleanup_source(source, manifest, stored_archive, destination_unchanged=None, *, on_remove=None):
     """Explicit move cleanup: full archive readback, stable tree, exact unlinks.
 
     Caller must retain its normal source/destination lock and immutable receipt.
     No recursive deletion; new or unselected entries are never removed.
+    ``on_remove(entry)`` records each successful non-directory unlink immediately,
+    so callers can account for a partial cleanup if a later check fails.
     """
     if destination_unchanged is None:
         if isinstance(stored_archive, (str, os.PathLike)):
@@ -608,6 +657,8 @@ def cleanup_source(source, manifest, stored_archive, destination_unchanged=None)
                 os.unlink(name, dir_fd=parent)
                 unlinked_inodes.add(identity)
                 removed += 1
+                if on_remove is not None:
+                    on_remove(entry)
         for entry in sorted(manifest["entries"], key=lambda e: e["path"].count("/"), reverse=True):
             if entry["type"] != "directory":
                 continue
@@ -665,7 +716,7 @@ def _hash_fd(fd):
     return result.hexdigest()
 
 
-def restore(source, destination, includes=(), exclusions=(), phase=None):
+def restore(source, destination, includes=(), exclusions=(), phase=None, *, selection_mode="basename"):
     """Verify all members, restore selected entries, then independently verify.
 
     Native POSIX destinations only (Lustre/FSS), not Alluxio extraction. Existing
@@ -674,6 +725,7 @@ def restore(source, destination, includes=(), exclusions=(), phase=None):
     A partial/interrupted
     restore keeps its archive and completed entries for an identical retry.
     """
+    select = _selection(includes, exclusions, selection_mode)
     if phase:
         phase("verifying archive")
     manifest = inspect_archive(source)
@@ -681,7 +733,7 @@ def restore(source, destination, includes=(), exclusions=(), phase=None):
         raise ArchiveError("ordinary unmarked archives are not automatically extracted")
     all_entries = {entry["path"]: entry for entry in manifest["entries"]}
     selected = {name for name, entry in all_entries.items()
-                if matches(PurePosixPath(name).name, includes, exclusions)}
+                if select(name)}
     for name in list(selected):
         selected.update(str(p) for p in PurePosixPath(name).parents if str(p) != ".")
     # A selected hardlink needs its content even when its original name was
