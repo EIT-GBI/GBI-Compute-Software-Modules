@@ -84,7 +84,7 @@ def styles():
 class Guide(BaseDocTemplate):
     def __init__(self, output, version, published):
         super().__init__(str(output), pagesize=A4, leftMargin=18 * mm,
-                         rightMargin=18 * mm, topMargin=20 * mm, bottomMargin=19 * mm,
+                         rightMargin=18 * mm, topMargin=20 * mm, bottomMargin=25 * mm,
                          title="GBI CLI and Python user guide", author="GBI Scientific Computing")
         self.version, self.published = version, published
         frame = Frame(self.leftMargin, self.bottomMargin, self.width, self.height,
@@ -208,8 +208,9 @@ def main():
              Paragraph("A practical guide to moving, archiving and restoring research data.",
                        ParagraphStyle("Lead", parent=style["Body"], fontSize=16, leading=23)),
              Spacer(1, 13 * mm), Paragraph("COPY keeps your originals.<br/>"
-                 "MOVE verifies before removing eligible sources.<br/>"
-                 "RESTORE brings an archive back to files and folders.", style["Callout"]),
+                 "MOVE verifies before removing eligible filesystem sources.<br/>"
+                 "RESTORE brings an archive back to files and folders.<br/>"
+                 "Object Storage originals are always retained.", style["Callout"]),
              Spacer(1, 10 * mm), Paragraph("Start with a small copy. Check the paths and result. "
                  "Then use the same tools for your finished datasets and checkpoints.", style["Body"]),
              Paragraph(f"User guide for GBI {version}<br/>{published}", style["Body"]), PageBreak(),

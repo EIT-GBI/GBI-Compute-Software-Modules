@@ -40,7 +40,7 @@ class _NoRedirect(urlrequest.HTTPRedirectHandler):
 
 def prepare(options, site):
     if options.delete_source:
-        raise ValueError("--prefect cannot be combined with --delete-source; use an ordinary move to request source deletion")
+        raise ValueError("--delete-source is not supported; Object Storage originals are durable and always retained")
     for name in ("include", "exclude"):
         patterns = getattr(options, name)
         if len(patterns) > 100 or any(

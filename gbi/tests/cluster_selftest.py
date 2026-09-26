@@ -90,14 +90,16 @@ def main():
             results.append({"route": f"{source_kind}->{target_kind}", "files": len(expected), "seconds": elapsed})
             print("PASS " + json.dumps(results[-1]), flush=True)
 
-    # Explicit Alluxio deletion is tested only on a file made by this test.
+    # The obsolete deletion flag must fail without touching either path.
     explicit = roots["alluxio"] / "explicit-delete.dat"
     explicit.write_bytes(b"purpose-made disposable fixture")
     await_fixture(explicit, hashlib.sha256(b"purpose-made disposable fixture").hexdigest())
     destination = roots["lustre"] / "explicit-delete.dat"
-    execute(explicit, destination, "--delete-source")
-    assert not explicit.exists() and destination.read_bytes() == b"purpose-made disposable fixture"
-    results.append({"explicit_object_source_deletion": "PASS"})
+    rejected = subprocess.run(["gbi", "data", "move", str(explicit), str(destination),
+                               "--local", "--delete-source"], text=True, capture_output=True)
+    assert rejected.returncode != 0 and "--delete-source is not supported" in rejected.stderr
+    assert explicit.read_bytes() == b"purpose-made disposable fixture" and not destination.exists()
+    results.append({"object_source_deletion_rejected": "PASS"})
 
     if options.large_bytes:
         source = roots["lustre"] / "large"

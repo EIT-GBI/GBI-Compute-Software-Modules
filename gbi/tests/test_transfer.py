@@ -553,7 +553,8 @@ class Interface(unittest.TestCase):
                 planned = cli.plan(options, self.site)
                 self.assertEqual(planned["delete"], source_kind != "alluxio")
                 options.delete_source = True
-                self.assertTrue(cli.plan(options, self.site)["delete"])
+                with self.assertRaisesRegex(ValueError, "--delete-source is not supported"):
+                    cli.plan(options, self.site)
 
     def test_source_overlap_refused(self):
         source = self.site.roots["lustre"] / "data"
@@ -607,7 +608,8 @@ class Interface(unittest.TestCase):
             planned = cli.plan(options, site)
             self.assertEqual(planned["delete"], source != instrument)
         options = cli.parser().parse_args(["data", "move", str(instrument), str(shared / "new"), "--delete-source"])
-        self.assertTrue(cli.plan(options, site)["delete"])
+        with self.assertRaisesRegex(ValueError, "--delete-source is not supported"):
+            cli.plan(options, site)
 
     def test_shared_copy_and_move_use_foreground_and_slurm_snapshot(self):
         source = self.base / "shared-source"

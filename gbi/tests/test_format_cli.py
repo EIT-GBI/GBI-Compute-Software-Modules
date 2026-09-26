@@ -73,8 +73,10 @@ class FormatCLI(unittest.TestCase):
         store = Path(str(archive) + ".gbi-chunks")
         self.assertTrue((store / "manifest.json").is_file())
         restored = self.roots["fss"] / "restored"
-        self.run_cli("copy", store, restored)
+        before = {path.relative_to(store): path.read_bytes() for path in store.rglob("*") if path.is_file()}
+        self.run_cli("move", store, restored)
         self.assertEqual((restored / "small/b.txt").read_bytes(), b"beta")
+        self.assertEqual(before, {path.relative_to(store): path.read_bytes() for path in store.rglob("*") if path.is_file()})
         self.assertFalse(list((self.roots["lustre"] / ".gbi/state/format-staging").glob("*/payload*")))
 
     def test_chunked_file_restores_to_named_file(self):
@@ -83,8 +85,11 @@ class FormatCLI(unittest.TestCase):
         destination = self.roots["bucket"] / "checkpoint.bin"
         self.run_cli("copy", source, destination, "--chunk-size", "4KiB")
         target = self.roots["fss"] / "checkpoint-restored.bin"
-        self.run_cli("copy", Path(str(destination) + ".gbi-chunks"), target)
+        store = Path(str(destination) + ".gbi-chunks")
+        before = {path.relative_to(store): path.read_bytes() for path in store.rglob("*") if path.is_file()}
+        self.run_cli("move", store, target)
         self.assertEqual(target.read_bytes(), source.read_bytes())
+        self.assertEqual(before, {path.relative_to(store): path.read_bytes() for path in store.rglob("*") if path.is_file()})
 
     def test_selective_move_dry_run_and_mixed_restore_preserve_excluded_source(self):
         source = self.fixture("lustre")
@@ -112,7 +117,7 @@ class FormatCLI(unittest.TestCase):
         archive = self.roots["bucket"] / "partial.gbi.tar"
         self.run_cli("copy", source, archive, "--pack", "tar")
         target = self.roots["fss"] / "partial"
-        self.run_cli("move", archive, target, "--delete-source", "--include", "a.txt")
+        self.run_cli("move", archive, target, "--include", "a.txt")
         self.assertTrue(archive.exists())
         self.assertTrue((target / "small/a.txt").is_file())
         self.assertFalse((target / "small/b.txt").exists())

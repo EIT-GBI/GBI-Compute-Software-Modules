@@ -19,7 +19,7 @@ import time
 from . import archives, chunks, packing
 from .selection import matches
 from .storage import fingerprint
-from .transfer import check_parent, digest, ensure_parent, receipt, write_json
+from .transfer import check_parent, digest, ensure_parent, receipt, validate_source_retention, write_json
 
 
 def source_format(path):
@@ -349,6 +349,7 @@ def _restore_chunk_file(task, source, target, journal_path, journal, report):
 
 def transfer(task):
     """Perform one format unit; result matches the ordinary worker schema."""
+    validate_source_retention(task)
     action = task["format_action"]
     if action not in ("pack", "chunk", "restore_archive", "restore_chunks"):
         raise ValueError("unknown encoded transfer action")

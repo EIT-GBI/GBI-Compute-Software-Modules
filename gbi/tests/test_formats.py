@@ -198,10 +198,10 @@ class Formats(unittest.TestCase):
         self.assertTrue((self.source / "a.txt").exists())
         self.assertFalse((self.base / "receipts.jsonl").exists())
 
-    def test_partial_archive_restore_retains_even_explicit_move_source(self):
+    def test_partial_filesystem_archive_move_retains_source(self):
         packed = self.task()
         transfer(packed)
-        restore = self.task("restore_archive", source=packed["format_target"], source_kind="alluxio",
+        restore = self.task("restore_archive", source=packed["format_target"], source_kind="fss",
                             target_kind="lustre", format_target=str(self.target_root / "restored"),
                             delete=True, include=["*.txt"])
         result = transfer(restore)

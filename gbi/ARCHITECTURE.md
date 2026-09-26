@@ -1,6 +1,6 @@
 # GBI data CLI architecture
 
-This describes the **0.4.0 candidate source**, not an installed release or live
+This describes the **0.4.10 candidate source**, not an installed release or live
 acceptance. CLI code, module installation, the optional broker deployment and
 each storage route require separate evidence. Site identities and credentials
 are omitted from this public document.
@@ -81,15 +81,18 @@ Restoration verifies the complete container, including excluded members, and
 extracts only supported entries to Lustre/FSS. Unsafe paths/parents, special
 members and conflicting destinations are refused. Archives represent modes,
 timestamps, symbolic links and hardlinks; ownership, ACLs and xattrs are not
-restored. Loose Alluxio files retain their existing metadata limits. Filtered
-restoration retains the complete source container.
+restored. Timestamp restoration permits subsecond truncation of less than one
+second; Lustre has been observed to restore whole seconds. Loose Alluxio files
+retain their existing metadata limits. Every Object Storage restoration retains
+the complete source container, including unselected members.
 
 ## Verification and recovery
 
 Ordinary movement remains source stream → independent destination SHA-256
 readback → source recheck when deleting → durable receipt → guarded unlink.
-`copy` retains sources. `move` retains Object Storage originals unless
-`--delete-source` is explicit; that option is unavailable with `--prefect`.
+`copy` retains sources. `move` removes only verified, unchanged filesystem
+sources. Object Storage originals and versions are always retained; the retired
+`--delete-source` option and SDK `delete_source=True` are rejected on all routes.
 Sources must remain quiescent; this is not an application write lock.
 
 [Format workers](src/lib/gbi_data/formats.py) retain destination locks and

@@ -14,7 +14,17 @@ import subprocess
 import sys
 import time
 
-from .storage import fingerprint
+from .storage import fingerprint, overlap
+
+
+def validate_source_retention(task, storage_roots=()):
+    """Reject obsolete destructive Object Storage requests before any writes."""
+    if task.get("delete_source") or (task.get("delete") and task.get("source_kind") == "alluxio"):
+        raise ValueError("Object Storage originals are durable and cannot be deleted by GBI")
+    if task.get("delete") and any(
+            kind == "alluxio" and overlap(Path(task["source"]), root)
+            for kind, root in storage_roots):
+        raise ValueError("source overlaps an Object Storage root; use copy or move an exact filesystem subtree")
 
 
 def write_json(path, value):
@@ -123,6 +133,7 @@ def copy_stream(source, target, fd, rclone, lock, progress, target_kind, timings
 
 
 def transfer(task):
+    validate_source_retention(task)
     if task.get("format_action"):
         from .formats import transfer as transfer_format
         return transfer_format(task)

@@ -23,7 +23,7 @@ from . import prefect
 from . import format_selection, packing, usage
 from .selection import entries, probe, stream_entries
 from .storage import Site, overlap
-from .transfer import ensure_parent, receipt, write_json
+from .transfer import ensure_parent, receipt, validate_source_retention, write_json
 
 
 class _ArgumentParser(argparse.ArgumentParser):
@@ -59,7 +59,7 @@ def command_reference(verbs):
         formatter.start_section(title)
         if name == "move":
             formatter.add_text("copy keeps sources. move removes eligible sources only after verification.\n"
-                               "Object Storage originals are kept unless move uses --delete-source.")
+                               "Object Storage originals are durable and always retained.")
         else:
             formatter.add_text(command.description)
         formatter.add_arguments(action for action in command._actions
@@ -101,8 +101,7 @@ def parser():
                 ("Copy SOURCE to DESTINATION and independently verify every file.\n"
                  "SOURCE and DESTINATION may be files or directories; the source remains." if verb == "copy" else
                 "Copy SOURCE to DESTINATION and independently verify every file before removing\n"
-                "eligible sources. Alluxio/Object Storage originals remain unless --delete-source\n"
-                "is explicitly requested.")
+                "eligible filesystem sources. Object Storage originals are durable and always retained.")
             ),
             formatter_class=argparse.RawDescriptionHelpFormatter,
             epilog=(
@@ -122,9 +121,8 @@ def parser():
                 "Without packing/chunking, Prefect --dry-run remains a local route preview.\n"
                 "For a file or whole pack, chunking adds .gbi-chunks to the named target.\n"
                 "Direct chunked files must be regular files without symlink traversal.\n"
-                "Renamed FSS archives/restores require updated broker/flows. Deleting\n"
-                "Object Storage originals remains unavailable with --prefect.\n"
-                "Omit --prefect for explicit Object Storage deletion on an ordinary transfer.\n"
+                "Renamed FSS archives/restores require updated broker/flows.\n"
+                "Object Storage originals are durable and always retained by every route.\n"
                 "Prefect exclusions require an updated site broker and flow deployment.\n"
                 "After a lost submission reply: gbi data retry ID (same saved request).\n\n"
                 f"Examples:\n  gbi data {verb} SOURCE DESTINATION --dry-run\n"
@@ -149,7 +147,7 @@ def parser():
         command.add_argument("--chunk-size", type=byte_size, metavar="SIZE",
                              help="verified resumable parts, e.g. 64MiB; Prefect archives require updated broker/flows; omit on restore")
         command.add_argument("--delete-source", action="store_true",
-                             help="allow deletion when moving out of Alluxio/Object Storage (ordinary move only)")
+                             help="obsolete and rejected; Object Storage originals are always retained; move already removes verified filesystem sources")
         command.add_argument("--dry-run", action="store_true", help="preview without data writes; Prefect packing/chunking submits a metadata-only plan and creates tracking records")
         execution = command.add_mutually_exclusive_group()
         execution.add_argument("--detach", action="store_true", help="submit to Slurm; return after submission unless --wait")
@@ -207,6 +205,8 @@ def parser():
 
 
 def plan(options, site):
+    if options.delete_source:
+        raise ValueError("--delete-source is not supported; Object Storage originals are durable and always retained")
     if getattr(options, "job_size", None) is not None:
         raise ValueError("--job-size is supported only for --prefect restores to Lustre or FSS")
     deadlines.event("resolving source", options.source)
@@ -226,14 +226,13 @@ def plan(options, site):
         target /= source.name
     if overlap(source, target):
         raise ValueError("source and destination must not overlap")
-    if options.delete_source and options.verb != "move":
-        raise ValueError("--delete-source is available with move only")
-    delete = options.verb == "move" and (source_kind != "alluxio" or options.delete_source)
+    delete = options.verb == "move" and source_kind != "alluxio"
     specification = {"source": str(source), "target": str(target), "source_kind": source_kind,
             "target_kind": target_kind, "source_root": str(source_root), "target_root": str(target_root),
             "directory": directory, "delete": delete, "include": options.include, "exclude": options.exclude,
             "verb": options.verb, "uid": os.getuid(), "site": str(site.path),
             "requested_target": requested_target}
+    validate_source_retention(specification, site.storage_roots)
     policy = packing.PackingPolicy(
         small_file_bytes=int(site.values["pack_small_bytes"]),
         min_files=int(site.values["pack_min_files"]),
@@ -326,6 +325,7 @@ def run(run_dir, site, home):
         if (str(path), kind, str(root)) != (specification[prefix], specification[prefix + "_kind"],
                                          specification[prefix + "_root"]):
             raise ValueError("storage route changed since submission; submit again")
+    validate_source_retention(specification, site.storage_roots)
     selected = specification.get("selection")
     inline = specification.get("execution") == "inline"
     native = specification.get("reader") == "native"
@@ -619,7 +619,7 @@ def main():
               f"{specification['source']} → {specification['target']}")
         print("Sources: delete each verified file." if specification["delete"] else "Sources: keep originals.")
         if options.verb == "move" and specification["source_kind"] == "alluxio" and not specification["delete"]:
-            print("Alluxio/Object Storage originals stay. Use --delete-source to explicitly remove them.")
+            print("Object Storage originals are durable and always retained.")
         mode = specification["execution"]
         print({"inline": "Foreground transfer. Ctrl-C stops the transfer.",
                "allocation": "Using your existing Slurm allocation.",

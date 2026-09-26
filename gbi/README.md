@@ -2,7 +2,8 @@
 
 `gbi data` moves and verifies files between the HPC filesystems available to
 your account. It runs as your user, keeps a receipt for every verified file,
-and removes a source only after verification and a final source-identity check.
+and removes an eligible filesystem source only after verification and a final
+source-identity check. Object Storage originals and versions are always retained.
 It does not grant permissions or require a Prefect UI session.
 
 Read the [full user guide](docs/user-guide.md) or
@@ -36,10 +37,11 @@ gbi data status TRANSFER_ID --watch
 gbi data usage --depth 1 --limit 20
 ```
 
-`copy` keeps sources. `move` verifies each selected source before removing it.
-For an Object Storage/Alluxio source, `move` keeps the original unless you
-explicitly add `--delete-source`. Existing different destination files are
-kept and reported; GBI does not silently overwrite them.
+`copy` keeps sources. `move` verifies each selected filesystem source before
+removing it. Object Storage originals are durable and always retained, including
+archive containers, chunk stores and object versions. The retired
+`--delete-source` option is rejected; do not use it. Existing different
+destination files are kept and reported; GBI does not silently overwrite them.
 
 ## Choose a route
 
@@ -59,8 +61,11 @@ Ordinary routing can use any mounted path your Unix account can access; the
 configured roots are path and storage-type hints. Prefect applies stricter
 personal-root rules.
 
-**GBI 0.4.9 was installed and passed normal-user CLI/SDK checks on 2026-09-26.**
-This confirms module installation, not acceptance of every Prefect feature.
+**This source describes the 0.4.10 candidate, which is not installed. GBI 0.4.9
+is installed and passed normal-user CLI/SDK checks on 2026-09-26.** Until the
+retention fix is installed, do not use the old explicit deletion option.
+The updated typed Prefect broker is not activated; its new options remain unavailable.
+Module installation does not establish acceptance of every Prefect feature.
 Check `gbi --version`; new Prefect options require the matching broker and
 affected flow, and unsupported requested options fail closed. Restoring encoded
 archives or chunks also requires a compatible restore flow.
@@ -106,8 +111,8 @@ source deletions. Without packing or chunking, `--prefect --dry-run` remains a l
 preview with no submission. Use the printed run ID to inspect a non-waiting
 plan. Python `data.copy(..., prefect=True, pack_small=True, dry_run=True)` waits
 for the managed plan. Older deployments fail closed; these source changes do
-not establish that your site has installed the update. Object Storage source
-deletion remains unavailable with Prefect; no delete authority is granted.
+not establish that your site has installed the update. Object Storage originals
+are always retained on every route; GBI does not delete objects or their versions.
 
 Candidate chunk support uses the same portable store for raw files and packed
 archives. A direct file must be regular and have no symlink path components;
@@ -116,7 +121,9 @@ Leave `.gbi-chunks` off a direct file target: it is added automatically, as it
 is to a whole-pack target. Directory members are encoded independently.
 Raw-file chunks preserve content and the stored filename, not POSIX modes or
 modification times. Use a packed archive when those metadata need preserving;
-chunking that archive retains its archive metadata.
+chunking that archive retains its archive metadata. Archive restore verification
+accepts timestamp truncation of less than one second; Lustre restores have
+shown whole-second timestamps, so do not rely on exact nanosecond preservation.
 
 ```bash
 gbi data copy /your/lustre/checkpoint.bin /your/object/saved.bin --prefect --chunk-size 64MiB --wait
@@ -159,6 +166,9 @@ archive = "/your/object/run.gbi.tar"
 data.move(source, archive, pack="tar", include=["*.pt", "*.pt.*"])
 data.copy(archive, "/your/lustre/restored-run")
 ```
+
+Restoring from Object Storage keeps the archive, even with `data.move`.
+`delete_source=True` is rejected; filesystem-source moves need no deletion flag.
 
 Load the module before starting Python. The SDK accepts paths as strings or
 `pathlib.Path`, returns `subprocess.CompletedProcess`, and raises
