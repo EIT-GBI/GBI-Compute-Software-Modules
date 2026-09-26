@@ -63,9 +63,10 @@ Ordinary routing can use any mounted path your Unix account can access; the
 configured roots are path and storage-type hints. Prefect applies stricter
 personal-root rules.
 
-**This source describes the 0.4.10 candidate, which is not installed. GBI 0.4.9
-is installed and passed normal-user CLI/SDK checks on 2026-09-26.** Until the
-retention fix is installed, do not use the old explicit deletion option.
+**GBI 0.4.10 is installed and passed normal-user CLI/SDK retention checks on
+2026-09-26. Fresh `module load gbi` sessions select 0.4.10.** Explicitly loaded
+older versions and existing job snapshots are unchanged; do not use their old
+explicit deletion option. Check `gbi --version` before starting new work.
 The updated typed Prefect broker is not activated; its new options remain unavailable.
 Module installation does not establish acceptance of every Prefect feature.
 Check `gbi --version`; new Prefect options require the matching broker and
