@@ -59,10 +59,11 @@ Ordinary routing can use any mounted path your Unix account can access; the
 configured roots are path and storage-type hints. Prefect applies stricter
 personal-root rules.
 
-This source documents the **0.4.9 candidate**, not an installed feature release.
-The cluster installation was 0.4.8 when this guide was updated on 2026-09-26.
-Check `gbi --version`; candidate options also need the matching broker and all
-affected archive/restore flows. Passing source tests is not runtime acceptance.
+**GBI 0.4.9 was installed and passed normal-user CLI/SDK checks on 2026-09-26.**
+This confirms module installation, not acceptance of every Prefect feature.
+Check `gbi --version`; new Prefect options require the matching broker and
+affected flow, and unsupported requested options fail closed. Restoring encoded
+archives or chunks also requires a compatible restore flow.
 
 You may choose a different destination within your own destination root. FSS
 archives and restores require the matching broker and flow update for this;
