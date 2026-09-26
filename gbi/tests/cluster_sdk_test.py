@@ -80,7 +80,7 @@ def main():
     print(json.dumps(result), flush=True)
 
 
-def prefect_main():
+def prefect_main(job_size=None):
     """Submit through the installed HTTPS broker from a real user allocation."""
     job_id = os.environ.get("SLURM_JOB_ID")
     if not job_id:
@@ -101,7 +101,7 @@ def prefect_main():
                       "source": str(source), "destination": str(target)}), flush=True)
     data.move(source, target, include=include, prefect=True)
     assert sorted(path.name for path in source.iterdir()) == ["keep.txt"]
-    data.copy(target, source, include=include, prefect=True)
+    data.copy(target, source, include=include, prefect=True, job_size=job_size)
     assert {name: digest(source / name) for name in expected} == expected
     assert (source / "keep.txt").read_text() == "unselected source remains"
     result = {"status": "PASS", "slurm_job": job_id,
@@ -112,9 +112,17 @@ def prefect_main():
     print(json.dumps(result), flush=True)
 
 
-if __name__ == "__main__":
+def cli(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--prefect", action="store_true",
                         help="test managed moves and restores through the compute HTTPS broker")
-    args = parser.parse_args()
-    prefect_main() if args.prefect else main()
+    parser.add_argument("--job-size", choices=("small", "large"),
+                        help="Prefect restore reservation only; omitted uses the deployment default")
+    args = parser.parse_args(argv)
+    if args.job_size is not None and not args.prefect:
+        parser.error("--job-size requires --prefect")
+    prefect_main(job_size=args.job_size) if args.prefect else main()
+
+
+if __name__ == "__main__":
+    cli()

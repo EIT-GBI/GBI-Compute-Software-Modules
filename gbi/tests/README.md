@@ -14,6 +14,18 @@ fixtures and an `acceptance.json`; join the printed Prefect run IDs with their
 receipts when recording operational acceptance. Without `--prefect`, the helper
 checks ordinary SDK packing and restore within the current allocation.
 
+For an explicit smaller Prefect restore reservation, from the reviewed checkout
+inside the existing allocation:
+
+```sh
+module load gbi
+python3 gbi/tests/cluster_sdk_test.py --prefect --job-size small
+```
+
+`--job-size small|large` applies only to the restore SDK call, not the preceding
+archive move, and requires `--prefect`. Omit it to keep the deployment default.
+The installed CLI, broker and restore flow must support the requested option.
+
 On macOS, regular files select the existing pinned native reader before the
 transfer, avoiding rclone's intermittent `/dev/fd` reopen failure recorded in
 [the macOS descriptor bug](https://github.com/EIT-GBI/GBI-Compute-Software-Modules/issues/28).
