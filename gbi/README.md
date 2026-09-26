@@ -1,5 +1,7 @@
 # GBI data transfers
 
+<img src="docs/assets/gbi-cli-logo.png" alt="GBI CLI logo" width="160">
+
 `gbi data` moves and verifies files between the HPC filesystems available to
 your account. It runs as your user, keeps a receipt for every verified file,
 and removes an eligible filesystem source only after verification and a final

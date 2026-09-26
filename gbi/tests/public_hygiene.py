@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Check tracked CLI/module files for recognisable private site material."""
 
+import hashlib
 import ipaddress
 import os
 from pathlib import Path
@@ -10,6 +11,10 @@ import sys
 
 
 SCOPE = ("gbi", "rclone", ".github", "README.md", "AGENTS.md")
+# Owner-reviewed artwork only; any replacement needs an explicit new review.
+REVIEWED_ASSETS = {
+    "gbi/docs/assets/gbi-cli-logo.png": "f0fb17ab8160da6244b6da86c7c3c53ff968c657723112126fe91365470f0465",
+}
 PATTERNS = {
     "cloud resource identifier": re.compile(r"\bocid1\.[a-z0-9]+\.oc[0-9]+\.[A-Za-z0-9.]+"),
     "private key": re.compile(r"-----BEGIN (?:[A-Z0-9]+ )?PRIVATE KEY-----"),
@@ -69,12 +74,17 @@ def _scan_pdf(path):
         return [(0, "PDF could not be parsed safely")]
 
 
-def scan_file(path):
+def scan_file(path, *, relative_path=None):
     """Return (line, rule), never the potentially sensitive matching text."""
     if path.is_symlink():
         return [(0, "symlink in public scan scope; review its target explicitly")]
     if path.name == "site.conf":
         return [(0, "generated site configuration must not be committed")]
+    if path.suffix.lower() == ".png":
+        expected = REVIEWED_ASSETS.get(relative_path)
+        if expected is None or hashlib.sha256(path.read_bytes()).hexdigest() != expected:
+            return [(0, "PNG is not the exact reviewed public asset")]
+        return []
     if path.suffix.lower() == ".pdf":
         return _scan_pdf(path)
     return _scan_lines(enumerate(path.read_text(encoding="utf-8").splitlines(), 1))
@@ -88,7 +98,7 @@ def scan_repository(root):
     findings = []
     for name in paths:
         try:
-            findings.extend((name, number, rule) for number, rule in scan_file(root / name))
+            findings.extend((name, number, rule) for number, rule in scan_file(root / name, relative_path=name))
         except (OSError, UnicodeError):
             findings.append((name, 0, "file could not be scanned as UTF-8 text"))
     return len(paths), findings

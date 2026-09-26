@@ -17,7 +17,7 @@ from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import mm
 from reportlab.platypus import (
-    BaseDocTemplate, Frame, PageBreak, PageTemplate, Paragraph,
+    BaseDocTemplate, Frame, Image, PageBreak, PageTemplate, Paragraph,
     Preformatted, Spacer, Table, TableStyle,
 )
 from reportlab.platypus.tableofcontents import TableOfContents
@@ -204,7 +204,10 @@ def main():
     style = styles()
     title = ParagraphStyle("Cover", fontName="Helvetica-Bold", fontSize=34,
                            leading=40, textColor=NAVY, spaceAfter=24)
-    story = [Spacer(1, 32 * mm), Paragraph("GBI CLI<br/>&amp; Python", title),
+    story = [Spacer(1, 10 * mm),
+             Image(str(root / "assets" / "gbi-cli-logo.png"),
+                   width=42 * mm, height=42 * mm, hAlign="LEFT"),
+             Spacer(1, 8 * mm), Paragraph("GBI CLI<br/>&amp; Python", title),
              Paragraph("A practical guide to moving, archiving and restoring research data.",
                        ParagraphStyle("Lead", parent=style["Body"], fontSize=16, leading=23)),
              Spacer(1, 13 * mm), Paragraph("COPY keeps your originals.<br/>"

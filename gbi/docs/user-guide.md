@@ -1,5 +1,7 @@
 # GBI data user guide
 
+<img src="assets/gbi-cli-logo.png" alt="GBI CLI logo" width="160">
+
 GBI is the user-owned command line tool for moving data between the mounted HPC
 filesystems. It can copy or move files between Lustre, FSS and personal
 Object Storage exposed through the configured mounts. It also has a direct
@@ -16,17 +18,16 @@ gbi --version
 gbi data roots
 ```
 
-This guide describes the GBI 0.4.10 candidate, which is not installed. GBI 0.4.9
-is installed as of 2026-09-26. Do not use the old explicit deletion option while
-waiting for the retention fix. Candidate source support does not establish
-installation or end-to-end acceptance. Use `gbi --version` to check the module
-you loaded, and `gbi data copy --help` for its supported options.
+This guide describes GBI 0.4.10. Use `gbi --version` to check the module you
+loaded, `gbi data copy --help` for its supported options, and the
+[README](../README.md) for current deployment status. Older modules may expose
+the retired explicit deletion option; do not use it. Source support does not
+establish installation or end-to-end acceptance.
 
 Prefect exclusions, renamed destinations, restore job sizes and portable
-archives/chunks require the matching site broker and flow update. The updated
-typed broker is not yet activated. Until your site enables these options,
-unsupported requests are rejected before submission; options are never
-silently ignored.
+archives/chunks require a matching site broker and flow update. Until your site
+enables these options, unsupported requests are rejected before submission;
+options are never silently ignored.
 
 The `roots` command prints the configured user-facing paths. Use those aliases
 in commands instead of guessing an internal shard path.
