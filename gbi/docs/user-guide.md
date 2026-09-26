@@ -1,5 +1,7 @@
 # GBI data user guide
 
+<img src="assets/gbi-cli-logo.png" alt="GBI CLI logo" width="160">
+
 GBI is the user-owned command line tool for moving data between the mounted HPC
 filesystems. It can copy or move files between Lustre, FSS and personal
 Object Storage exposed through the configured mounts. It also has a direct
@@ -16,25 +18,26 @@ gbi --version
 gbi data roots
 ```
 
-This guide describes the GBI 0.4.9 candidate. The cluster installation was
-0.4.8 at the 2026-09-26 documentation update. Candidate source support does not
-establish installation or end-to-end acceptance. Use `gbi --version` to check the module you
-loaded, and `gbi data copy --help` for its supported options.
+This guide describes GBI 0.4.10. Use `gbi --version` to check the module you
+loaded, `gbi data copy --help` for its supported options, and the
+[README](../README.md) for current deployment status. Older modules may expose
+the retired explicit deletion option; do not use it. Source support does not
+establish installation or end-to-end acceptance.
 
 Prefect exclusions, renamed destinations, restore job sizes and portable
-archives/chunks require the matching site broker and flow update. Until your site enables
-them, unsupported requests are rejected before submission; options are never
-silently ignored.
+archives/chunks require a matching site broker and flow update. Until your site
+enables these options, unsupported requests are rejected before submission;
+options are never silently ignored.
 
 The `roots` command prints the configured user-facing paths. Use those aliases
 in commands instead of guessing an internal shard path.
 
 ## A first transfer
 
-Use `copy` when the source should remain. Use `move` when each unchanged
-selected source file should be removed only after its copy has been read back and
-verified. A packed move also verifies the archive container before removing
-eligible source entries.
+Use `copy` when the source should remain. Use `move` to remove each unchanged
+selected filesystem source only after its copy has been read back and verified.
+A packed move also verifies the archive container before removing eligible
+filesystem source entries. Object Storage originals are durable and always retained.
 
 ```bash
 gbi data copy /your/lustre/results /your/object/results
@@ -51,9 +54,10 @@ identical destination can be independently checked and reused. GBI does not
 silently overwrite another file.
 
 Moving out of Lustre or FSS normally removes each unchanged selected source
-file after its verified copy. Moving out of personal Object Storage keeps the Object Storage originals unless `--delete-source` is
-explicitly supplied. `--delete-source` is valid only with `move`; a partial archive restore keeps its archive container even when that
-flag is present.
+file after its verified copy. Moving out of Object Storage/Alluxio always keeps
+the originals: objects, object versions, archive containers and chunk stores.
+This applies to full and partial restores on ordinary and Prefect routes.
+The retired `--delete-source` option is rejected, not silently ignored.
 
 Every selected regular file is hashed during the source read and independently
 hashed after the destination is written. A move also rechecks the source
@@ -102,7 +106,7 @@ rejects the option. Normal source, destination and collision checks still apply.
 | `--pack-small` | Yes; use with `--dry-run` to review | Yes | Archives only; same site policy; updated broker/flows |
 | `--chunk-size SIZE` | Yes for regular files and new packs | Yes | Archives only; updated broker/flows |
 | `--job-size small/large` | No | No | Restores only; updated broker/flows |
-| `--delete-source` | Move only; required for Object Storage sources | Same | No |
+| `--delete-source` | No; retired option rejected | No | No |
 | `--dry-run` | Yes; no transfer output is written | Yes | Local preview, or managed plan with packing/chunking |
 | `--detach` | Yes; submits Slurm | New job; cannot combine with `--local` | No |
 | `--wait` | Yes | Yes | Yes |
@@ -124,8 +128,8 @@ the updated broker and flow for renamed destinations. Equal-path requests
 retain their existing behavior. Prefect paths must be plain paths without
 wildcards, and reserved transfer-state prefixes are rejected. The candidate route
 supports archive `--pack tar/gzip`, `--pack-small` and `--chunk-size` with the
-matching broker and flow update. Object Storage source deletion remains
-unsupported; this update does not grant delete authority.
+matching broker and flow update. Object Storage originals and versions are
+always retained; source deletion is not a supported restore operation.
 Explicit packing requires the exact destination filename `.gbi.tar` or
 `.gbi.tar.gz`. Small-file packing uses the same site thresholds as the ordinary
 route and cannot be combined with whole-directory packing.
@@ -209,15 +213,19 @@ gbi data copy /your/object/run.gbi.tar /your/lustre/restored-run
 The restore creates the archive's relative directory layout below the
 requested destination. Archives preserve relative paths, empty directories,
 safe symlinks, ordinary modes, modification times and hardlink relationships.
+Timestamp verification accepts truncation of less than one second. Observed
+Lustre restores use whole-second timestamps; do not rely on exact nanosecond
+preservation even though the archive records nanoseconds.
 They do not restore ownership, ACLs, extended attributes or privileged mode
 bits. A hardlink whose other name was excluded is restored as a regular file.
 Destination metadata must be representable. Existing directory permissions
 are preserved, and a different existing entry is reported as a collision.
 
 A packed move reads the stored archive back and checks its selected inventory
-before source removal. New or excluded files are never removed by an
-unconditional recursive cleanup. A partial restore keeps the archive, and a
-failed or changed source remains available for inspection.
+before eligible filesystem source removal. New or excluded files are never
+removed by an unconditional recursive cleanup. Every restore from Object
+Storage keeps the complete archive, including unselected members. A failed or
+changed filesystem source remains available for inspection.
 
 Archive metadata has a 64 MiB supported limit. This limit applies to the file
 list and source observation inventory, so millions of small files can exceed it
@@ -271,6 +279,10 @@ Chunking can be combined with creating a new packed archive, which adds the
 chunk suffix to that archive output. Restore an already encoded archive or
 chunk store without `--pack`, `--pack-small` or `--chunk-size`; detection is
 automatic, including on the updated Prefect route.
+
+Raw-file chunks preserve content and the stored filename, not POSIX modes or
+modification times. Pack into an archive when those metadata matter; chunking
+the archive retains its metadata, with the restore timestamp tolerance above.
 
 Candidate Prefect chunks need matching broker and archive/restore flows. For a
 direct regular file, leave `.gbi-chunks` off the target; the backend adds it.
@@ -353,6 +365,9 @@ move(source, destination, *, include=(), exclude=(), pack=None,
 or `gzip`; `chunk_size` is positive integer bytes or a size string such as `64MiB`. Boolean
 arguments must be actual booleans.
 `job_size` is `None`, `small` or `large` and applies only to Prefect restores.
+The retained `delete_source=False` keyword is for compatibility only;
+`delete_source=True` is rejected before execution. Object Storage originals
+are always retained, including when calling `data.move` to restore them.
 
 Both functions add `--wait`, stream the CLI's progress to the current output,
 and return `subprocess.CompletedProcess` when the CLI exits successfully. A
@@ -375,7 +390,7 @@ archive = Path("/your/object/finished-run.gbi.tar")
 data.move(finished, archive, pack="tar", include=["*.pt", "*.pt.*"])
 ```
 
-The selected checkpoint files are removed only after verification; other files
+These filesystem-source checkpoint files are removed only after verification; other files
 stay in the source directory. To retain all originals, use `data.copy`.
 
 ### Python with an sbatch job
@@ -431,7 +446,7 @@ call waits for completion; allow for queue time in the calling job's time limit.
 No notebook or browser session is required.
 
 The candidate Prefect call supports archive `pack`, `pack_small` and
-`chunk_size` with updated site broker/flows, but not `delete_source`. With packing or chunking,
+`chunk_size` with updated site broker/flows, but never `delete_source=True`. With packing or chunking,
 `dry_run=True` waits for a managed metadata-only plan and creates tracking
 records only. It is a managed migration submission, so a lost reply is
 recovered with `gbi data retry TRANSFER_ID`, not by blindly submitting a new
@@ -465,9 +480,11 @@ separate maintained owner process and is not started by this command.
 ### “unsupported” or “cannot be combined”
 
 Check the route matrix and the installed `--help`. The most common cases are
-using `--prefect` with `--delete-source`, packing/chunking on a restore, or
-requesting candidate options against an older broker/flow. Remove `--prefect`
-to use the ordinary route, or change
+requesting the retired `--delete-source` option, packing/chunking on a restore,
+or requesting candidate options against an older broker/flow. Remove
+`--delete-source`: Object Storage originals must remain, and filesystem-source
+moves already perform their verified cleanup. For unsupported Prefect packing
+options, use the ordinary route, or change
 the operation to one the Prefect route supports. `--pack` and `--pack-small`
 also cannot be combined.
 

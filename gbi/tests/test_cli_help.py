@@ -17,7 +17,7 @@ class CLIHelp(unittest.TestCase):
                             "Restores detect archives/chunks automatically",
                             "--job-size small", "compatible with older deployments",
                             "unsupported requested options fail closed",
-                            "(--delete-source) is unavailable with Prefect"):
+                            "Object Storage originals are durable and always retained"):
             self.assertIn(explanation, text)
         self.assertNotIn("cannot use packing", text)
 
@@ -35,7 +35,7 @@ class CLIHelp(unittest.TestCase):
         self.assertIn("owner-scoped Lustre snapshot", data)
         copy = self.help_text("data", "copy")
         self.assertIn("source file or directory", copy)
-        self.assertIn("ordinary transfer", copy)
+        self.assertIn("always retained", copy)
         self.assertNotIn("_run", data)
 
     def test_overviews_explain_all_public_flags_without_another_help_command(self):
@@ -51,12 +51,13 @@ class CLIHelp(unittest.TestCase):
                 for explanation in ("matching any supplied pattern", "wins over --include",
                                     "tar is uncompressed, gzip compresses",
                                     "transfer the rest as individual files",
-                                    "verified resumable parts", "ordinary move only",
+                                    "verified resumable parts", "obsolete and rejected",
                                     "run inside the current Slurm allocation",
                                     "follow until the transfer finishes",
                                     "levels below PATH", "top N folders at each level"):
                     self.assertIn(explanation, normalized)
-                self.assertIn("unavailable with --prefect", normalized)
+                self.assertIn("Object Storage originals are durable and always retained", normalized)
+                self.assertNotIn("explicit Object Storage deletion", normalized)
                 self.assertIn("Prefect archives require updated broker/flows", normalized)
                 self.assertIn("Without packing/chunking", normalized)
                 self.assertIn("chunking adds .gbi-chunks", normalized)

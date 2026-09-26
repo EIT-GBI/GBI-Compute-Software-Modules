@@ -73,6 +73,32 @@ class PublicHygiene(unittest.TestCase):
         _, findings = public_hygiene.scan_repository(self.root)
         self.assertEqual(len(findings), 2)
 
+    def test_only_exact_reviewed_logo_bytes_and_path_pass(self):
+        name = "gbi/docs/assets/gbi-cli-logo.png"
+        original = Path(__file__).resolve().parents[2] / name
+        self.add(name, "placeholder")
+        path = self.root / name
+        path.write_bytes(original.read_bytes())
+        self.assertEqual(public_hygiene.scan_repository(self.root), (2, []))
+        path.write_bytes(path.read_bytes() + b"changed")
+        self.assertEqual(public_hygiene.scan_repository(self.root)[1],
+                         [(name, 0, "PNG is not the exact reviewed public asset")])
+        path.write_bytes(original.read_bytes())
+        for unknown in ("gbi/docs/assets/other.png", "gbi/other/gbi-cli-logo.png"):
+            self.add(unknown, "placeholder")
+            (self.root / unknown).write_bytes(original.read_bytes())
+        self.assertEqual({name for name, _, _ in public_hygiene.scan_repository(self.root)[1]},
+                         {"gbi/docs/assets/other.png", "gbi/other/gbi-cli-logo.png"})
+
+    def test_reviewed_logo_symlink_is_rejected(self):
+        name = "gbi/docs/assets/gbi-cli-logo.png"
+        self.add(name, "placeholder")
+        path = self.root / name
+        path.unlink()
+        path.symlink_to(Path(__file__).resolve().parents[2] / name)
+        self.assertEqual(public_hygiene.scan_repository(self.root)[1],
+                         [(name, 0, "symlink in public scan scope; review its target explicitly")])
+
     def test_generated_pdf_metadata_and_annotation_are_scanned(self):
         try:
             from pypdf import PdfWriter

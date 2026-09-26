@@ -24,6 +24,10 @@ def _patterns(value):
 
 def _transfer(verb, source, destination, *, include, exclude, pack, pack_small,
               chunk_size, dry_run, prefect, delete_source=False, job_size=None):
+    if not isinstance(delete_source, bool):
+        raise TypeError("delete_source must be a boolean")
+    if delete_source:
+        raise ValueError("delete_source=True is not supported; Object Storage originals are durable and always retained")
     if job_size is not None:
         if job_size not in ("small", "large"):
             raise ValueError("job_size must be small or large")
@@ -36,7 +40,7 @@ def _transfer(verb, source, destination, *, include, exclude, pack, pack_small,
         if value is not None:
             command.append(f"--{flag}={value}")
     for flag, enabled in (("pack-small", pack_small), ("dry-run", dry_run),
-                          ("prefect", prefect), ("delete-source", delete_source)):
+                          ("prefect", prefect)):
         if not isinstance(enabled, bool):
             raise TypeError(f"{flag.replace('-', '_')} must be a boolean")
         if enabled:
@@ -81,9 +85,9 @@ def move(source, destination, *, include=(), exclude=(), pack=None,
     """Copy and verify, then remove unchanged selected filesystem originals.
 
     Options and return/exception behavior match copy(). Object Storage originals
-    remain unless delete_source=True, and a partial archive restore always keeps
-    its container. This calls the same maintained `gbi data move` operation;
-    deletion is never a separate SDK pass.
+    are durable and always retained; delete_source=True is rejected. A partial
+    archive restore always keeps its container. This calls the same maintained
+    `gbi data move` operation; deletion is never a separate SDK pass.
     """
     return _transfer("move", source, destination, include=include, exclude=exclude,
                      pack=pack, pack_small=pack_small, chunk_size=chunk_size,

@@ -1,7 +1,7 @@
-# GBI data CLI specification — 0.4.3 candidate
+# GBI data CLI specification — 0.4.10 candidate
 
 This describes the candidate implementation contract. It does not claim that
-0.4.3 or its optional infrastructure broker is released, deployed or accepted
+0.4.10 or its optional infrastructure broker is released, deployed or accepted
 on a production storage route. [Architecture](ARCHITECTURE.md) maps the contract
 to the current modules; [README](README.md) is the command guide.
 
@@ -9,7 +9,8 @@ to the current modules; [README](README.md) is the command guide.
 
 `gbi data copy SOURCE DESTINATION` retains sources.
 `gbi data move SOURCE DESTINATION` deletes only verified filesystem sources;
-Object Storage originals remain unless `--delete-source` is explicit.
+Object Storage originals and versions are always retained. The retired
+`--delete-source` option and SDK `delete_source=True` are rejected on all routes.
 Existing differing destinations are preserved. A directory's contents go into
 the named destination. Unix permissions govern ordinary shared/instrument
 paths; personal roots are defaults for discovery and state.
@@ -160,10 +161,12 @@ flow Object Storage credentials remain service-side.
 Maintained flows use direct Object Storage SDK payload transfer, with existing
 Slurm execution and Alluxio ownership/presentation checks. This source-verified
 distinction does not establish deployment or performance benefit.
-FSS archives and all restores require matching relative paths; Lustre archives
-may remap the relative destination. Each include pattern must match at least
-one file. Exclusions, packing, chunks, shared paths and `--delete-source` are
-not supported on this route.
+The currently deployed legacy broker requires matching relative paths for FSS
+archives and all restores; Lustre archives may remap the relative destination.
+Each include pattern must match at least one file. The candidate typed broker
+adds exclusions, portable packing/chunks and destination/job-size options as
+described in the [guide](docs/user-guide.md), but is not yet activated. Shared
+paths remain unsupported. Object Storage deletion is unsupported on every route.
 
 The exact request/UUID is saved on Lustre before submission. Status can query
 by request ID after a lost reply; `gbi data retry TRANSFER_ID` resends that

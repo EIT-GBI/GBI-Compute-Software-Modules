@@ -57,12 +57,17 @@ class SDK(unittest.TestCase):
         self.assertIsNone(result.stdout)
         self.assertFalse(sentinel.exists())
 
-    def test_restore_retention_and_explicit_deletion_are_cli_options(self):
+    def test_restore_retention_and_explicit_deletion_rejected_before_cli(self):
         data.copy("saved.gbi.tar.gz", self.root / "restored")
         self.assertEqual(self.parsed().verb, "copy")
         self.assertFalse(self.parsed().delete_source)
-        data.move("saved.gbi.tar.gz", self.root / "restored", delete_source=True)
-        self.assertTrue(self.parsed().delete_source)
+        self.log.unlink()
+        for prefect in (False, True):
+            with self.subTest(prefect=prefect), self.assertRaisesRegex(ValueError, "durable and always retained"):
+                data.move("saved.gbi.tar.gz", self.root / "restored", delete_source=True, prefect=prefect)
+        self.assertFalse(self.log.exists())
+        data.move("saved.gbi.tar.gz", self.root / "restored", delete_source=False)
+        self.assertFalse(self.parsed().delete_source)
 
     def test_preview_and_prefect_still_wait_for_cli(self):
         data.copy("source", "target", pack_small=True, dry_run=True)

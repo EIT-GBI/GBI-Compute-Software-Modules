@@ -1,6 +1,6 @@
 help([[
 Move data between your HPC filesystems. Copy, independently verify, then remove
-verified sources. Alluxio originals stay unless --delete-source is explicit.
+verified filesystem sources. Object Storage originals are durable and always retained.
 
   gbi data move SOURCE DESTINATION
   gbi data copy SOURCE DESTINATION
@@ -18,7 +18,7 @@ Prefect archives support --pack, --pack-small, --chunk-size and exclusions with
 updated site broker/flows. Restores detect archives/chunks automatically; use
 --job-size small for a smaller restore reservation. Plain requests remain
 compatible with older deployments; unsupported requested options fail closed.
-Object Storage source removal (--delete-source) is unavailable with Prefect.
+The obsolete --delete-source / Python delete_source=True option is rejected.
 Inside a Slurm job, ordinary CLI and Python calls reuse the current allocation.
 
 Command help: gbi data copy --help
