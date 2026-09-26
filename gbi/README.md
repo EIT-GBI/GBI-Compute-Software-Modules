@@ -113,6 +113,9 @@ archives. A direct file must be regular and have no symlink path components;
 the CLI checks its type so the backend can grant only its exact store prefix.
 Leave `.gbi-chunks` off a direct file target: it is added automatically, as it
 is to a whole-pack target. Directory members are encoded independently.
+Raw-file chunks preserve content and the stored filename, not POSIX modes or
+modification times. Use a packed archive when those metadata need preserving;
+chunking that archive retains its archive metadata.
 
 ```bash
 gbi data copy /your/lustre/checkpoint.bin /your/object/saved.bin --prefect --chunk-size 64MiB --wait
