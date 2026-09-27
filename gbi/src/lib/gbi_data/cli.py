@@ -586,7 +586,9 @@ def publish_history(run_dir, site, state, rclone, progress, stopped, inline=Fals
         for name in ("request.json", "receipts.jsonl", "slurm.out", "slurm.json"):
             original = run_dir / name
             if original.exists():
-                shutil.copyfile(original, records / name)
+                # Network filesystems may reject kernel fast-copy operations.
+                with original.open("rb") as reader, (records / name).open("wb") as writer:
+                    shutil.copyfileobj(reader, writer)
         write_json(records / "progress.json", progress)
     # The publication receipt remains temporary on scratch. The immutable
     # destination history records describe the data transfer, not themselves.

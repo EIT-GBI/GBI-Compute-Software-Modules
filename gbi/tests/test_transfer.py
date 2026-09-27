@@ -372,6 +372,29 @@ class Interface(unittest.TestCase):
         self.conf.write_text("".join(f"{name}_root = {root}\n" for name, root in roots.items()) + "partition = test\n")
         self.site = Site(self.conf)
 
+    def test_history_records_do_not_require_kernel_fast_copy(self):
+        run_dir = self.site.roots["lustre"] / "history-test"
+        run_dir.mkdir()
+        expected = {name: (name + "\n").encode()
+                    for name in ("request.json", "receipts.jsonl", "slurm.out", "slurm.json")}
+        for name, contents in expected.items():
+            (run_dir / name).write_bytes(contents)
+        published = {}
+
+        def supervise(task, *_args):
+            self.assertFalse(task["delete"])
+            published[Path(task["target"]).name] = Path(task["source"]).read_bytes()
+            return {}
+
+        with patch("gbi_data.cli.shutil.copyfile", side_effect=OSError(61, "No data available")), \
+             patch("gbi_data.cli.supervise", side_effect=supervise):
+            cli.publish_history(run_dir, self.site, self.base / "state", None,
+                                {"phase": "complete"}, threading.Event())
+        self.assertEqual({name: published[name] for name in expected}, expected)
+        self.assertEqual(list(published)[-1], "progress.json")
+        self.assertEqual(json.loads(published["progress.json"]), {"phase": "complete"})
+        self.assertEqual({name: (run_dir / name).read_bytes() for name in expected}, expected)
+
     def test_small_file_all_routes_needs_neither_slurm_nor_rclone(self):
         environment = {**os.environ, "GBI_DATA_SITE_CONF": str(self.conf), "PATH": ""}
         environment.pop("SLURM_JOB_ID", None)
