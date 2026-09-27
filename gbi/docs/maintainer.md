@@ -73,6 +73,13 @@ them, so user documentation should describe them as defaults rather than
 immutable limits. The archive format still enforces its separate 64 MiB
 metadata and observation limits.
 
+Automatic `--archive` reuses `pack_max_bytes` as its estimated archive-size
+threshold for chunking, not a limit on the selected dataset. The shared planner
+splits only archives exceeding metadata bounds, then saves one fixed layout
+per destination below `.gbi/archive-plans` on Lustre. Keep that plan and its
+unit results during recovery. The destination lock is held until all workers
+stop. A new selection must not be mixed into a saved destination.
+
 `GBI_SITE_PREFECT_URL` must be an HTTPS URL without credentials, query
 parameters or fragments. The CLI tries the local broker socket first and uses
 the HTTPS endpoint only when that socket is unavailable. HTTPS uses the caller's

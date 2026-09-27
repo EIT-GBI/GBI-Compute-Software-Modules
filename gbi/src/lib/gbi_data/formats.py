@@ -19,7 +19,7 @@ import time
 from . import archives, chunks, packing
 from .selection import matches
 from .storage import fingerprint
-from .transfer import check_parent, digest, ensure_parent, receipt, validate_source_retention, write_json
+from .transfer import archive_result, check_parent, digest, ensure_parent, receipt, validate_source_retention, write_json
 
 
 def source_format(path):
@@ -378,8 +378,6 @@ def transfer(task):
     before = fingerprint(source)
     if action == "chunk" and task.get("max_bytes") is not None and before[3] > task["max_bytes"]:
         raise ValueError("chunk source exceeds foreground byte budget; retry through Slurm")
-    if task.get("expected_source") is not None and before != task["expected_source"]:
-        raise ValueError("encoded source changed since selection; source retained")
     if state.resolve() != state:
         raise ValueError("format state path contains a symlink")
     key = hashlib.sha256(os.fsencode(target)).hexdigest()
@@ -398,6 +396,26 @@ def transfer(task):
             detail["source_size"] = source_size
         write_json(Path(task["progress"]), detail)
 
+    def receipt_has(event, expected):
+        path = Path(task["receipt"])
+        if not path.exists():
+            return False
+        for line in path.read_text().splitlines():
+            try:
+                prior = json.loads(line)
+            except (ValueError, UnicodeError):
+                continue
+            if (prior.get("event") == event and prior.get("source") == expected.get("source")
+                    and prior.get("destination") == expected.get("destination")
+                    and prior.get("manifest_sha256") == expected.get("manifest_sha256")):
+                return True
+        return False
+
+    def event_identity(record):
+        stable = {key: record.get(key) for key in
+                  ("source", "destination", "kind", "bytes", "manifest_sha256", "entries")}
+        return hashlib.sha256(json.dumps(stable, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+
     settle = task.get("settle_seconds", 0) if task["target_kind"] == "alluxio" else 0
     lock_fd = os.open(state / "locks" / key[:3], os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
     with os.fdopen(lock_fd, "a+") as lock:
@@ -407,51 +425,71 @@ def transfer(task):
             journal = json.loads(journal_path.read_text())
             if journal.get("intent") != intent:
                 raise ValueError("unfinished encoded output belongs to a different selection; choose a new destination")
+        cleanup_complete = action == "pack" and journal.get("phase") in ("cleanup_complete", "deleted")
+        resumed_cleanup = action == "pack" and journal.get("phase") in ("verified", "cleanup_complete", "deleted")
+        if task.get("expected_source") is not None and before != task["expected_source"] and not resumed_cleanup:
+            raise ValueError("encoded source changed since selection; source retained")
+        if resumed_cleanup and not isinstance(journal.get("manifest"), dict):
+            raise ValueError("verified archive journal has no source manifest; source retained")
         report("preparing encoded transfer")
         staging = None
         retained_reason = None
         reused, deleted = False, False
         freed_bytes = 0
         if action == "pack":
-            report("checking packing source")
-            if task.get("packing_policy"):
-                qualified = packing.plan(source, packing.PackingPolicy(**task["packing_policy"]),
-                                         includes=task.get("include", ()), exclusions=task.get("exclude", ()),
-                                         reserved_names=task.get("reserved_names", ()), allow_root=True)
-                if not qualified["complete"] or [item["source_relative"] for item in qualified["candidates"]] != ["."]:
-                    raise ValueError("small-file subtree changed or no longer qualifies; re-run the request to re-plan")
-            suffix = ".gbi.tar.gz" if task.get("pack") == "gzip" else ".gbi.tar"
-            if not target.name.removesuffix(".gbi-chunks").endswith(suffix):
-                raise ValueError(f"packed output must be an exact pathname ending in {suffix}")
-            if task.get("chunk_size"):
-                stored = lambda: chunks.open_chunks(target)
-                complete = None
-                if target.is_dir():
+            if resumed_cleanup:
+                manifest = journal["manifest"]
+                source_size = _source_bytes(manifest)
+                evidence = {"manifest_sha256": _manifest_digest(manifest), "entries": len(manifest["entries"])}
+                reused = True
+                stored = (lambda: chunks.open_chunks(target)) if task.get("chunk_size") else target
+                report("verifying archive")
+                archives.verify_archive(stored, manifest)
+                if not task.get("delete"):
                     try:
-                        complete = chunks.read_manifest(target)
-                    except ValueError:
-                        pass
-                if complete is not None:
-                    if complete["chunk_size"] != task["chunk_size"]:
-                        raise ValueError("existing archive uses a different chunk size; choose a new destination")
-                    manifest = archives.pack(source, _Output(None, report), **_pack_options(task))
-                    report("verifying archive")
-                    archives.verify_archive(stored, manifest)
-                    reused = True
-                else:
-                    report("checking Lustre archive staging")
-                    payload, manifest, saved, stage_journal = _stage_archive(task, source, target, state, key, report)
-                    staging = (payload, saved, stage_journal, _identity(stage_journal), _identity(payload.parent))
-                    chunks.write_chunks(payload, target, state=state, chunk_size=task["chunk_size"], settle_seconds=settle,
-                                        progress=lambda p: report(f"verified archive parts {p['parts']}/{p['total_parts']}",
-                                                                  p["bytes"], p["total_bytes"]))
-                    report("verifying archive")
-                    archives.verify_archive(stored, manifest)
+                        archives.verify_source(source, manifest)
+                    except archives.ArchiveError as error:
+                        raise ValueError("incomplete archive cleanup journal; retry the move; source retained") from error
             else:
-                manifest, reused = _pack_direct(task, source, target, journal_path, journal, report, settle)
-                stored = target
-            source_size = _source_bytes(manifest)
-            evidence = {"manifest_sha256": _manifest_digest(manifest), "entries": len(manifest["entries"])}
+                report("checking packing source")
+                if task.get("packing_policy"):
+                    qualified = packing.plan(source, packing.PackingPolicy(**task["packing_policy"]),
+                                             includes=task.get("include", ()), exclusions=task.get("exclude", ()),
+                                             reserved_names=task.get("reserved_names", ()), allow_root=True)
+                    if not qualified["complete"] or [item["source_relative"] for item in qualified["candidates"]] != ["."]:
+                        raise ValueError("small-file subtree changed or no longer qualifies; re-run the request to re-plan")
+                suffix = ".gbi.tar.gz" if task.get("pack") == "gzip" else ".gbi.tar"
+                if not target.name.removesuffix(".gbi-chunks").endswith(suffix):
+                    raise ValueError(f"packed output must be an exact pathname ending in {suffix}")
+                if task.get("chunk_size"):
+                    stored = lambda: chunks.open_chunks(target)
+                    complete = None
+                    if target.is_dir():
+                        try:
+                            complete = chunks.read_manifest(target)
+                        except ValueError:
+                            pass
+                    if complete is not None:
+                        if complete["chunk_size"] != task["chunk_size"]:
+                            raise ValueError("existing archive uses a different chunk size; choose a new destination")
+                        manifest = archives.pack(source, _Output(None, report), **_pack_options(task))
+                        report("verifying archive")
+                        archives.verify_archive(stored, manifest)
+                        reused = True
+                    else:
+                        report("checking Lustre archive staging")
+                        payload, manifest, saved, stage_journal = _stage_archive(task, source, target, state, key, report)
+                        staging = (payload, saved, stage_journal, _identity(stage_journal), _identity(payload.parent))
+                        chunks.write_chunks(payload, target, state=state, chunk_size=task["chunk_size"], settle_seconds=settle,
+                                            progress=lambda p: report(f"verified archive parts {p['parts']}/{p['total_parts']}",
+                                                                      p["bytes"], p["total_bytes"]))
+                        report("verifying archive")
+                        archives.verify_archive(stored, manifest)
+                else:
+                    manifest, reused = _pack_direct(task, source, target, journal_path, journal, report, settle)
+                    stored = target
+                source_size = _source_bytes(manifest)
+                evidence = {"manifest_sha256": _manifest_digest(manifest), "entries": len(manifest["entries"])}
         elif action == "chunk":
             manifest = chunks.write_chunks(source, target, state=state, chunk_size=task["chunk_size"], settle_seconds=settle,
                                            progress=lambda p: report(f"verified chunks {p['parts']}/{p['total_parts']}",
@@ -482,18 +520,34 @@ def transfer(task):
                 source_size = manifest["size"]
                 evidence = {"sha256": manifest["sha256"], "parts": len(manifest["parts"])}
         report("recording verified transfer", source_size, source_size)
-        record = {"event": "verified", "source": str(source), "destination": str(target),
-                  "kind": action, "bytes": source_size, "reused": reused, "time": time.time(), **evidence}
-        journal.update(phase="verified", record=record)
+        record = journal.get("record") if resumed_cleanup else None
+        if resumed_cleanup and not isinstance(record, dict):
+            raise ValueError("verified archive journal has no receipt record; source retained")
+        if record is None:
+            record = {"event": "verified", "source": str(source), "destination": str(target),
+                      "kind": action, "bytes": source_size, "reused": reused, "time": time.time(), **evidence}
+        journal.update(phase="cleanup_complete" if cleanup_complete else "verified", record=record)
+        if action == "pack":
+            journal["manifest"] = manifest
         write_json(journal_path, journal)
         journal_identity = _identity(journal_path)
-        receipt(Path(task["receipt"]), record)
+        if action != "pack" or not resumed_cleanup:
+            receipt(Path(task["receipt"]), record)
+        elif not receipt_has("verified", record):
+            receipt(Path(task["receipt"]), record)
         if task.get("delete") and not retained_reason:
             report("rechecking source before cleanup", source_size, source_size)
             if action == "pack":
-                snapshot = _chunk_snapshot(target) if task.get("chunk_size") else None
-                guard = (lambda: _require_chunk_snapshot(target, snapshot)) if snapshot else None
-                archives.cleanup_source(source, manifest, stored, destination_unchanged=guard)
+                if cleanup_complete:
+                    cleanup = {"freed_bytes": 0}
+                else:
+                    snapshot = _chunk_snapshot(target) if task.get("chunk_size") else None
+                    guard = (lambda: _require_chunk_snapshot(target, snapshot)) if snapshot else None
+                    cleanup = (archives.resume_cleanup_source(source, manifest, stored, destination_unchanged=guard)
+                               if resumed_cleanup else
+                               {"removed": archives.cleanup_source(source, manifest, stored, destination_unchanged=guard),
+                                "freed_bytes": _source_bytes(manifest)})
+                freed_bytes = cleanup["freed_bytes"]
             elif action == "restore_chunks":
                 destination_snapshot = _path_snapshot(target, manifest if is_archive else None)
                 if is_archive:
@@ -523,9 +577,41 @@ def transfer(task):
                     _require_paths_unchanged(destination_snapshot)
                 source.unlink()
             deleted = True
-            freed_bytes = (_source_bytes(manifest) if action == "pack" else
-                           chunk_snapshot[0]["size"] if action == "restore_chunks" else before[3])
-            receipt(Path(task["receipt"]), {**record, "event": "deleted", "time": time.time()})
+            if action != "pack":
+                freed_bytes = (chunk_snapshot[0]["size"] if action == "restore_chunks" else before[3])
+            if action == "pack":
+                deleted_record = (journal.get("deleted_record") if cleanup_complete else None)
+                if not isinstance(deleted_record, dict):
+                    deleted_record = {**record, "event": "deleted", "time": time.time(), "freed_bytes": freed_bytes}
+                if not cleanup_complete:
+                    journal.update(phase="cleanup_complete", cleanup={"freed_bytes": freed_bytes},
+                                  deleted_record=deleted_record)
+                    write_json(journal_path, journal)
+                    journal_identity = _identity(journal_path)
+                receipt_path = Path(task["receipt"])
+                already_receipted = False
+                if cleanup_complete and receipt_path.exists():
+                    for line in receipt_path.read_text().splitlines():
+                        try:
+                            prior = json.loads(line)
+                        except (ValueError, UnicodeError):
+                            continue
+                        if (prior.get("event") == "deleted" and prior.get("source") == str(source)
+                                and prior.get("destination") == str(target)):
+                            already_receipted = True
+                            break
+                if not already_receipted:
+                    if cleanup_complete:
+                        deleted_record = {**deleted_record, "freed_bytes": 0,
+                                          "replay_of": event_identity(deleted_record)}
+                    receipt(receipt_path, deleted_record)
+                journal.update(phase="deleted", cleanup={"freed_bytes": freed_bytes},
+                               deleted_record=journal.get("deleted_record", deleted_record))
+                write_json(journal_path, journal)
+                journal_identity = _identity(journal_path)
+            else:
+                freed_bytes = (chunk_snapshot[0]["size"] if action == "restore_chunks" else before[3])
+                receipt(Path(task["receipt"]), {**record, "event": "deleted", "time": time.time()})
         if staging:
             payload, saved, stage_journal, stage_journal_identity, stage_directory_identity = staging
             if digest(payload) != saved["sha256"]:
@@ -536,7 +622,10 @@ def transfer(task):
                 _owned_rmdir(payload.parent, stage_directory_identity, state)
             except OSError:
                 pass
+        result = {"bytes": source_size, "source_size": source_size, "deleted": deleted,
+                  "reused": reused, "retained_reason": retained_reason, "freed_bytes": freed_bytes,
+                  **evidence,
+                  **{key: evidence[key] for key in ("restored_bytes", "verified_container_bytes") if key in evidence}}
+        archive_result(task, result)
         _owned_remove(journal_path, journal_identity, state)
-        return {"bytes": source_size, "source_size": source_size, "deleted": deleted,
-                "reused": reused, "retained_reason": retained_reason, "freed_bytes": freed_bytes,
-                **{key: evidence[key] for key in ("restored_bytes", "verified_container_bytes") if key in evidence}}
+        return result

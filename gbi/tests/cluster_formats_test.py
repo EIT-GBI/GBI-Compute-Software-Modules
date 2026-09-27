@@ -125,11 +125,53 @@ def selective_case(roots, config, execute):
             "restored_entries": len(actual), "independent_parity": True}
 
 
+def automatic_case(roots, site, execute):
+    """One generated layout, automatic parts, verified move/retry and restore."""
+    source = roots["lustre"] / "automatic-source"
+    source.mkdir()
+    expected = fixture(source / "samples")
+    (source / "manifest.tsv").write_text("complete fixture inventory\n")
+    (source / "keep.tmp").write_text("excluded source remains")
+    (source / "empty").mkdir()
+    manifest_sha256 = digest(source / "manifest.tsv")
+    # Exercise automatic part selection with tiny disposable data. This private
+    # fixture config changes no installed site setting or other user's request.
+    config = roots["lustre"] / "automatic-site.conf"
+    values = {**site.values, "pack_max_bytes": "1024"}
+    config.write_text("".join(f"{key} = {value}\n" for key, value in values.items()))
+    destination = roots["alluxio"] / "automatic-archive"
+    args = [source, destination, "--archive", "--exclude", "*.tmp"]
+    execute("automatic-move", args, operation="move", expected_receipts=3, config=config)
+    expected_layout = {"samples.gbi.tar.gbi-chunks", "manifest.tsv", "empty.gbi.tar.gbi-chunks"}
+    if {path.name for path in destination.iterdir()} != expected_layout:
+        raise AssertionError("automatic archive layout differs")
+    if list((source / "samples").iterdir()) or (source / "manifest.tsv").exists():
+        raise AssertionError("automatic move retained selected fixture payload")
+    if (source / "keep.tmp").read_text() != "excluded source remains":
+        raise AssertionError("automatic move changed excluded data")
+    before = {str(path.relative_to(destination)): digest(path)
+              for path in destination.rglob("*") if path.is_file()}
+    execute("automatic-move-retry", args, operation="move", expected_receipts=0, config=config)
+    restored = roots["fss"] / "automatic-restored"
+    execute("automatic-restore", [destination, restored], expected_receipts=3)
+    compare(restored / "samples", expected)
+    if ({path.name for path in restored.iterdir()} != {"samples", "manifest.tsv", "empty"}
+            or digest(restored / "manifest.tsv") != manifest_sha256
+            or not (restored / "empty").is_dir()):
+        raise AssertionError("automatic restore did not reconstruct one complete original layout")
+    if before != {str(path.relative_to(destination)): digest(path)
+                  for path in destination.rglob("*") if path.is_file()}:
+        raise AssertionError("automatic retry or restore changed durable archive bytes")
+    return {"independent_parity": True, "source_cleanup_verified": True,
+            "excluded_source_retained": True, "retry_layout_unchanged": True,
+            "object_storage_retained": True, "automatic_parts": True}
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--site-conf", type=Path, required=True)
-    parser.add_argument("--case", choices=("all", "selective"), default="all",
-                        help="run all acceptance cases, or only the mixed --pack-small case")
+    parser.add_argument("--case", choices=("all", "selective", "automatic"), default="all",
+                        help="run all cases, or only the selective/automatic archive case")
     options = parser.parse_args()
     if not os.environ.get("SLURM_JOB_ID"):
         parser.error("requires an existing Slurm allocation")
@@ -151,14 +193,21 @@ def main():
     report["version"] = gbi_data.__version__
     report["package_path"] = str(package)
 
-    def execute(name, arguments, operation="copy", expected_receipts=1):
-        row = {"case": name, **run_cli(arguments, options.site_conf, roots["lustre"] / (name + ".log"),
+    def execute(name, arguments, operation="copy", expected_receipts=1, config=None):
+        row = {"case": name, **run_cli(arguments, config or options.site_conf, roots["lustre"] / (name + ".log"),
                                        expected_receipts, operation=operation)}
         report["results"].append(row)
         report_path.write_text(json.dumps(report, indent=2) + "\n")
         return row
 
     try:
+        if options.case in ("all", "automatic"):
+            report["automatic"] = automatic_case(roots, site, execute)
+        if options.case == "automatic":
+            if any(digest(Path(path)) != value for path, value in code.items()):
+                raise AssertionError("candidate code changed during acceptance")
+            report["passed"] = True
+            return
         report["selective"] = selective_case(roots, options.site_conf, execute)
         if options.case == "selective":
             if any(digest(Path(path)) != value for path, value in code.items()):

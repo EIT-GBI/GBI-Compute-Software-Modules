@@ -39,7 +39,8 @@ class ArchivePackageTest(unittest.TestCase):
             self.assertEqual(len(wheels), 1)
             with zipfile.ZipFile(wheels[0]) as wheel:
                 for name in ("__init__.py", "archives.py", "chunks.py", "packing.py",
-                             "selection.py", "storage.py", "formats.py", "transfer.py"):
+                             "selection.py", "storage.py", "formats.py", "transfer.py",
+                             "archive_plan.py", "archive_state.py"):
                     self.assertEqual(wheel.read("gbi_data/" + name),
                                      (project / "src/lib/gbi_data" / name).read_bytes())
             subprocess.run(

@@ -44,6 +44,14 @@ def receipt(path, record):
         os.fsync(stream.fileno())
 
 
+def archive_result(task, result):
+    """Checkpoint only archive-set workers, before their normal journal closes."""
+    if task.get("archive_result"):
+        path = Path(task["archive_result"])
+        check_parent(path, Path(task["scratch_root"]))
+        write_json(path, result)
+
+
 def digest(path):
     result = hashlib.sha256()
     with path.open("rb") as stream:
@@ -134,6 +142,9 @@ def copy_stream(source, target, fd, rclone, lock, progress, target_kind, timings
 
 def transfer(task):
     validate_source_retention(task)
+    if task.get("archive_completed"):
+        from .archive_state import resume_completed
+        return resume_completed(task)
     if task.get("format_action"):
         from .formats import transfer as transfer_format
         return transfer_format(task)
@@ -147,13 +158,17 @@ def transfer(task):
         source_before = fingerprint(source)
         ensure_parent(destination / ".placeholder", target_root)
         destination_before = fingerprint(destination)[:3]
+        result = {"empty": True, "bytes": 0, "source_size": 0, "deleted": False, "reused": False}
+        archive_result(task, result)
         if task["delete"] and source != selection_root:
             check_parent(source, source_root)
             check_parent(destination, target_root)
             if fingerprint(source) != source_before or fingerprint(destination)[:3] != destination_before:
                 raise ValueError("empty directory source or destination changed; source kept")
             source.rmdir()
-        return {"empty": True}
+        result["deleted"] = task["delete"] and source != selection_root
+        archive_result(task, result)
+        return result
     initial = fingerprint(source)
     decode_link = task.get("decode_link", task.get("source_kind") == "alluxio"
                          and source.name.endswith(".rclonelink"))
@@ -321,6 +336,9 @@ def transfer(task):
         saved["phase"] = "verified"
         write_json(journal, saved)
         receipt(Path(task["receipt"]), record)
+        result = {"bytes": before[3], "source_size": before[3], "deleted": False, "reused": reused,
+                  "sha256": expected, "kind": record["kind"]}
+        archive_result(task, result)
         if task["delete"]:
             if fingerprint(source) != before or fingerprint(target) != target_before:
                 raise ValueError("file changed after verification; source kept")
@@ -337,8 +355,10 @@ def transfer(task):
                 except OSError:
                     break
                 parent = parent.parent
+        result["deleted"] = task["delete"]
+        archive_result(task, result)
         journal.unlink()
-        return {"bytes": before[3], "source_size": before[3], "deleted": task["delete"], "reused": reused}
+        return result
 
 
 def main():

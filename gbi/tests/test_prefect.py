@@ -54,6 +54,20 @@ class Prefect(unittest.TestCase):
                 self.options("lustre", "alluxio", flag)
         self.assertFalse(cli.parser().parse_args(["data", "copy", "a", "b"]).prefect)
 
+    def test_automatic_archive_intent_is_explicit_and_uses_managed_preview(self):
+        for source in ("lustre", "fss"):
+            self.assertNotIn("archive_auto", prefect.prepare(self.options(source, "alluxio"), self.site))
+            request = prefect.prepare(self.options(source, "alluxio", "--archive", "--dry-run"), self.site)
+            self.assertTrue(request["archive_auto"])
+            self.assertTrue(request["dry_run"])
+            self.assertTrue({"archive_format", "pack_small", "chunk_size", "packing_policy"}.isdisjoint(request))
+
+    def test_automatic_archiving_rejects_restore_and_manual_chunk_size(self):
+        with self.assertRaisesRegex(ValueError, "only.*archives"):
+            prefect.prepare(self.options("alluxio", "lustre", "--archive"), self.site)
+        with self.assertRaisesRegex(ValueError, "chooses packing"):
+            prefect.prepare(self.options("lustre", "alluxio", "--archive", "--chunk-size", "64MiB"), self.site)
+
     def test_restore_job_size_preserves_default_and_explicit_named_values(self):
         for target in ("lustre", "fss"):
             self.assertNotIn("job_size", prefect.prepare(self.options("alluxio", target), self.site))

@@ -80,6 +80,15 @@ class SDK(unittest.TestCase):
         self.assertEqual(self.parsed().include, ["*.pt", "*.pt.*"])
         self.assertEqual(self.parsed().exclude, ["unfinished*"])
 
+    def test_archive_intent_needs_no_tuning_options(self):
+        for transfer in (data.copy, data.move):
+            transfer("source", "destination", archive=True)
+            options = self.parsed()
+            self.assertTrue(options.archive)
+            self.assertIsNone(options.pack)
+            self.assertFalse(options.pack_small)
+            self.assertIsNone(options.chunk_size)
+
     def test_prefect_portable_options_and_managed_preview_use_existing_flags(self):
         for transfer in (data.copy, data.move):
             transfer("source", "target.gbi.tar.gz", prefect=True, pack="gzip", dry_run=True)
