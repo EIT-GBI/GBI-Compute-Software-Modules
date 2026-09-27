@@ -7,11 +7,11 @@ FSS and Object Storage. It runs with your Unix permissions and verifies the
 destination before removing an eligible filesystem source. Object Storage is
 the durable store: normal moves and restores always retain its originals.
 
-This guide describes the **0.4.11 candidate**, not an installed release.
-The accepted installed version remains 0.4.10. Check `gbi --version` and the
+This guide describes the installed **0.4.11 release**, accepted for ordinary
+users on 27 September 2026. Check `gbi --version` and the
 [README](../README.md) before using new options. The automatic archive option
-also needs matching broker and flow support when used with Prefect; unsupported
-requests are rejected, never silently changed.
+also needs matching broker and flow support when used with Prefect; automatic
+`--archive --prefect` remains candidate work and is not yet deployed.
 
 ## Start here
 
