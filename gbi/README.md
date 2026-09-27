@@ -11,17 +11,13 @@ Python, selection, recovery and expert options.
 
 ## Release status
 
-This branch contains the **0.4.11 usability candidate**, not an installed
-release. It adds automatic directory archiving and simpler everyday help.
-Ordinary Linux regression tests pass; publication and installed-user
-acceptance remain outstanding. Prefect automatic archive execution and
-durable retry integration are still being completed.
-
-**0.4.10 remains the installed, normal-user-accepted release**, checked on
-26 September 2026. Existing jobs and explicitly loaded older modules are
-unchanged. The typed Prefect broker still needs activation. A module version
-alone does not establish every Prefect option; unsupported requests fail
-rather than silently changing the operation.
+The **0.4.11 CLI is installed and ordinary-user accepted**, checked on
+27 September 2026. It adds automatic directory archiving and simpler
+everyday help. Existing jobs and explicitly loaded older modules are
+unchanged. The typed Prefect broker still needs activation: automatic
+`--archive --prefect` remains candidate work and is not yet deployed. A module
+version alone does not establish every Prefect option; unsupported requests
+fail rather than silently changing the operation.
 
 ## Everyday commands
 
@@ -45,7 +41,7 @@ existing destination directory.
 - `move` removes selected filesystem sources after verification. Object
   Storage originals remain intact, including during restore.
 - `--archive` packages a finished directory. GBI chooses archive boundaries
-  and resumable part sizes. It is new in the candidate.
+  and resumable part sizes. It is available in 0.4.11.
 - Without `--archive`, ordinary copy/move keeps directly readable file paths.
 
 An existing different destination is retained and reported as a collision.
@@ -53,7 +49,7 @@ Stop writers before moving finished data.
 
 ## Archive and restore
 
-With the candidate installed:
+With 0.4.11 installed:
 
 ```bash
 gbi data move /your/lustre/experiment /your/object/experiment --archive
