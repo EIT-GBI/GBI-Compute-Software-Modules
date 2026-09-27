@@ -70,7 +70,17 @@ def command_reference(verbs):
     return formatter.format_help()
 
 
-def parser():
+class _FullHelp(argparse.Action):
+    """Expose compatible expert overrides without crowding ordinary help."""
+
+    def __call__(self, command, namespace, values, option_string=None):
+        parser(advanced=True).parse_args([*command.prog.split()[1:], "--help"])
+
+
+def parser(*, advanced=False):
+    def expert(description):
+        return description if advanced else argparse.SUPPRESS
+
     result = _ArgumentParser(
         prog="gbi",
         description="Move, archive, restore, and inspect your own HPC data.",
@@ -79,13 +89,16 @@ def parser():
                 "  gbi data move SOURCE DESTINATION --detach --wait\n"
                 "  gbi data status TRANSFER_ID --watch\n"
                 "  gbi data usage projects --depth 2 --limit 10\n\n"
-                "All command flags are explained below. For a command's usage and examples,\n"
+                "Every everyday option is explained below; --help-all includes expert overrides.\n"
+                "For a command's usage and examples,\n"
                 "use e.g. `gbi data copy --help` or `gbi data usage --help`.\n"
                 "Ordinary transfers use site classification and normal Unix permissions;\n"
                 "--prefect additionally requires both paths to be personal storage roots."),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     result.add_argument("--version", action="version", version=__version__)
+    result.add_argument("--help-all", action=_FullHelp, nargs=0,
+                        help="show all options, including expert and compatibility overrides")
     data = result.add_subparsers(dest="command", required=True).add_parser(
         "data", help="move data, inspect transfer state, or report usage",
         description=("Public data commands. `copy` keeps the source; `move` removes only sources\n"
@@ -93,6 +106,8 @@ def parser():
                      "transfer ID; `usage` reads the owner-scoped Lustre snapshot."),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
+    data.add_argument("--help-all", action=_FullHelp, nargs=0,
+                      help="show all options, including expert and compatibility overrides")
     verbs = data.add_subparsers(dest="verb", required=True, metavar="{copy,move,status,retry,roots,usage}")
     for verb in ("copy", "move"):
         command = verbs.add_parser(
@@ -112,20 +127,17 @@ def parser():
                 "use Slurm (site settings may differ). Existing allocations are reused.\n"
                 "Ctrl-C stops foreground work; when following a submitted Slurm job, it\n"
                 "only detaches the display. Reconnect with: gbi data status ID --watch\n"
-                "Choose at most one of --detach, --local and --prefect.\n"
-                "Choose either --pack or --pack-small; they cannot be combined.\n"
-                "Restore archives/chunks to Lustre or FSS without packing/chunking flags.\n\n"
-                "--prefect submits personal Object Storage transfers. Archive packing/chunking\n"
-                "requires updated broker/flows. With either, --dry-run submits a managed plan\n"
-                "and creates tracking records, but no data/receipt/destination writes or deletions.\n"
-                "Without packing/chunking, Prefect --dry-run remains a local route preview.\n"
-                "For a file or whole pack, chunking adds .gbi-chunks to the named target.\n"
-                "Direct chunked files must be regular files without symlink traversal.\n"
-                "Renamed FSS archives/restores require updated broker/flows.\n"
+                "Ordinary transfers keep directly readable file paths. --archive packages a\n"
+                "directory under one destination root; GBI chooses archive boundaries and\n"
+                "resumable part sizes. Restore that root to Lustre or FSS with an ordinary copy.\n"
+                "No packing or chunk-size choices are needed for restore.\n\n"
+                "--prefect submits personal Object Storage transfers through the site's broker.\n"
+                "Archive previews may create managed tracking records, but never change data.\n"
                 "Object Storage originals are durable and always retained by every route.\n"
-                "Prefect exclusions require an updated site broker and flow deployment.\n"
                 "After a lost submission reply: gbi data retry ID (same saved request).\n\n"
+                "Use --help-all for expert overrides and compatibility options.\n\n"
                 f"Examples:\n  gbi data {verb} SOURCE DESTINATION --dry-run\n"
+                f"  gbi data {verb} SOURCE DESTINATION --archive\n"
                 f"  gbi data {verb} SOURCE DESTINATION --detach\n"
                 f"  gbi data {verb} SOURCE DESTINATION --detach --wait\n"
                 f"  gbi data {verb} SOURCE DESTINATION --prefect --wait\n"
@@ -134,29 +146,33 @@ def parser():
         )
         command.add_argument("source", help="source file or directory path")
         command.add_argument("destination", help="destination file or directory path")
+        command.add_argument("--help-all", action=_FullHelp, nargs=0,
+                             help="show expert and compatibility options as well")
         selection = command.add_argument_group("selection")
         selection.add_argument("--include", action="append", default=[], metavar="GLOB",
                                help="select basenames matching any supplied pattern; quote globs such as '*.pt' (case-sensitive; repeatable; default: all files)")
         selection.add_argument("--exclude", action="append", default=[], metavar="GLOB",
                                help="skip matching basenames (repeatable; wins over --include)")
         archive = command.add_mutually_exclusive_group()
+        archive.add_argument("--archive", action="store_true",
+                             help="archive a directory under one destination root; choose packing and resumable parts automatically")
         archive.add_argument("--pack", choices=("tar", "gzip"),
-                             help="pack one directory: tar is uncompressed, gzip compresses; exact destination must end in .gbi.tar or .gbi.tar.gz (Prefect archives require updated broker/flow)")
+                             help=expert("pack one directory: tar is uncompressed, gzip compresses; exact destination must end in .gbi.tar or .gbi.tar.gz (requires matching Prefect broker/flow)"))
         archive.add_argument("--pack-small", action="store_true",
-                             help="automatically pack eligible small-file subdirectories; transfer the rest as individual files; --prefect --dry-run submits a managed plan (requires updated broker/flow)")
+                             help=expert("legacy selective packing: pack eligible small-file subdirectories, transfer the rest individually; prefer --archive for a saved whole-tree layout"))
         command.add_argument("--chunk-size", type=byte_size, metavar="SIZE",
-                             help="verified resumable parts, e.g. 64MiB; Prefect archives require updated broker/flows; omit on restore")
+                             help=expert("override verified resumable part size, e.g. 64MiB; not combined with --archive; omit on restore"))
         command.add_argument("--delete-source", action="store_true",
-                             help="obsolete and rejected; Object Storage originals are always retained; move already removes verified filesystem sources")
+                             help=argparse.SUPPRESS)
         command.add_argument("--dry-run", action="store_true", help="preview without data writes; Prefect packing/chunking submits a metadata-only plan and creates tracking records")
         execution = command.add_mutually_exclusive_group()
         execution.add_argument("--detach", action="store_true", help="submit to Slurm; return after submission unless --wait")
         command.add_argument("--wait", action="store_true", help="wait for completion (also valid with --detach or --prefect)")
-        execution.add_argument("--local", action="store_true", help="run inside the current Slurm allocation")
+        execution.add_argument("--local", action="store_true", help=expert("require the current Slurm allocation (normally detected automatically)"))
         execution.add_argument("--prefect", action="store_true",
                                help="submit a personal Object Storage migration through Prefect")
         command.add_argument("--job-size", choices=("small", "large"),
-                             help="Prefect restores only: small reserves 2 CPUs/16 GiB; large reserves 8 CPUs/48 GiB (default: existing deployment setting, currently large; requires updated broker and flow)")
+                             help=expert("Prefect restore reservation override: small reserves 2 CPUs/16 GiB; large reserves 8 CPUs/48 GiB; omit to use the deployment setting"))
     status = verbs.add_parser(
         "status", help="show a saved transfer's progress",
         description="Show progress for a Slurm job ID or printed transfer ID.",
@@ -241,14 +257,15 @@ def plan(options, site):
         max_seconds=float(site.values["inline_probe_seconds"]),
     ) if getattr(options, "pack_small", False) else None
     return format_selection.configure(specification, site, pack=getattr(options, "pack", None),
-                                      chunk_size=getattr(options, "chunk_size", None), packing_policy=policy)
+                                      chunk_size=getattr(options, "chunk_size", None), packing_policy=policy,
+                                      archive=getattr(options, "archive", False))
 
 
 def execution_plan(specification, site, options):
     allocated = bool(os.environ.get("SLURM_JOB_ID"))
     if options.local and not allocated:
         raise ValueError("--local requires an existing Slurm allocation")
-    selected = None if options.detach else probe(specification, site)
+    selected = None if options.detach or specification.get("archive_auto") else probe(specification, site)
     mode = "slurm" if options.detach else "allocation" if allocated else "inline" if selected is not None else "slurm"
     native = selected is not None and len(selected) <= int(site.values["native_files"]) and sum(
         item.get("format_source_size", (item.get("expected_source") or item.get("fingerprint"))[3])
@@ -313,6 +330,18 @@ class TransferPool(ThreadPoolExecutor):
 
 
 def run(run_dir, site, home):
+    specification = json.loads((run_dir / "request.json").read_text())
+    if specification.get("archive_auto"):
+        from .archive_state import prepared
+        if specification["uid"] != os.getuid():
+            raise ValueError("this request belongs to another user")
+        with prepared(specification, site, home) as planned:
+            write_json(run_dir / "request.json", planned)
+            return _run(run_dir, site, home)
+    return _run(run_dir, site, home)
+
+
+def _run(run_dir, site, home):
     deadlines.event("reading request", run_dir, records=str(run_dir))
     specification = json.loads((run_dir / "request.json").read_text())
     if specification["uid"] != os.getuid():
@@ -386,7 +415,7 @@ def run(run_dir, site, home):
                 "selection_root": str(source if specification["directory"] else source.parent),
                 "settle_seconds": int(site.values["verify_settle_seconds"]),
                 "expected_source": None,
-                "max_bytes": int(site.values["inline_bytes"]) if selected is not None else None,
+                "max_bytes": int(site.values["inline_bytes"]) if selected is not None and not specification.get("archive_auto") else None,
                 "native_bytes": int(site.values["native_bytes"]),
                 "target_base": True,
                 "empty": empty, **unit}
@@ -396,7 +425,7 @@ def run(run_dir, site, home):
                                                 "format_source_size" not in unit):
             unknown_sizes.add(active)
         future = pool.submit(supervise, task, int(site.values["file_timeout"]), stopped)
-        pending[future] = (path, active, empty)
+        pending[future] = (path, active, empty, unit.get("archive_result"))
 
     def account_source_size(active, source_size=None):
         if active in unknown_sizes:
@@ -455,10 +484,12 @@ def run(run_dir, site, home):
                 done, _ = wait(pending, timeout=0 if event is not None else 0.5,
                                return_when=FIRST_COMPLETED)
                 for future in done:
-                    path, active, empty = pending.pop(future)
+                    path, active, empty, archive_result = pending.pop(future)
                     outcome = future.result()
                     if "error" not in outcome:
                         unknown_sizes.discard(active)
+                        if archive_result and (outcome.get("deleted") or not Path(archive_result).exists()):
+                            write_json(Path(archive_result), outcome)
                     if not empty:
                         account_source_size(active, outcome.get("source_size"))
                     deadlines.event("retiring worker progress", active, counters=progress)
@@ -477,7 +508,7 @@ def run(run_dir, site, home):
                     progress["totals_known"] = not unknown_sizes
                     progress["active_bytes"] = 0
                     progress["phases"] = {}
-                    for _, active, empty in pending.values():
+                    for _, active, empty, _ in pending.values():
                         if empty:
                             continue
                         try:
@@ -625,7 +656,7 @@ def main():
                "allocation": "Using your existing Slurm allocation.",
                "slurm": "Submitting background work to Slurm."}[mode])
         if options.dry_run:
-            if specification.get("pack") or specification.get("packing_policy") or specification.get("chunk_size") or specification.get("source_format"):
+            if specification.get("archive_auto") or specification.get("pack") or specification.get("packing_policy") or specification.get("chunk_size") or specification.get("source_format"):
                 deadlines.event("planning archive layout", specification["source"])
                 print(json.dumps(format_selection.dry_run(specification, site), indent=2))
             print("Dry run: no job submitted and no files written.")

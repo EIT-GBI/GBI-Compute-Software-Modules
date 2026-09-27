@@ -80,29 +80,33 @@ def _unpacked_name(name):
     return name
 
 
-def configure(specification, site, *, pack=None, chunk_size=None, packing_policy=None):
+def configure(specification, site, *, pack=None, chunk_size=None, packing_policy=None, archive=False):
     """Bind public options to a logical request without discovering whole trees."""
     spec = dict(specification)
     source = Path(spec["source"])
     requested_target = Path(spec.get("requested_target", spec["target"]))
+    if archive and (pack or packing_policy is not None or chunk_size is not None):
+        raise ValueError("--archive chooses packing and part sizes; omit --pack, --pack-small and --chunk-size")
     if pack not in (None, "tar", "gzip"):
         raise ValueError("--pack must be tar or gzip")
     if chunk_size is not None and (type(chunk_size) is not int or chunk_size < 1):
         raise ValueError("--chunk-size must be a positive size")
     if pack and packing_policy is not None:
         raise ValueError("choose --pack or --pack-small, not both")
-    if (pack or packing_policy is not None) and (source.is_symlink() or not source.is_dir()):
+    if (archive or pack or packing_policy is not None) and (source.is_symlink() or not source.is_dir()):
         raise ValueError("packing requires a source directory")
     if packing_policy is not None and not isinstance(packing_policy, packing.PackingPolicy):
         raise ValueError("--pack-small requires an explicitly configured PackingPolicy")
     # A packing request intentionally treats existing encoded files as source
     # members; it must not transparently unpack them while making a new archive.
-    kind = None if pack or packing_policy is not None else formats.source_format(source)
+    kind = None if archive or pack or packing_policy is not None else formats.source_format(source)
     if kind and (chunk_size is not None or pack):
         raise ValueError("restore the encoded source without packing/chunking options")
     spec.update(pack=pack, chunk_size=chunk_size, source_format=kind, format_units=True,
                 packing_policy=asdict(packing_policy) if packing_policy is not None else None,
                 reserved_names=list(site.reserved), scratch_root=str(site.roots["lustre"]))
+    if archive:
+        spec.update(archive_auto=True, archive_chunk_threshold=int(site.values["pack_max_bytes"]))
     if pack:
         suffix = ".gbi.tar.gz" if pack == "gzip" else ".gbi.tar"
         if not requested_target.name.endswith(suffix) or requested_target.is_dir():
@@ -167,6 +171,8 @@ def iter_units(specification, site, on_error=None, visit=lambda: None):
     source, target = Path(spec["source"]), Path(spec["target"])
     includes, exclusions = spec.get("include", ()), spec.get("exclude", ())
     root = Path(spec["source_root"])
+    if spec.get("archive_auto"):
+        raise ValueError("automatic archive execution requires its saved complete plan")
     if spec.get("pack"):
         yield _unit(source, target, "pack")
         return
@@ -302,6 +308,12 @@ def probe_units(specification, site):
 
 def dry_run(specification, site):
     """Show selective policy decisions without creating outputs or staging."""
+    if specification.get("archive_auto"):
+        return {"source": specification["source"], "destination": specification["target"],
+                "archive_auto": True,
+                "layout": "one root; automatically sized child archives and unchanged loose-file paths",
+                "planning": "the execution node freezes the complete mapping before transferring any payload",
+                "source_cleanup": "verified filesystem sources only; Object Storage is retained"}
     if specification.get("packing_policy"):
         result = packing.plan(Path(specification["source"]), packing.PackingPolicy(**specification["packing_policy"]),
                               includes=specification.get("include", ()), exclusions=specification.get("exclude", ()),

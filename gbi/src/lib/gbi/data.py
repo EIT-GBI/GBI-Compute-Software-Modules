@@ -23,7 +23,7 @@ def _patterns(value):
 
 
 def _transfer(verb, source, destination, *, include, exclude, pack, pack_small,
-              chunk_size, dry_run, prefect, delete_source=False, job_size=None):
+              chunk_size, dry_run, prefect, delete_source=False, job_size=None, archive=False):
     if not isinstance(delete_source, bool):
         raise TypeError("delete_source must be a boolean")
     if delete_source:
@@ -39,7 +39,7 @@ def _transfer(verb, source, destination, *, include, exclude, pack, pack_small,
     for flag, value in (("pack", pack), ("chunk-size", chunk_size), ("job-size", job_size)):
         if value is not None:
             command.append(f"--{flag}={value}")
-    for flag, enabled in (("pack-small", pack_small), ("dry-run", dry_run),
+    for flag, enabled in (("archive", archive), ("pack-small", pack_small), ("dry-run", dry_run),
                           ("prefect", prefect)):
         if not isinstance(enabled, bool):
             raise TypeError(f"{flag.replace('-', '_')} must be a boolean")
@@ -51,9 +51,11 @@ def _transfer(verb, source, destination, *, include, exclude, pack, pack_small,
 
 
 def copy(source, destination, *, include=(), exclude=(), pack=None,
-         pack_small=False, chunk_size=None, dry_run=False, prefect=False, job_size=None):
+         pack_small=False, chunk_size=None, dry_run=False, prefect=False, job_size=None, archive=False):
     """Copy and verify, retaining originals; return only when the CLI finishes.
 
+    archive=True selects a saved directory-archive layout with automatic packing
+    and part sizes. Omit it for directly readable files, or when restoring.
     Paths accept strings or pathlib.Path. include/exclude accept one glob or an
     iterable of globs. pack="tar" or "gzip" creates a .gbi.tar or .gbi.tar.gz;
     copying a GBI archive restores it. pack_small and chunk_size have the same
@@ -76,12 +78,12 @@ def copy(source, destination, *, include=(), exclude=(), pack=None,
     """
     return _transfer("copy", source, destination, include=include, exclude=exclude,
                      pack=pack, pack_small=pack_small, chunk_size=chunk_size,
-                     dry_run=dry_run, prefect=prefect, job_size=job_size)
+                     dry_run=dry_run, prefect=prefect, job_size=job_size, archive=archive)
 
 
 def move(source, destination, *, include=(), exclude=(), pack=None,
          pack_small=False, chunk_size=None, dry_run=False, prefect=False,
-         delete_source=False, job_size=None):
+         delete_source=False, job_size=None, archive=False):
     """Copy and verify, then remove unchanged selected filesystem originals.
 
     Options and return/exception behavior match copy(). Object Storage originals
@@ -91,4 +93,5 @@ def move(source, destination, *, include=(), exclude=(), pack=None,
     """
     return _transfer("move", source, destination, include=include, exclude=exclude,
                      pack=pack, pack_small=pack_small, chunk_size=chunk_size,
-                     dry_run=dry_run, prefect=prefect, delete_source=delete_source, job_size=job_size)
+                     dry_run=dry_run, prefect=prefect, delete_source=delete_source, job_size=job_size,
+                     archive=archive)

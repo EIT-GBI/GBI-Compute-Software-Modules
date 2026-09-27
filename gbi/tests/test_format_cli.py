@@ -30,7 +30,7 @@ class FormatCLI(unittest.TestCase):
         self.config.write_text("".join(f"{kind}_root = {path.parent}\n" for kind, path in self.roots.items())
                                + "pack_min_files = 2\nverify_settle_seconds = 1\n")
 
-    def run_cli(self, *arguments):
+    def run_cli(self, *arguments, expected=0):
         output = io.StringIO()
         # Encoded archive sizes are unknown before verification; an existing
         # allocation must be reused rather than submitting a nested job.
@@ -38,7 +38,7 @@ class FormatCLI(unittest.TestCase):
              patch.object(sys, "argv", ["gbi", "data", *map(str, arguments)]), \
              contextlib.redirect_stdout(output), contextlib.redirect_stderr(output):
             result = cli.main()
-        self.assertEqual(result, 0, output.getvalue())
+        self.assertEqual(result, expected, output.getvalue())
         return output.getvalue()
 
     def fixture(self, kind):
@@ -128,6 +128,66 @@ class FormatCLI(unittest.TestCase):
         self.assertEqual(progress["discovered_bytes"], 5)
         self.assertTrue(progress["totals_known"])
         self.assertEqual(progress["freed"], 0)
+
+    def test_automatic_archive_set_moves_and_restores_one_root(self):
+        source = self.fixture("lustre")
+        (source / "manifest.tsv").write_text("source inventory")
+        target = self.roots["bucket"] / "experiment"
+        self.run_cli("move", source, target, "--archive")
+        self.assertTrue((target / "small.gbi.tar").is_file())
+        self.assertTrue((target / "manifest.tsv").is_file())
+        self.assertFalse((source / "small/a.txt").exists())
+        restored = self.roots["fss"] / "experiment"
+        self.run_cli("copy", target, restored)
+        self.assertEqual((restored / "small/a.txt").read_bytes(), b"alpha")
+        self.assertEqual((restored / "manifest.tsv").read_text(), "source inventory")
+        self.assertEqual(os.readlink(restored / "dangling"), "missing")
+        self.assertTrue((restored / "empty").is_dir())
+        # Replaying the move verifies the same outputs; it cannot re-partition
+        # the now-empty source or credit another deletion.
+        self.run_cli("move", source, target, "--archive")
+        self.assertEqual(sorted(path.name for path in target.iterdir()),
+                         ["dangling.rclonelink", "empty.gbi.tar", "manifest.tsv", "small.gbi.tar"])
+
+    def test_automatic_archive_retry_keeps_completed_unit_mapping(self):
+        source = self.fixture("lustre")
+        (source / "manifest.tsv").write_text("inventory")
+        target = self.roots["bucket"] / "experiment"
+        real_supervise = cli.supervise
+
+        def interrupted(task, *args):
+            if task.get("format_action") == "pack":
+                return {"error": "simulated interrupted archive worker"}
+            return real_supervise(task, *args)
+
+        with patch.object(cli, "supervise", side_effect=interrupted):
+            self.run_cli("move", source, target, "--archive", expected=1)
+        self.assertFalse((source / "manifest.tsv").exists())
+        self.assertTrue((source / "small/a.txt").exists())
+        self.run_cli("move", source, target, "--archive")
+        self.assertTrue((target / "small.gbi.tar").exists())
+        restored = self.roots["fss"] / "restored"
+        self.run_cli("copy", target, restored)
+        self.assertEqual((restored / "manifest.tsv").read_text(), "inventory")
+        self.assertEqual((restored / "small/a.txt").read_bytes(), b"alpha")
+
+    def test_maintained_automatic_cluster_acceptance_fixture(self):
+        from cluster_formats_test import automatic_case
+        from packing_benchmark import run_cli
+        from gbi_data.storage import Site
+
+        site = Site(self.config)
+        roots = {kind: root / "automatic-fixture" for kind, root in site.roots.items()}
+        for root in roots.values():
+            root.mkdir()
+
+        def execute(name, arguments, operation="copy", expected_receipts=1, config=None):
+            return run_cli(arguments, config or self.config, roots["lustre"] / (name + ".log"),
+                           expected_receipts, operation=operation)
+
+        with patch.dict(os.environ, {"SLURM_JOB_ID": "12345"}):
+            result = automatic_case(roots, site, execute)
+        self.assertTrue(all(result.values()), result)
 
 
 class SizeFlags(unittest.TestCase):

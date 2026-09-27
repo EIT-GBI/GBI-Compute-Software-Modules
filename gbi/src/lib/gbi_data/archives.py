@@ -161,7 +161,7 @@ def _manifest_size(entries_bytes, count):
 
 
 def check_metadata_budget(source, compression=None, includes=(), exclusions=(), reserved_names=(), max_bytes=None,
-                          *, selection_mode="basename", selection_prefix=""):
+                          *, selection_mode="basename", selection_prefix="", visit=lambda: None):
     """Reject oversized metadata before a caller opens or replaces an output.
 
     Read names, file metadata and symlink targets only. Packing still rechecks
@@ -190,6 +190,7 @@ def check_metadata_budget(source, compression=None, includes=(), exclusions=(), 
     with _directory(source) as root_fd:
         root_before = _observation(os.fstat(root_fd))
         for name, info, kind in _walk(source, reserved):
+            visit()
             _relative(name)
             observation_bytes += len(_json([name, _observation(info)]))
             if observation_bytes > MAX_MANIFEST:
@@ -221,6 +222,7 @@ def check_metadata_budget(source, compression=None, includes=(), exclusions=(), 
         for name in list(required):
             required.update(str(parent) for parent in PurePosixPath(name).parents if str(parent) != ".")
         for name, info in directories.items():
+            visit()
             if name in required:
                 account(_metadata_entry(name, info, "directory"))
         if _observation(os.fstat(root_fd)) != root_before or _observation(source.lstat()) != root_before:
@@ -674,6 +676,110 @@ def cleanup_source(source, manifest, stored_archive, destination_unchanged=None,
                     if error.errno not in (errno.ENOTEMPTY, errno.EEXIST):
                         raise
     return removed
+
+
+def resume_cleanup_source(source, manifest, stored_archive, destination_unchanged=None):
+    """Resume exact cleanup from a verified archive journal.
+
+    Missing entries that were selected by the original manifest are treated as
+    already removed.  Every remaining source entry is revalidated; additions,
+    excluded-entry changes and replacements fail closed.  The return value
+    counts only bytes unlinked by this invocation.
+    """
+    if destination_unchanged is None:
+        if isinstance(stored_archive, (str, os.PathLike)):
+            destination_before = _observation(Path(stored_archive).lstat())
+
+            def destination_unchanged():
+                if _observation(Path(stored_archive).lstat()) != destination_before:
+                    raise ArchiveError("stored archive changed before source removal; remaining sources kept")
+        else:
+            raise ArchiveError("resumed archive cleanup requires a destination stability callback")
+
+    source = Path(source)
+    evidence = manifest.get("_source")
+    if not evidence or "observations" not in evidence:
+        raise ArchiveError("archive has no resumable source observations")
+    expected = evidence["observations"]
+    selected_entries = {entry["path"]: entry for entry in manifest["entries"]
+                        if entry["type"] != "directory"}
+    selected_directories = {entry["path"] for entry in manifest["entries"]
+                            if entry["type"] == "directory"}
+    reserved = evidence.get("reserved", ())
+
+    def inventory():
+        current = {name: _observation(info) for name, info, _ in _walk(source, reserved)}
+        if _observation(source.lstat())[:3] != evidence["root"][:3]:
+            raise ArchiveError("source root changed during resumed cleanup; remaining sources kept")
+        added = sorted(set(current) - set(expected))
+        if added:
+            raise ArchiveError(f"source path added during resumed cleanup: {added[0]}")
+        missing = set(expected) - set(current)
+        invalid_missing = missing - set(selected_entries) - selected_directories
+        if invalid_missing:
+            raise ArchiveError(f"unselected source path disappeared: {sorted(invalid_missing)[0]}")
+        return current, missing
+
+    current, missing = inventory()
+    removed_inodes = {tuple(expected[name][:2]) for name in missing if name in selected_entries}
+    with _directory(source) as root_fd:
+        for name, observation in current.items():
+            before = expected[name]
+            if name in selected_entries:
+                if stat.S_ISDIR(before[2]):
+                    if observation[:3] != before[:3]:
+                        raise ArchiveError(f"source directory changed during resumed cleanup: {name}")
+                else:
+                    _verify_source_content(root_fd, selected_entries[name], before,
+                                           allow_ctime_change=tuple(observation[:2]) in removed_inodes)
+            elif stat.S_ISDIR(before[2]):
+                if observation[:3] != before[:3]:
+                    raise ArchiveError(f"source directory changed during resumed cleanup: {name}")
+            elif (tuple(observation[:2]) in removed_inodes and observation[:5] == before[:5]):
+                pass  # unlinking a selected hardlink legitimately changes ctime
+            elif observation != before:
+                raise ArchiveError(f"unselected source path changed during resumed cleanup: {name}")
+
+    destination_unchanged()
+    verify_archive(stored_archive, manifest)
+    destination_unchanged()
+    freed_bytes = removed_count = 0
+    unlinked_inodes = set(removed_inodes)
+    with _directory(source) as root_fd:
+        for entry in manifest["entries"]:
+            if entry["type"] == "directory" or entry["path"] in missing:
+                continue
+            before = expected[entry["path"]]
+            _verify_source_content(root_fd, entry, before,
+                                   allow_ctime_change=tuple(before[:2]) in unlinked_inodes)
+            with _parent(root_fd, entry["path"], create=False) as (parent, name):
+                now = os.stat(name, dir_fd=parent, follow_symlinks=False)
+                if stat.S_ISDIR(now.st_mode) or _observation(now)[:5] != before[:5]:
+                    raise ArchiveError("selected source changed before resumed cleanup; source kept")
+                destination_unchanged()
+                os.unlink(name, dir_fd=parent)
+                unlinked_inodes.add(tuple(before[:2]))
+                removed_count += 1
+                if entry["type"] in ("file", "hardlink"):
+                    freed_bytes += entry["size"]
+        for entry in sorted((e for e in manifest["entries"] if e["type"] == "directory"),
+                            key=lambda e: e["path"].count("/"), reverse=True):
+            if entry["path"] in missing:
+                continue
+            before = expected[entry["path"]]
+            with _parent(root_fd, entry["path"], create=False) as (parent, name):
+                now = os.stat(name, dir_fd=parent, follow_symlinks=False)
+                if [now.st_dev, now.st_ino, now.st_mode] != before[:3]:
+                    raise ArchiveError("selected source directory changed during resumed cleanup; source kept")
+                destination_unchanged()
+                try:
+                    os.rmdir(name, dir_fd=parent)
+                except OSError as error:
+                    import errno
+                    if error.errno not in (errno.ENOTEMPTY, errno.EEXIST):
+                        raise
+    inventory()
+    return {"removed": removed_count, "freed_bytes": freed_bytes}
 
 
 @contextmanager

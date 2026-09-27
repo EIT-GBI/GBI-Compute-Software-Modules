@@ -38,8 +38,10 @@ def run_cli(arguments, config, log, expected_receipts, *, operation="copy"):
     if (history / "history.json").exists():
         bundle = json.loads((history / "history.json").read_text())
     else:
+        receipts = history / "receipts.jsonl"
         bundle = {"progress": json.loads((history / "progress.json").read_text()),
-                  "receipts": [json.loads(line) for line in (history / "receipts.jsonl").read_text().splitlines()]}
+                  "receipts": [json.loads(line) for line in receipts.read_text().splitlines()]
+                  if expected_receipts or receipts.exists() else []}
     verified = [row for row in bundle["receipts"] if row["event"] == "verified"]
     if len(verified) != expected_receipts or bundle["progress"]["failed"]:
         raise AssertionError("missing verified receipts or failed transfers")

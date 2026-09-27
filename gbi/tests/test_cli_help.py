@@ -9,13 +9,12 @@ from gbi_data import cli
 
 
 class CLIHelp(unittest.TestCase):
-    def test_module_help_describes_typed_prefect_options_and_compatibility(self):
+    def test_module_help_describes_archive_intent_and_compatibility(self):
         template = Path(__file__).resolve().parents[1] / "sm-config/module_template.lua"
         text = " ".join(template.read_text().split())
-        for explanation in ("--pack, --pack-small, --chunk-size and exclusions",
-                            "updated site broker/flows",
+        for explanation in ("--archive", "chooses packing and part sizes",
                             "Restores detect archives/chunks automatically",
-                            "--job-size small", "compatible with older deployments",
+                            "--help-all", "compatible with older deployments",
                             "unsupported requested options fail closed",
                             "Object Storage originals are durable and always retained"):
             self.assertIn(explanation, text)
@@ -38,32 +37,42 @@ class CLIHelp(unittest.TestCase):
         self.assertIn("always retained", copy)
         self.assertNotIn("_run", data)
 
-    def test_overviews_explain_all_public_flags_without_another_help_command(self):
+    def test_overviews_explain_everyday_options_without_exposing_tuning(self):
         for arguments in ((), ("data",)):
             with self.subTest(arguments=arguments):
                 text = self.help_text(*arguments)
                 normalized = " ".join(text.split())
-                for flag in ("--include GLOB", "--exclude GLOB", "--pack {tar,gzip}",
-                             "--pack-small", "--chunk-size SIZE", "--delete-source",
-                             "--dry-run", "--detach", "--wait", "--local", "--prefect",
+                for flag in ("--include GLOB", "--exclude GLOB", "--archive", "--help-all",
+                             "--dry-run", "--detach", "--wait", "--prefect",
                              "--watch", "--depth DEPTH", "--limit LIMIT"):
                     self.assertIn(flag, text)
                 for explanation in ("matching any supplied pattern", "wins over --include",
-                                    "tar is uncompressed, gzip compresses",
-                                    "transfer the rest as individual files",
-                                    "verified resumable parts", "obsolete and rejected",
-                                    "run inside the current Slurm allocation",
+                                    "choose packing and resumable parts automatically",
                                     "follow until the transfer finishes",
                                     "levels below PATH", "top N folders at each level"):
                     self.assertIn(explanation, normalized)
                 self.assertIn("Object Storage originals are durable and always retained", normalized)
                 self.assertNotIn("explicit Object Storage deletion", normalized)
-                self.assertIn("Prefect archives require updated broker/flows", normalized)
-                self.assertIn("Without packing/chunking", normalized)
-                self.assertIn("chunking adds .gbi-chunks", normalized)
-                self.assertIn("without symlink traversal", normalized)
+                for hidden in ("--pack", "--pack-small", "--chunk-size", "--local",
+                               "--job-size", "--delete-source"):
+                    self.assertNotIn(hidden, text)
                 self.assertNotIn("ordinary route only", normalized)
                 self.assertNotIn("_run", text)
+
+    def test_full_help_exposes_supported_overrides_but_not_obsolete_deletion(self):
+        for arguments in ([], ["data"], ["data", "copy"], ["data", "move"]):
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output), self.assertRaises(SystemExit) as raised:
+                cli.parser().parse_args([*arguments, "--help-all"])
+            self.assertEqual(raised.exception.code, 0)
+            for flag in ("--archive", "--pack", "--pack-small", "--chunk-size", "--local", "--job-size"):
+                self.assertIn(flag, output.getvalue())
+            self.assertNotIn("--delete-source", output.getvalue())
+
+    def test_hidden_overrides_remain_parseable_for_existing_scripts(self):
+        options = cli.parser().parse_args(["data", "copy", "src", "dst", "--pack-small", "--chunk-size", "64MiB"])
+        self.assertTrue(options.pack_small)
+        self.assertEqual(options.chunk_size, 64 * 1024 ** 2)
 
     def test_usage_help_defines_path_and_top_n_levels(self):
         usage = self.help_text("data", "usage")

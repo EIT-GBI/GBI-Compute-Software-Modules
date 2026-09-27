@@ -2,15 +2,20 @@
 
 <img src="assets/gbi-cli-logo.png" alt="GBI CLI logo" width="160">
 
-GBI is the user-owned command line tool for moving data between the mounted HPC
-filesystems. It can copy or move files between Lustre, FSS and personal
-Object Storage exposed through the configured mounts. It also has a direct
-Prefect route for personal Object Storage migrations and a small Python wrapper
-for use from a training or analysis job.
+GBI copies, moves, archives and restores your research data between Lustre,
+FSS and Object Storage. It runs with your Unix permissions and verifies the
+destination before removing an eligible filesystem source. Object Storage is
+the durable store: normal moves and restores always retain its originals.
 
-GBI does not grant access, change Unix ownership, or replace a filesystem
-administrator. The command runs with the permissions of the user who starts
-it. Load the site module before using it:
+This guide describes the **0.4.11 candidate**, not an installed release.
+The accepted installed version remains 0.4.10. Check `gbi --version` and the
+[README](../README.md) before using new options. The automatic archive option
+also needs matching broker and flow support when used with Prefect; unsupported
+requests are rejected, never silently changed.
+
+## Start here
+
+Load the module and find your storage paths:
 
 ```bash
 module load gbi
@@ -18,385 +23,259 @@ gbi --version
 gbi data roots
 ```
 
-This guide describes GBI 0.4.10. Use `gbi --version` to check the module you
-loaded, `gbi data copy --help` for its supported options, and the
-[README](../README.md) for current deployment status. Older modules may expose
-the retired explicit deletion option; do not use it. Source support does not
-establish installation or end-to-end acceptance.
-
-Prefect exclusions, renamed destinations, restore job sizes and portable
-archives/chunks require a matching site broker and flow update. Until your site
-enables these options, unsupported requests are rejected before submission;
-options are never silently ignored.
-
-The `roots` command prints the configured user-facing paths. Use those aliases
-in commands instead of guessing an internal shard path.
-
-## A first transfer
-
-Use `copy` when the source should remain. Use `move` to remove each unchanged
-selected filesystem source only after its copy has been read back and verified.
-A packed move also verifies the archive container before removing eligible
-filesystem source entries. Object Storage originals are durable and always retained.
+Replace the placeholder paths below with paths printed by `roots`.
 
 ```bash
+# Copy files and keep the originals.
 gbi data copy /your/lustre/results /your/object/results
 
-gbi data move /your/lustre/checkpoints /your/object/checkpoints
+# Move finished files, removing verified Lustre sources.
+gbi data move /your/lustre/results /your/object/results
+
+# Archive a finished directory; GBI chooses packaging and part sizes.
+gbi data move /your/lustre/experiment /your/object/experiment --archive
+
+# Restore the complete archive directory to ordinary files.
+gbi data copy /your/object/experiment /your/lustre/restored-experiment
 ```
 
-For a directory, the directory's contents go into the destination directory.
-For a single file, GBI writes to the named destination file, or places the file
-under its original name when the destination already is a directory.
+For a directory, its contents go inside the destination directory you name.
+For one file, the destination is its new filename, unless that destination
+already is a directory; then GBI keeps the original filename inside it.
 
-A different existing destination is kept and reported as a collision. An
-identical destination can be independently checked and reused. GBI does not
-silently overwrite another file.
+An existing identical destination can be verified and reused. A different
+existing file is retained and reported as a collision, never overwritten
+silently. Stop all writers before moving a finished dataset.
 
-Moving out of Lustre or FSS normally removes each unchanged selected source
-file after its verified copy. Moving out of Object Storage/Alluxio always keeps
-the originals: objects, object versions, archive containers and chunk stores.
-This applies to full and partial restores on ordinary and Prefect routes.
-The retired `--delete-source` option is rejected, not silently ignored.
+Normal help shows everyday choices. Use `gbi data copy --help` or
+`gbi data move --help`. Expert overrides for existing scripts are described
+under `--help-all` and at the end of this guide.
 
-Every selected regular file is hashed during the source read and independently
-hashed after the destination is written. A move also rechecks the source
-identity before unlinking it. A worker exit status or a destination that merely
-exists is not enough to remove a source. Symlinks are represented without
-following their targets, and special files are rejected.
+## Copy, move and durable storage
 
-## Choosing execution
+`copy` retains the source. `move` removes each selected Lustre or FSS source
+only after independent destination readback, a verification receipt and source
+identity checks. A packed move also verifies the stored archive before
+removing the selected original entries.
 
-The route is selected after a bounded metadata probe unless an explicit route
-flag is used.
+Moving or restoring from Object Storage retains objects, object versions,
+archive containers and chunk stores, including unselected archive members.
+The obsolete `--delete-source` flag and Python `delete_source=True` are
+rejected. They are not a way to override durable retention.
 
-- Small work can run in the current shell. The site settings normally allow up
-  to 8 GiB of selected data in the foreground, but sites may configure this.
-- Larger work, an archive whose decoded size is unknown, or a tree that cannot
-  be scanned within the foreground discovery budget is submitted to Slurm.
-- When the command is already inside a Slurm allocation, GBI reuses that
-  allocation automatically.
-- `--detach` explicitly submits a separate Slurm job. Add `--wait` when a
-  script must wait for that job.
-- `--local` is a guard that requires an existing allocation. It is not needed
-  when automatic allocation reuse already applies.
-- `--prefect` selects the identity-bound managed Object Storage route. It is a
-  separate migration submission, with individual objects by default. It cannot
-  submit an ordinary filesystem-to-filesystem copy.
+Every selected regular file is hashed while reading the source and again
+while reading the destination. Symlinks are represented without following
+their targets. Unsupported special files fail safely. A worker exit status,
+file size or destination that merely exists is not deletion evidence.
 
-A foreground Ctrl-C stops the foreground operation. If the terminal is
-following a submitted Slurm job, Ctrl-C detaches the display; the job keeps
-running. Use the printed transfer ID to reconnect.
+A large transfer is not an atomic whole-directory transaction. Some units
+can be verified and complete while others are still running or have failed.
+Use the terminal summary and receipts to determine whether the entire dataset
+is complete; do not treat a partly populated destination as a finished backup.
 
-The automatic thresholds are site configuration, not completion-time promises.
-The foreground probe is deliberately bounded so a huge or slow mounted tree is
-moved to an execution node rather than causing an unbounded login-node walk.
+## Archives without tuning flags
 
-## Route and flag matrix
+Use `--archive` when you want a directory packaged for storage. Leave it off
+when you want directly readable loose files. No packing threshold or chunk-size
+choice is needed.
 
-This table describes the supported combinations. Every cell is explicit. “Yes”
-means supported on that route; “No” means the parser or route validation
-rejects the option. Normal source, destination and collision checks still apply.
+GBI keeps the destination you name as the single layout root. It packs child
+directories into uncompressed GBI tar archives. If one exceeds the archive
+metadata limit, GBI splits it further while preserving its original relative
+paths. Root-level files, links and empty directories remain represented at
+their original locations. Large packed units use verified resumable parts
+automatically. Chunking the archive preserves its stored member metadata.
 
-| Option | Ordinary automatic / Slurm | Existing allocation | Prefect |
-| --- | --- | --- | --- |
-| `--include` | Yes, recursive filename globs | Yes | Yes, up to 100 plain globs |
-| `--exclude` | Yes; exclusions win | Yes | Yes, with updated site broker and flows |
-| `--pack tar/gzip` | Yes | Yes | Archives only; updated broker/flows |
-| `--pack-small` | Yes; use with `--dry-run` to review | Yes | Archives only; same site policy; updated broker/flows |
-| `--chunk-size SIZE` | Yes for regular files and new packs | Yes | Archives only; updated broker/flows |
-| `--job-size small/large` | No | No | Restores only; updated broker/flows |
-| `--delete-source` | No; retired option rejected | No | No |
-| `--dry-run` | Yes; no transfer output is written | Yes | Local preview, or managed plan with packing/chunking |
-| `--detach` | Yes; submits Slurm | New job; cannot combine with `--local` | No |
-| `--wait` | Yes | Yes | Yes |
-| `--local` | Requires an allocation | Yes | No |
-| `--prefect` | Selects this route | Mutually exclusive with `--local` | This is the route |
+For example, a source containing `samples/` and `manifest.tsv` can be
+stored as `samples.gbi.tar` and `manifest.tsv` under the chosen destination.
+Restoring that destination recreates `samples/` and `manifest.tsv`, not an
+extra competing directory tree. A chunked archive is recognized automatically
+as well. Do not rename generated containers inside a larger archive directory.
 
-`--pack` and `--pack-small` are mutually exclusive. `--wait` can be combined
-with `--detach` and is the normal SDK behavior. The CLI parser rejects options
-that cannot be combined before it starts a transfer.
+The ordinary route records the complete archive partition on Lustre before
+starting payload writes. A retry reuses that partition even when earlier
+units have already removed their verified sources. It does not repartition
+the remaining files into a conflicting layout. A nonempty destination without
+a matching saved plan is rejected for inspection.
 
-The Prefect route sends individual files by default directly to or from personal Object
-Storage through the identity-bound broker. The ordinary route copies through
-the configured Lustre, FSS or Alluxio/Object Storage mounts. Ordinary routing
-is not limited to personal roots: any mounted path that the Unix account can
-access may be classified and used. Prefect requires
-one personal Lustre or FSS path and one personal Object Storage path. Source
-and destination relative names may differ; FSS archives and restores require
-the updated broker and flow for renamed destinations. Equal-path requests
-retain their existing behavior. Prefect paths must be plain paths without
-wildcards, and reserved transfer-state prefixes are rejected. The candidate route
-supports archive `--pack tar/gzip`, `--pack-small` and `--chunk-size` with the
-matching broker and flow update. Object Storage originals and versions are
-always retained; source deletion is not a supported restore operation.
-Explicit packing requires the exact destination filename `.gbi.tar` or
-`.gbi.tar.gz`. Small-file packing uses the same site thresholds as the ordinary
-route and cannot be combined with whole-directory packing.
+```bash
+gbi data copy /your/lustre/experiment /your/object/experiment --archive
+gbi data copy /your/object/experiment /your/fss/restored-experiment
+```
 
-`--prefect --dry-run` with packing or chunking submits a managed metadata-only plan:
-it creates Prefect/local tracking records but no data, receipts, destination
-writes or source deletions. Use `--wait`, or inspect the printed run ID. Plain
-`--prefect --dry-run` remains a local preview and submits nothing. Unsupported
-site versions reject portable options before creating a run; source support
-does not mean the update is already installed.
+Restoring needs no archive or chunking flags. You can also restore one generated
+archive into an explicitly named directory:
 
-For a modest restore inventory, `--prefect --job-size small` requests 2 CPUs and
-16 GiB; `--job-size large` requests 8 CPUs and 48 GiB. Omit the option to keep
-the existing deployment setting (large for these restores). This changes only
-the separate restore job's reservation, not its time limit or the caller's
-allocation, and does not guarantee an immediate start.
+```bash
+gbi data copy /your/object/experiment/samples.gbi.tar /your/lustre/samples
+```
 
-Use `gbi data copy --help` and `gbi data move --help` for the installed parser's
-current wording. If your site has not enabled portable Prefect archives/chunks,
-omit `--prefect` for packing or chunking. If you need direct individual Object
-Storage objects, keep `--prefect` without packing or chunking;
-do not approximate either route with a second command.
+GBI archives preserve member relative paths, empty directories, safe symlinks,
+ordinary modes, modification times and hardlink relationships within a
+container. They do not preserve ownership, ACLs, extended attributes,
+privileged mode bits or hardlinks across different containers. A hardlink
+whose other name is excluded becomes a regular file. Existing destination
+directory permissions are preserved.
+
+Timestamp verification permits truncation of less than one second. Lustre
+restores have shown whole-second timestamps; do not depend on exact
+nanosecond preservation. The archive's outer source directory is the layout
+root, not a stored member with its own restored metadata.
+
+A marked GBI archive is recognized even if explicitly named with a different
+suffix. An ordinary unmarked tar file is copied as a file, not extracted.
+Within a directory, retain generated `.gbi.tar`, `.gbi.tar.gz` and
+`.gbi-chunks` names so discovery can recognize the containers.
 
 ## Selecting files
 
-`--include` and `--exclude` match the basename of each file recursively. They
-are case-sensitive `fnmatch` patterns. An include list is an OR: a file matching
-any include is selected. An exclude matching any pattern wins over the include.
-With no includes, ordinary files are selected by default; exclusions still
-remove matches. Quote patterns so the shell passes them to GBI unchanged.
-
-A common checkpoint selection is:
+Use repeatable `--include` and `--exclude` filters. They match filenames
+recursively, are case-sensitive, and use shell-style globs. Includes form a
+union; an exclusion always wins. Quote globs so your shell passes them
+unchanged.
 
 ```bash
-gbi data move /your/lustre/run /your/object/run.gbi.tar \
-  --pack tar --include '*.pt' --include '*.pt.*' \
-  --exclude '*.tmp'
+gbi data move /your/lustre/run /your/object/run --archive \
+  --include '*.pt' --include '*.pt.*' --exclude '*.tmp'
 ```
 
-This includes `model.pt` and `model.pt.ready.json`, at any depth, but excludes
-matching temporary files. It does not mean “all names containing `.pt`”. For
-example, `.ptx` does not match `*.pt`.
+This selects `model.pt` and `model.pt.ready.json` at any depth, but not
+`model.ptx`. Unselected files stay in the source. Without includes, files
+are selected by default unless excluded.
 
-The same selection applies while restoring an archive or a chunk store. For an
-archive restore, the patterns match each member basename, recursively, rather
-than the complete member path. For a chunked file, the pattern is tested
-against the original file name recorded in its manifest.
-A selection is observed before payload transfer; files added later are not
-silently included, and a selected file that changes is retained.
-
-## Archives and restore
-
-`--pack tar` creates a portable GBI tar archive. `--pack gzip` creates the same
-format with gzip compression. The destination name must end exactly in
-`.gbi.tar` or `.gbi.tar.gz`.
-
-Start with tar for many small files: one sequential archive reduces per-file
-storage operations. Choose gzip when compression saves enough space to justify
-its CPU cost. Checkpoints may compress poorly, so gzip is not automatically
-faster. Large individual checkpoints can also suit the default Prefect route;
-it keeps them as individual objects. Compare a representative finished folder
-before choosing a format for a large collection.
+The same filters can select members during restore:
 
 ```bash
-gbi data copy /your/lustre/run /your/object/run.gbi.tar --pack tar
-
-gbi data move /your/lustre/run /your/object/run.gbi.tar.gz --pack gzip
+gbi data copy /your/object/run /your/lustre/selected-run --include '*.pt'
 ```
 
-GBI marks and validates its archive format. A plain, unmarked tar file is
-copied as an ordinary file. A marked archive is recognized even if it was
-renamed. Within a larger directory, keep generated `.gbi.tar`, `.gbi.tar.gz`
-and `.gbi-chunks` names so discovery can recognize containers.
+For an archive, filters match member filenames recursively. For a chunked
+regular file, they match the original filename recorded in its manifest.
+Object Storage retains the full original even for a partial restore.
 
-Restore an archive to Lustre or FSS with an ordinary copy or move:
+## Execution and preview
+
+GBI normally chooses the execution location for you:
+
+- Small plain transfers can run in your shell after a bounded metadata probe.
+  The usual foreground limit is 8 GiB, configurable by the site.
+- Larger or slow-to-discover work goes to Slurm. Automatic archive planning
+  runs on an execution node, not as a recursive login-node scan.
+- Inside an existing Slurm allocation, ordinary CLI and Python calls reuse
+  that allocation.
+- `--detach` explicitly submits another Slurm job. Add `--wait` if your
+  script needs to wait for it.
+- `--prefect` requests a managed personal Object Storage transfer instead
+  of an ordinary mounted-filesystem transfer.
 
 ```bash
-gbi data copy /your/object/run.gbi.tar /your/lustre/restored-run
+gbi data copy SOURCE DESTINATION --dry-run
+gbi data move SOURCE DESTINATION --archive --detach --wait
 ```
 
-The restore creates the archive's relative directory layout below the
-requested destination. Archives preserve relative paths, empty directories,
-safe symlinks, ordinary modes, modification times and hardlink relationships.
-Timestamp verification accepts truncation of less than one second. Observed
-Lustre restores use whole-second timestamps; do not rely on exact nanosecond
-preservation even though the archive records nanoseconds.
-They do not restore ownership, ACLs, extended attributes or privileged mode
-bits. A hardlink whose other name was excluded is restored as a regular file.
-Destination metadata must be representable. Existing directory permissions
-are preserved, and a different existing entry is reported as a collision.
+An ordinary `--dry-run` writes no files and submits no job. For automatic
+archives it explains the policy and destination root; the complete saved
+partition is constructed on the execution node when you start the transfer.
+It does not claim a huge directory has already been fully inventoried.
 
-A packed move reads the stored archive back and checks its selected inventory
-before eligible filesystem source removal. New or excluded files are never
-removed by an unconditional recursive cleanup. Every restore from Object
-Storage keeps the complete archive, including unselected members. A failed or
-changed filesystem source remains available for inspection.
+A foreground Ctrl-C stops foreground work. Ctrl-C while following a submitted
+Slurm job only detaches the display; the job continues. Reconnect using the
+printed transfer ID. Automatic thresholds are not completion-time promises.
 
-Archive metadata has a 64 MiB supported limit. This limit applies to the file
-list and source observation inventory, so millions of small files can exceed it
-with relatively little payload. GBI rejects the request before opening or
-replacing an output. Choose smaller source folders or inspect candidates with:
+## Prefect route
+
+Use `--prefect` for direct personal Object Storage transfers through the
+site's identity-bound broker. No Prefect UI or cloud credentials are needed
+in your script. One endpoint must be your personal Lustre or FSS path and
+the other your personal Object Storage path. Ordinary transfers instead use
+mounted paths available through your Unix permissions.
 
 ```bash
-gbi data copy /your/lustre/run /your/object/run --pack-small --dry-run
+gbi data copy /your/fss/experiment /your/object/saved-experiment --prefect --wait
+gbi data copy /your/object/saved-experiment /your/lustre/restored --prefect --wait
 ```
 
-A dry run is a read-only qualification, not permission to delete a source. It
-reports incomplete discovery as a lower bound and does not authorize an
-archive. `--chunk-size` does not increase the archive metadata limit.
+The default writes individual objects. Renamed FSS destinations, exclusions,
+restore reservation overrides and portable archive options need matching
+broker and flow versions. Automatic `--archive --prefect` is still candidate
+work until its persistent plan and retry execution are enabled. The installed
+typed broker also has a separate activation step. The CLI refuses unsupported
+requested options before submission; do not remove a filter just to bypass
+that refusal.
 
-### Packing small files
+Plain `--prefect --dry-run` is a local preview and submits nothing.
+Supported packing/chunking previews submit a managed metadata-only plan:
+they create tracking records, but no payload writes, receipts or source
+deletions. Add `--wait` or inspect the printed run ID.
 
-`--pack-small` groups qualifying small-file subdirectories before creating
-archives. The site defaults are at most 64 KiB per file, at least 40 files per
-group, and at most 1 GiB of selected payload per generated archive. Sites may
-change these values. Larger siblings remain loose, and each generated archive
-is named after its source subdirectory with a `.gbi.tar` suffix. The source
-directory remains the layout root, so a mixed tree contains loose large files
-alongside generated archives. Restoring that tree unpacks each generated
-archive into the corresponding relative directory.
+Inside a Slurm allocation, Prefect still submits a separate managed job.
+Allow for its queue time in the calling job's time limit. It does not reuse
+your allocation.
 
-Run `--pack-small --dry-run` first when the tree is large. The report is a
-bounded qualification and does not create archives or authorize source
-deletion.
+For archive destination reuse, Prefect requires its expected integrity
+metadata. Objects uploaded through Alluxio or another tool may lack it.
+Use the ordinary route to verify and reuse those destinations. Prefect
+restores still verify ordinary objects without that archive-upload metadata.
 
-## Resumable chunks
-
-For one large regular file, `--chunk-size SIZE` writes a versioned `.gbi-chunks`
-store at the destination, with verified parts and a final manifest. The size is
-required; examples include `64MiB` and `1GiB`. Mutable resume journals and locks
-are kept in the configured Lustre scratch state directory.
+## Status and recovery
 
 ```bash
-gbi data move /your/lustre/checkpoint.bin /your/object/checkpoint.bin \
-  --chunk-size 64MiB
+gbi data status TRANSFER_ID
+gbi data status TRANSFER_ID --watch
 ```
 
-A chunked output has a `.gbi-chunks` directory containing the final manifest,
-parts and completion marker. If the command is interrupted, repeat the same
-command. GBI checks ownership,
-part checksums and the source identity before resuming. A partial store is not
-restorable until its completion marker is valid. Chunk state is kept on the
-configured Lustre scratch area, outside the destination; it is not staged on a
-local temporary disk.
+Use the printed transfer ID or a numeric Slurm ID when it identifies exactly
+one transfer. If an allocation contains multiple transfers, GBI lists their
+IDs rather than guessing. Exact transfer IDs remain usable after completed
+history publication. Existing jobs retain their saved code even after a
+new module is installed.
 
-Chunking can be combined with creating a new packed archive, which adds the
-chunk suffix to that archive output. Restore an already encoded archive or
-chunk store without `--pack`, `--pack-small` or `--chunk-size`; detection is
-automatic, including on the updated Prefect route.
+For an ordinary failed transfer, first confirm the job and workers have
+stopped, inspect its receipts and retained sources, then rerun the same
+command with the same source, destination and selection. A saved automatic
+archive plan preserves completed units and the original layout. Interrupted
+packed cleanup uses its saved original manifest, rechecks the destination,
+and removes only unchanged selected entries still present. Do not delete
+locks, journals, partial output or verification receipts to force a retry.
 
-Raw-file chunks preserve content and the stored filename, not POSIX modes or
-modification times. Pack into an archive when those metadata matter; chunking
-the archive retains its metadata, with the restore timestamp tolerance above.
-
-Candidate Prefect chunks need matching broker and archive/restore flows. For a
-direct regular file, leave `.gbi-chunks` off the target; the backend adds it.
-The CLI rejects symlinks and symlink parents and identifies the file so access
-covers only its exact store prefix. Whole-pack targets keep `.gbi.tar` or
-`.gbi.tar.gz`; chunking adds `.gbi-chunks`. Directory targets remain prefixes;
-selected files are encoded independently, after optional `--pack-small` grouping.
-
-```bash
-gbi data copy /your/lustre/checkpoint.bin /your/object/saved.bin \
-  --prefect --chunk-size 64MiB --wait
-gbi data copy /your/fss/run /your/object/run.gbi.tar.gz \
-  --prefect --pack gzip --chunk-size 64MiB --wait
-gbi data copy /your/object/run.gbi.tar.gz.gbi-chunks /your/lustre/restored \
-  --prefect --job-size small --wait
-```
-
-These examples retain their sources. Partial stores cannot be restored before
-completion. A move removes only selected, unchanged filesystem originals after
-verification and its receipt. After an interrupted cleanup, inspect receipts
-and retained sources before submitting another run. If the remaining files
-would change a previous packing layout, the retry fails closed; it does not
-silently combine packed and loose versions of the same logical path.
-
-## Status, waiting and retry
-
-For a submitted job, GBI prints a Slurm job ID. For a foreground or allocation
-transfer, it prints a timestamped transfer ID. Use either where supported:
-
-```bash
-gbi data status 123456
-gbi data status 20260925T120000Z-0123456789ab --watch
-```
-
-A Slurm numeric ID identifies one transfer when possible. If an existing
-allocation contains several active transfers, status refuses to guess and
-lists their transfer IDs. Select the exact ID and retry the status command.
-A published transfer ID continues to work after the scratch run directory has
-been replaced by immutable history. Transfers started by an older module may
-not contain allocation metadata; use the transfer ID printed in their log.
-Loading a new module does not alter a running request's saved code snapshot.
-
-`--watch` follows until a terminal transfer summary. Without it, status prints
-one update. For a Slurm failure without a completed summary, inspect the saved
-run directory and `slurm.out`; already verified records remain the authority.
-`scancel JOB_ID` is the normal Slurm cancellation command. Cancellation does
-not undo files already verified and does not authorize deletion of incomplete
-sources.
-
-The retry command is only for a lost Prefect submission reply:
+The retry command has a narrower meaning:
 
 ```bash
 gbi data retry TRANSFER_ID
 ```
 
-It resends the unchanged saved request after confirming that the transfer
-belongs to the current user. It is not a retry of a failed Prefect flow and it
-is not an ordinary Slurm retry. For an ordinary failed or interrupted transfer,
-inspect receipts and rerun the original copy or move command with the same
-selection after confirming the source and destination state.
+It resends an unchanged Prefect request after a lost submission reply.
+It is not an ordinary Slurm retry or a retry of an already failed Prefect
+flow. Inspect the existing run before submitting any new request.
+
+A timeout observing the cluster does not prove a transfer stopped. Recheck
+the same job. `scancel JOB_ID` cancels an identified Slurm job; it does not
+undo earlier verified transfers or authorize deletion of incomplete sources.
 
 ## Python SDK
 
-The Python package is a thin, blocking wrapper around the installed CLI. Load
-the module before starting Python, including when using a virtual environment.
-The complete public signatures are:
-
-```text
-copy(source, destination, *, include=(), exclude=(), pack=None,
-     pack_small=False, chunk_size=None, dry_run=False, prefect=False,
-     job_size=None)
-
-move(source, destination, *, include=(), exclude=(), pack=None,
-     pack_small=False, chunk_size=None, dry_run=False, prefect=False,
-     delete_source=False, job_size=None)
-```
-
-`source` and `destination` accept strings or `pathlib.Path`. `include` and
-`exclude` accept one string or an iterable of strings. `pack` is `None`, `tar`
-or `gzip`; `chunk_size` is positive integer bytes or a size string such as `64MiB`. Boolean
-arguments must be actual booleans.
-`job_size` is `None`, `small` or `large` and applies only to Prefect restores.
-The retained `delete_source=False` keyword is for compatibility only;
-`delete_source=True` is rejected before execution. Object Storage originals
-are always retained, including when calling `data.move` to restore them.
-
-Both functions add `--wait`, stream the CLI's progress to the current output,
-and return `subprocess.CompletedProcess` when the CLI exits successfully. A
-nonzero CLI exit raises `subprocess.CalledProcessError`; an unavailable
-executable raises `FileNotFoundError`. The SDK does not parse output, submit a
-second command, or retry a failed command implicitly.
-
-An ordinary SDK call reuses an existing Slurm allocation. Outside Slurm, GBI
-may submit larger work to Slurm and the Python call still waits. In a training
-job, call it after all writers have closed their files, usually once from rank
-zero:
+Load the module before starting Python, including inside a virtual environment.
+The SDK calls the same installed CLI and waits for completion:
 
 ```python
 from pathlib import Path
 from gbi import data
 
 finished = Path("/your/lustre/finished-run")
-archive = Path("/your/object/finished-run.gbi.tar")
+stored = Path("/your/object/finished-run")
 
-data.move(finished, archive, pack="tar", include=["*.pt", "*.pt.*"])
+data.move(finished, stored, archive=True, include=["*.pt", "*.pt.*"])
+data.copy(stored, "/your/lustre/restored-run")
 ```
 
-These filesystem-source checkpoint files are removed only after verification; other files
-stay in the source directory. To retain all originals, use `data.copy`.
+Call after all writers have closed, normally once from rank zero. Use
+`data.copy` to retain filesystem originals. Both functions accept strings
+or `pathlib.Path`, stream progress to the current log and return
+`subprocess.CompletedProcess`. Failure raises
+`subprocess.CalledProcessError`; a missing executable raises
+`FileNotFoundError`. The SDK never silently retries a failed command.
 
-### Python with an sbatch job
-
-A normal batch script can load the module, run training, then archive the
-finished output. The destination and source must be accessible on the worker.
+A batch job can load the module and call that code directly:
 
 ```bash
 #!/usr/bin/env bash
@@ -409,159 +288,118 @@ module load gbi
 python train_and_archive.py
 ```
 
-```python
-from pathlib import Path
-from gbi import data
+Use `prefect=True` only when you want a separate managed transfer and the
+personal route requirements are met. Ordinary calls reuse the allocation.
 
-# Training has finished and closed all checkpoint writers here.
-data.move(
-    Path("/your/lustre/run"),
-    Path("/your/object/run.gbi.tar.gz"),
-    pack="gzip",
-    include=["*.pt", "*.pt.*"],
-)
+Complete signatures, including compatible expert arguments:
+
+```text
+copy(source, destination, *, include=(), exclude=(), pack=None,
+     pack_small=False, chunk_size=None, dry_run=False, prefect=False,
+     job_size=None, archive=False)
+
+move(source, destination, *, include=(), exclude=(), pack=None,
+     pack_small=False, chunk_size=None, dry_run=False, prefect=False,
+     delete_source=False, job_size=None, archive=False)
 ```
 
-### Python Prefect alternative
-
-Set `prefect=True` when the source and destination meet the personal route
-rules. By default, it submits individual objects through the site's local broker
-or authenticated compute-job HTTPS endpoint; packing requires an explicit option.
-
-```python
-from gbi import data
-
-data.move(
-    "/your/lustre/run",
-    "/your/object/run",
-    include=["*.pt", "*.pt.*"],
-    prefect=True,
-    exclude="unfinished*",
-)
-```
-
-Inside a Slurm allocation this still submits a separate managed transfer job
-as your user. That transfer may wait for cluster resources while your Python
-call waits for completion; allow for queue time in the calling job's time limit.
-No notebook or browser session is required.
-
-The candidate Prefect call supports archive `pack`, `pack_small` and
-`chunk_size` with updated site broker/flows, but never `delete_source=True`. With packing or chunking,
-`dry_run=True` waits for a managed metadata-only plan and creates tracking
-records only. It is a managed migration submission, so a lost reply is
-recovered with `gbi data retry TRANSFER_ID`, not by blindly submitting a new
-copy. Its flow receipts remain the authority for per-file verification.
-
-When archiving, Prefect needs integrity metadata to reuse an object already at
-the destination. An object uploaded through Alluxio or another tool may lack
-that metadata. Use the ordinary route to verify and reuse such a destination.
-Restoring ordinary objects through Prefect does not require that archive-upload
-metadata; the restore still verifies object identity, size and copied content.
+Filters accept one string or an iterable of strings. Boolean arguments must
+be actual booleans. `delete_source=False` is compatibility-only:
+`True` is rejected. Source retention is identical to the CLI.
 
 ## Cached usage
 
-`gbi data usage` shows live UID quota when the Lustre client is available and a
-cached owner-scoped inventory snapshot. The snapshot is labelled with its
-capture time and age. It is a logical apparent-byte report, not allocated
-filesystem usage, and the command does not recursively scan Lustre.
+`usage` shows live UID quota when the Lustre client is available, plus a
+cached owner-scoped inventory snapshot:
 
 ```bash
 gbi data usage
 gbi data usage results --depth 2 --limit 20
 ```
 
-The optional path must be below your own Lustre root. `--depth` and `--limit`
-must be positive. A snapshot may be partial or stale; those states are shown.
-If no snapshot exists, the live quota can still be displayed. Publication is a
-separate maintained owner process and is not started by this command.
+The optional path must be below your own Lustre root. Depth and limit must
+be positive. The report shows capture time, age and incomplete/stale states.
+It reports logical apparent bytes, not allocated filesystem space, and does
+not recursively scan Lustre or start the separate inventory publisher.
 
-## Troubleshooting
+## Expert options
 
-### “unsupported” or “cannot be combined”
+Normal archive use does not need these choices. Existing scripts may keep
+using them; `gbi data copy --help-all` exposes them.
 
-Check the route matrix and the installed `--help`. The most common cases are
-requesting the retired `--delete-source` option, packing/chunking on a restore,
-or requesting candidate options against an older broker/flow. Remove
-`--delete-source`: Object Storage originals must remain, and filesystem-source
-moves already perform their verified cleanup. For unsupported Prefect packing
-options, use the ordinary route, or change
-the operation to one the Prefect route supports. `--pack` and `--pack-small`
-also cannot be combined.
+| Option | Ordinary / Slurm | Existing allocation | Prefect |
+| --- | --- | --- | --- |
+| `--archive` | Automatic directory archive | Yes | Requires new automatic-plan flow |
+| `--include / --exclude` | Recursive filename globs | Yes | Up to 100 plain globs; updated broker for exclusions |
+| `--pack tar/gzip` | One exact archive target | Yes | Archive only; matching broker/flow |
+| `--pack-small` | Legacy selective small-file packing | Yes | Archive only; matching broker/flow |
+| `--chunk-size SIZE` | Regular file or new archive | Yes | Archive only; matching broker/flow |
+| `--job-size small/large` | No | No | Restore reservation override |
+| `--local` | Requires allocation | Guard only | No |
+| `--detach` | Submit another Slurm job | Submit another job | No |
+| `--wait` | Wait for completion | Yes | Yes |
+| `--dry-run` | No writes/submission | Yes | Local preview or supported managed plan |
+| `--delete-source` | Rejected | Rejected | Rejected |
 
-If a Prefect exclusion request reports an unsupported submission field or says
-exclusions are not enabled, the site's broker or flows still need updating.
-Keep the exclusion and use the ordinary route until that update is installed;
-removing it would change which files you transfer or delete.
+Do not combine `--archive` with `--pack`, `--pack-small` or `--chunk-size`.
+Restore without encoding flags. `--detach`, `--local` and `--prefect` are
+mutually exclusive; so are `--pack` and `--pack-small`.
 
-### The destination already exists
+### Exact archives and legacy small-file packing
 
-An identical destination may be reused after independent verification. A
-different file or incompatible metadata is retained and reported. Do not delete
-or overwrite it to make a retry pass. Choose a new destination or reconcile the
-existing object first.
+`--pack tar` creates one uncompressed archive at the exact
+`.gbi.tar` target; `--pack gzip` uses an exact `.gbi.tar.gz` target.
+Explicit gzip is available when compression is worth its CPU cost.
+Automatic archives use tar; they do not guess that checkpoints compress well.
 
-### The source changed or is not stable
+`--pack-small` is the older selective-packing mode. Its usual site defaults
+are at most 64 KiB per file, at least 40 files per group and at most 1 GiB per
+archive. Larger siblings remain loose. Its bounded `--dry-run` can report
+an incomplete lower-bound inventory; that is not authorization to archive
+or delete anything. Prefer `--archive` for a saved whole-directory layout.
 
-GBI retains a source when its type, size, timestamps, inode identity or checksum
-no longer matches the observed request. Stop writers, create a new snapshot or
-retry after the application has finished writing. Do not remove `.gbi` locks or
-partial output to force progress.
+The archive format limits both manifest and source-observation metadata to
+64 MiB. Explicit whole-directory packing may exceed that limit even for a
+small payload. Automatic archives split such directories internally. A larger
+chunk size does not increase the metadata limit.
 
-### Archive metadata exceeds the limit
+### Explicit chunks and restore reservation
 
-The 64 MiB limit concerns archive metadata, not just payload bytes. Use
-`--pack-small --dry-run`, reduce the selected folder, or pack separate smaller
-folders. A larger `--chunk-size` does not solve an oversized archive manifest.
+`--chunk-size 64MiB` writes verified resumable parts with a final manifest
+and completion marker. For a direct file, give the original destination name
+without `.gbi-chunks`; GBI adds that suffix. Whole-pack targets keep their
+`.gbi.tar` or `.gbi.tar.gz` suffix and gain `.gbi-chunks` as well.
+An incomplete store is not restorable before its completion marker validates.
 
-### Status cannot choose a transfer
+Raw-file chunks preserve content and filename, not POSIX modes or timestamps.
+Archive chunks retain archive member metadata. Mutable journals and optional
+archive staging use configured Lustre scratch, not local temporary disk.
 
-A numeric allocation ID can refer to several transfers. Use one of the exact
-transfer IDs printed when those transfers started. If the transfer is already
-published, the exact ID remains the lookup key. Older module records without
-allocation metadata may only be reachable by that exact ID.
+`--job-size small` requests 2 CPUs/16 GiB for a Prefect restore;
+`large` requests 8 CPUs/48 GiB. Omit it to retain the deployment setting.
+It changes neither the time limit nor the caller's allocation and does not
+guarantee immediate scheduling. Python uses `job_size="small"` or
+`job_size="large"`.
 
-### A Prefect request is “not confirmed”
+## Troubleshooting and records
 
-The broker reply may have been lost after submission. Keep the printed transfer
-ID and run `gbi data status TRANSFER_ID`. If no submitted run is found, use
-`gbi data retry TRANSFER_ID` once. Do not use retry to repeat a flow that is
-already reported as failed; inspect its receipts and follow the owner's retry
-procedure.
+If a destination differs, keep it and inspect the collision. If a source
+changed, stop writers and inspect the saved request before retrying.
+If a site rejects a requested option, keep its intended selection and use
+a supported route rather than silently changing which files will move.
 
-### A mount wait or worker deadline expires
+For a mount wait, worker deadline or missing terminal summary, retain the
+printed phase, path, receipt location and Slurm log. Confirm process state;
+do not infer completion or cancellation from a transport timeout.
 
-Read the phase, path, receipt directory and Slurm log from the error. A timeout
-does not prove that a kernel I/O operation stopped. Confirm the job and worker
-processes have ended before rerunning. Counts printed during discovery or active
-copying may be incomplete.
+Active state is private under `.gbi` on Lustre. Completed ordinary history
+is published under the user's Object Storage mount at
+`.gbi/transfers/PARENT_ID/TRANSFER_ID/`. The parent is the Slurm job/allocation
+ID, or the transfer ID for a foreground run. Follow the printed history path.
+Requests record code identity and route parameters; receipts record
+verification and deletion evidence. Prefect publishes its managed receipts
+through its own maintained flow.
 
-### Python raises `CalledProcessError`
-
-The CLI returned a nonzero result. The exception is not an automatic retry
-signal. Inspect the command's receipts and saved output. Python waits for the
-same result as the shell command and uses the same route restrictions.
-
-## Data layout and terms
-
-Active request state lives under the private `.gbi` directory on the Lustre
-scratch root. Completed history is published below the user's Object Storage mount under
-`.gbi/transfers/PARENT_ID/TRANSFER_ID/`. For a Slurm or existing-allocation run,
-`PARENT_ID` is the native Slurm allocation/job ID; for a foreground run it is
-the transfer ID itself. Follow the exact history path printed by the command
-and use the printed transfer ID with `status`. The request stores
-the code hash and route parameters used for the transfer. A receipt records source and
-destination identity, checksums, verification events and deletion events.
-
-A **plain transfer** is the normal per-file copy or move. A **GBI archive** is a
-marked tar or gzip container with a manifest and relative member paths. A
-**chunk store** is a manifest plus verified parts for one logical regular file.
-A **source fingerprint** is the metadata identity checked before deletion.
-**Readback** is reopening the destination and verifying it independently.
-**Object Storage originals** are the files exposed through the personal
-Alluxio/Object Storage mount. **Prefect route** means a direct Object Storage
-migration submitted through the site's identity-bound broker.
-
-GBI protects sources through per-file verification and source rechecks. It does
-not promise atomic whole-tree transactions: a large transfer can have verified
-completed files while discovery or another file is still pending. Receipts and
-terminal state are required to understand what happened.
+An archive may finish before the rest of a dataset. A complete recovery means
+every selected path is accounted for, the destination is independently
+verified and its original directory layout is recoverable.

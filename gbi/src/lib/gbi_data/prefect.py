@@ -70,11 +70,14 @@ def prepare(options, site):
     else:
         raise ValueError("--prefect needs one personal Object Storage path and one personal Lustre or FSS path")
     pack, pack_small = getattr(options, "pack", None), getattr(options, "pack_small", False)
+    archive_auto = getattr(options, "archive", False)
+    if archive_auto and (pack or pack_small or getattr(options, "chunk_size", None) is not None):
+        raise ValueError("--archive chooses packing and part sizes; omit --pack, --pack-small and --chunk-size")
     if pack not in (None, "tar", "gzip") or type(pack_small) is not bool:
         raise ValueError("packing requires --pack tar/gzip or --pack-small")
     if pack and pack_small:
         raise ValueError("choose --pack or --pack-small, not both")
-    if (pack or pack_small) and not operation.startswith("archive-"):
+    if (archive_auto or pack or pack_small) and not operation.startswith("archive-"):
         raise ValueError("packing is supported only for Prefect archives from Lustre or FSS")
     chunk_size = getattr(options, "chunk_size", None)
     if chunk_size is not None and (type(chunk_size) is not int or chunk_size < 1
@@ -100,6 +103,8 @@ def prepare(options, site):
     # selection field rather than silently submit a broader transfer.
     if options.exclude:
         request["exclude"] = options.exclude
+    if archive_auto:
+        request["archive_auto"] = True
     if job_size is not None:
         request["job_size"] = job_size
     if pack:
@@ -131,7 +136,7 @@ def prepare(options, site):
             max_entries=int(site.values["inline_scan_entries"]),
             max_seconds=float(site.values["inline_probe_seconds"]),
         ))
-    if options.dry_run and (pack or pack_small or chunk_size is not None):
+    if options.dry_run and (archive_auto or pack or pack_small or chunk_size is not None):
         request["dry_run"] = True
     return request
 
@@ -294,6 +299,8 @@ def submit(run_dir, site, wait=False):
 def start(options, site, home):
     request = prepare(options, site)
     print(f"Prefect {request['operation']}: {request['source']} → {request['destination']}")
+    if request.get("archive_auto"):
+        print("Archive directory: automatic packing and part sizes; one saved destination layout.")
     if "job_size" in request:
         print(f"Restore job size: {request['job_size']}")
     if "archive_format" in request:
