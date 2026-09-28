@@ -8,10 +8,10 @@ destination before removing an eligible filesystem source. Object Storage is
 the durable store: normal moves and restores always retain its originals.
 
 This guide describes the installed **0.4.11 release**, accepted for ordinary
-users on 27 September 2026. Check `gbi --version` and the
-[README](../README.md) before using new options. The automatic archive option
-also needs matching broker and flow support when used with Prefect; automatic
-`--archive --prefect` remains candidate work and is not yet deployed.
+users on 28 September 2026. Check `gbi --version` and the
+[README](../README.md) before using new options. Its matching typed broker and
+production FSS/Lustre archive and restore flows are deployed and accepted,
+including automatic `--archive --prefect`.
 
 ## Start here
 
@@ -195,13 +195,11 @@ gbi data copy /your/fss/experiment /your/object/saved-experiment --prefect --wai
 gbi data copy /your/object/saved-experiment /your/lustre/restored --prefect --wait
 ```
 
-The default writes individual objects. Renamed FSS destinations, exclusions,
-restore reservation overrides and portable archive options need matching
-broker and flow versions. Automatic `--archive --prefect` is still candidate
-work until its persistent plan and retry execution are enabled. The installed
-typed broker also has a separate activation step. The CLI refuses unsupported
-requested options before submission; do not remove a filter just to bypass
-that refusal.
+The default writes individual objects. The deployed typed broker and production
+flows accept renamed FSS destinations, exclusions, restore reservation
+overrides, portable archive options and automatic `--archive --prefect`.
+The CLI refuses unsupported requested options before submission; do not remove
+a filter just to bypass that refusal.
 
 Plain `--prefect --dry-run` is a local preview and submits nothing.
 Supported packing/chunking previews submit a managed metadata-only plan:
@@ -329,11 +327,11 @@ using them; `gbi data copy --help-all` exposes them.
 
 | Option | Ordinary / Slurm | Existing allocation | Prefect |
 | --- | --- | --- | --- |
-| `--archive` | Automatic directory archive | Yes | Requires new automatic-plan flow |
-| `--include / --exclude` | Recursive filename globs | Yes | Up to 100 plain globs; updated broker for exclusions |
-| `--pack tar/gzip` | One exact archive target | Yes | Archive only; matching broker/flow |
-| `--pack-small` | Legacy selective small-file packing | Yes | Archive only; matching broker/flow |
-| `--chunk-size SIZE` | Regular file or new archive | Yes | Archive only; matching broker/flow |
+| `--archive` | Automatic directory archive | Yes | Production archive flows |
+| `--include / --exclude` | Recursive filename globs | Yes | Up to 100 plain globs |
+| `--pack tar/gzip` | One exact archive target | Yes | Archive only |
+| `--pack-small` | Legacy selective small-file packing | Yes | Archive only |
+| `--chunk-size SIZE` | Regular file or new archive | Yes | Archive only |
 | `--job-size small/large` | No | No | Restore reservation override |
 | `--local` | Requires allocation | Guard only | No |
 | `--detach` | Submit another Slurm job | Submit another job | No |

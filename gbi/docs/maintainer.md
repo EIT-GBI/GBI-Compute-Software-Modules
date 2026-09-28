@@ -130,8 +130,8 @@ harness rules.
 `pyproject.toml` builds the existing `gbi_data` archive implementation as the
 dependency-free `gbi-archive-codec` wheel. The package boundary reuses
 `gbi_data.archives` and its selection helper without copying codec source; the
-candidate Prefect Object Storage backend consumes the same codec package; its
-publication, image pin and runtime acceptance are separate from local tests.
+deployed Prefect Object Storage backend consumes the same codec package. Image
+publication, deployment and runtime acceptance remain separate from local tests.
 It contains no
 installed CLI executable or `gbi` SDK; researchers should load the normal module.
 From the repository root, test the isolated wheel with an interpreter that has
@@ -185,7 +185,7 @@ SHA-256 and full-stream checks; callers must drain the reader to verify the full
 stream and separately pin/recheck remote metadata. The filesystem default is
 unchanged.
 
-The 0.4.9 candidate broker forwards positive integer `chunk_size` only for
+The deployed 0.4.11 broker forwards positive integer `chunk_size` only for
 archives; default `None` is omitted. For an un-packed direct regular file, the
 CLI verifies personal-root metadata without symlink traversal and sends
 `source_is_file=True`; otherwise it omits the field. The backend validates the
