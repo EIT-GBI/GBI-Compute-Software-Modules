@@ -11,13 +11,14 @@ Python, selection, recovery and expert options.
 
 ## Release status
 
-The **0.4.11 CLI is installed and ordinary-user accepted**, checked on
-27 September 2026. It adds automatic directory archiving and simpler
-everyday help. Existing jobs and explicitly loaded older modules are
-unchanged. The typed Prefect broker still needs activation: automatic
-`--archive --prefect` remains candidate work and is not yet deployed. A module
-version alone does not establish every Prefect option; unsupported requests
-fail rather than silently changing the operation.
+The **0.4.11 CLI and typed Prefect broker are deployed and ordinary-user
+accepted**, checked on 28 September 2026. Automatic `--archive --prefect`,
+selection filters, portable archive formats, distinct destinations and small
+restore reservations are active through the production FSS and Lustre archive
+and restore flows. Existing jobs and explicitly loaded older modules are
+unchanged. Object Storage originals and versions remain retained. A published
+module or image alone does not establish runtime acceptance; unsupported
+requests fail rather than silently changing the operation.
 
 ## Everyday commands
 
