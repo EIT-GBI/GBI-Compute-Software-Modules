@@ -289,7 +289,11 @@ class _ChunkGuard:
     calls and never finished for archives with tens of thousands of entries and
     a hundred parts. The complete check now runs on the first call, again at
     most once per ``interval`` seconds, and once more from ``final`` after the
-    last unlink; every other call re-fingerprints only the manifest file.
+    last unlink; every other call is free. (0.4.12 re-fingerprinted the
+    manifest file on every call as a cheap tripwire; on the personal Alluxio
+    FUSE mounts, ``attr_timeout=0`` turns that one ``lstat`` into a master
+    round trip per path component, and job 591521's 136,542-entry unit still
+    removed only eight files per second.)
     """
 
     def __init__(self, store, snapshot, interval=CHUNK_GUARD_INTERVAL_SECONDS, clock=time.monotonic):
@@ -308,9 +312,6 @@ class _ChunkGuard:
             self.last_complete = now
             self.complete_checks += 1
             return
-        manifest_path = str(self.store / "manifest.json")
-        if fingerprint(Path(manifest_path)) != self.snapshot[1][manifest_path]:
-            raise ValueError("verified chunk destination changed; remaining sources retained")
         self.cheap_checks += 1
 
     def final(self):

@@ -42,16 +42,32 @@ class ChunkGuardThrottle(unittest.TestCase):
             self.assertEqual(complete.call_count, 3)
             complete.assert_called_with(self.store, self.snapshot)
 
-    def test_cheap_check_still_trips_on_manifest_change(self):
-        with patch.object(formats, "_require_chunk_snapshot"):
+    def test_calls_between_complete_checks_touch_nothing(self):
+        guard = formats._ChunkGuard(self.store, self.snapshot, interval=60, clock=self.clock)
+        with patch.object(formats, "_require_chunk_snapshot") as complete:
+            guard()
+        with patch.object(formats, "_require_chunk_snapshot") as complete, \
+                patch.object(formats, "fingerprint") as fp, \
+                patch.object(formats.chunks, "read_manifest") as rm, \
+                patch.object(Path, "lstat", autospec=True) as lstat:
+            for _ in range(200):
+                self.now += 0.01
+                guard()
+            self.assertEqual((complete.call_count, fp.call_count, rm.call_count, lstat.call_count), (0, 0, 0, 0))
+        self.assertEqual(guard.cheap_checks, 200)
+
+    def test_interval_check_runs_the_complete_check_and_reports_a_change(self):
+        with patch.object(formats, "_require_chunk_snapshot",
+                          side_effect=[None, ValueError("verified chunk destination changed")]) as complete:
             guard = formats._ChunkGuard(self.store, self.snapshot, interval=60, clock=self.clock)
             guard()
-            self.now += 1
+            self.now += 59
             guard()
-            (self.store / "manifest.json").write_text('{"changed": true}')
-            self.now += 1
+            self.assertEqual(complete.call_count, 1)
+            self.now += 2
             with self.assertRaisesRegex(ValueError, "verified chunk destination changed"):
                 guard()
+            self.assertEqual(complete.call_count, 2)
 
     def test_final_check_reports_a_changed_part(self):
         guard = formats._ChunkGuard(self.store, self.snapshot, interval=60, clock=self.clock)
