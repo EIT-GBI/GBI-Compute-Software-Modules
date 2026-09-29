@@ -12,7 +12,13 @@ Python, selection, recovery and expert options.
 ## Release status
 
 The **0.4.11 CLI and typed Prefect broker are deployed and ordinary-user
-accepted**, checked on 28 September 2026. Automatic `--archive --prefect`,
+accepted**, checked on 28 September 2026. **0.4.12** is a maintenance release
+for large archive moves: the chunk-store cleanup guard no longer re-checks
+every part before every unlinked entry (it runs on the first entry, once a
+minute and once after the last unlink), and shared lock stripes widen from
+4,096 to 65,536 so an hours-long archive pack no longer blocks unrelated file
+moves that hash to the same stripe. Formats, receipts and journals are
+unchanged. Automatic `--archive --prefect`,
 selection filters, portable archive formats, distinct destinations and small
 restore reservations are active through the production FSS and Lustre archive
 and restore flows. Existing jobs and explicitly loaded older modules are

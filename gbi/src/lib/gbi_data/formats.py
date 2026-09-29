@@ -18,7 +18,7 @@ import time
 
 from . import archives, chunks, packing
 from .selection import matches
-from .storage import fingerprint
+from .storage import fingerprint, lock_stripe
 from .transfer import archive_result, check_parent, digest, ensure_parent, receipt, validate_source_retention, write_json
 
 
@@ -277,6 +277,48 @@ def _require_chunk_snapshot(store, snapshot):
         raise ValueError("verified chunk destination changed; remaining sources retained")
 
 
+CHUNK_GUARD_INTERVAL_SECONDS = 60.0
+
+
+class _ChunkGuard:
+    """Destination stability guard for chunk stores during source cleanup.
+
+    ``archives.cleanup_source`` calls the guard before every unlink. The complete
+    check re-reads the manifest and fingerprints every part through the
+    destination mount, so running it per entry cost O(entries x parts) mount
+    calls and never finished for archives with tens of thousands of entries and
+    a hundred parts. The complete check now runs on the first call, again at
+    most once per ``interval`` seconds, and once more from ``final`` after the
+    last unlink; every other call re-fingerprints only the manifest file.
+    """
+
+    def __init__(self, store, snapshot, interval=CHUNK_GUARD_INTERVAL_SECONDS, clock=time.monotonic):
+        self.store = Path(store)
+        self.snapshot = snapshot
+        self.interval = interval
+        self.clock = clock
+        self.last_complete = None
+        self.complete_checks = 0
+        self.cheap_checks = 0
+
+    def __call__(self):
+        now = self.clock()
+        if self.last_complete is None or now - self.last_complete >= self.interval:
+            _require_chunk_snapshot(self.store, self.snapshot)
+            self.last_complete = now
+            self.complete_checks += 1
+            return
+        manifest_path = str(self.store / "manifest.json")
+        if fingerprint(Path(manifest_path)) != self.snapshot[1][manifest_path]:
+            raise ValueError("verified chunk destination changed; remaining sources retained")
+        self.cheap_checks += 1
+
+    def final(self):
+        _require_chunk_snapshot(self.store, self.snapshot)
+        self.last_complete = self.clock()
+        self.complete_checks += 1
+
+
 def _path_snapshot(target, manifest=None):
     paths = [target]
     if manifest is not None:
@@ -417,7 +459,7 @@ def transfer(task):
         return hashlib.sha256(json.dumps(stable, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 
     settle = task.get("settle_seconds", 0) if task["target_kind"] == "alluxio" else 0
-    lock_fd = os.open(state / "locks" / key[:3], os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+    lock_fd = os.open(state / "locks" / lock_stripe(key), os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
     with os.fdopen(lock_fd, "a+") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
         journal = {"intent": intent}
@@ -542,11 +584,13 @@ def transfer(task):
                     cleanup = {"freed_bytes": 0}
                 else:
                     snapshot = _chunk_snapshot(target) if task.get("chunk_size") else None
-                    guard = (lambda: _require_chunk_snapshot(target, snapshot)) if snapshot else None
+                    guard = _ChunkGuard(target, snapshot) if snapshot else None
                     cleanup = (archives.resume_cleanup_source(source, manifest, stored, destination_unchanged=guard)
                                if resumed_cleanup else
                                {"removed": archives.cleanup_source(source, manifest, stored, destination_unchanged=guard),
                                 "freed_bytes": _source_bytes(manifest)})
+                    if guard is not None:
+                        guard.final()
                 freed_bytes = cleanup["freed_bytes"]
             elif action == "restore_chunks":
                 destination_snapshot = _path_snapshot(target, manifest if is_archive else None)

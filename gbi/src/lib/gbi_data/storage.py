@@ -108,6 +108,18 @@ def overlap(first, second):
     return first == second or first in second.parents or second in first.parents
 
 
+# Lock stripes are shared by every transfer of one user on one scratch root.
+# A stripe is held for the whole unit, so a multi-hour archive pack blocks any
+# unrelated file whose target hashes to the same stripe. Four hex digits give
+# 65,536 stripes (at most that many lock files) instead of 4,096.
+LOCK_STRIPE_HEX = 4
+
+
+def lock_stripe(key):
+    """Return the fixed lock stripe name for a sha256 hex target key."""
+    return key[:LOCK_STRIPE_HEX]
+
+
 def fingerprint(path):
     info = path.lstat()
     # Permission repairs change ctime without changing the data. The source's
