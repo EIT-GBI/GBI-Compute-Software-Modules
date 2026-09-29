@@ -1,4 +1,4 @@
-"""Chunk-store cleanup guard cost and shared lock stripe width."""
+"""Cleanup guard cost (chunk stores and plain stored archives) and shared lock stripe width."""
 
 import hashlib
 import json
@@ -102,6 +102,81 @@ class ChunkedPackCleanupCost(unittest.TestCase):
         # First call, the final call and at most one interval-driven recheck for 40 entries.
         self.assertLessEqual(len(calls), 3, calls)
         self.assertGreaterEqual(len(calls), 2, calls)
+
+
+class StoredArchiveGuardThrottle(unittest.TestCase):
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.stored = Path(self.temporary.name).resolve() / "bundle.gbi.tar"
+        self.stored.write_bytes(b"tar" * 100)
+        self.now = 1000.0
+
+    def clock(self):
+        return self.now
+
+    def test_lstat_runs_first_then_at_most_once_per_interval(self):
+        guard = formats._StoredArchiveGuard(self.stored, interval=60, clock=self.clock)
+        with patch.object(Path, "lstat", wraps=Path.lstat, autospec=True) as lstat:
+            guard()
+            self.assertEqual(lstat.call_count, 1)
+            for _ in range(500):
+                self.now += 0.01
+                guard()
+            self.assertEqual(lstat.call_count, 1)
+            self.assertEqual(guard.cheap_checks, 500)
+            self.now += 60
+            guard()
+            self.assertEqual(lstat.call_count, 2)
+            guard.final()
+            self.assertEqual(lstat.call_count, 3)
+        self.assertEqual(guard.complete_checks, 3)
+
+    def test_final_check_reports_a_changed_archive(self):
+        guard = formats._StoredArchiveGuard(self.stored, interval=60, clock=self.clock)
+        guard()
+        self.stored.write_bytes(b"replaced")
+        with self.assertRaisesRegex(ValueError, "stored archive changed"):
+            guard.final()
+
+    def test_interval_check_reports_a_changed_archive(self):
+        guard = formats._StoredArchiveGuard(self.stored, interval=60, clock=self.clock)
+        guard()
+        self.stored.unlink()
+        self.stored.write_bytes(b"tar" * 100)
+        self.now += 61
+        with self.assertRaisesRegex(ValueError, "stored archive changed"):
+            guard()
+
+
+class PlainPackCleanupCost(ChunkedPackCleanupCost):
+    """An unchunked archive move must not lstat the stored archive per unlinked entry."""
+
+    def task(self, **overrides):
+        return super().task(chunk_size=None, **overrides)
+
+    # The inherited chunked case does not apply; a non-callable attribute is not collected.
+    test_chunked_pack_move_cleans_up_with_bounded_complete_checks = None
+
+    def test_plain_pack_move_cleans_up_with_bounded_lstat_checks(self):
+        real = formats._StoredArchiveGuard
+        guards = []
+
+        def recording(*args, **kwargs):
+            guards.append(real(*args, **kwargs))
+            return guards[-1]
+
+        with patch.object(formats, "_StoredArchiveGuard", side_effect=recording):
+            result = transfer(self.task())
+        self.assertTrue(result["deleted"])
+        self.assertEqual(sorted(path.name for path in self.source.iterdir()), [])
+        rows = [json.loads(line) for line in (self.base / "receipts.jsonl").read_text().splitlines()]
+        self.assertEqual([row["event"] for row in rows], ["verified", "deleted"])
+        self.assertEqual(len(guards), 1)
+        # First call, the final call and at most one interval-driven recheck for 40 entries.
+        self.assertLessEqual(guards[0].complete_checks, 3)
+        self.assertGreaterEqual(guards[0].complete_checks, 2)
+        self.assertGreaterEqual(guards[0].cheap_checks, 39)
 
 
 class LockStripes(unittest.TestCase):
