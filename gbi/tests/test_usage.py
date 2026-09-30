@@ -52,7 +52,11 @@ class Usage(unittest.TestCase):
         self.temp.cleanup()
 
     def test_report_reads_owner_snapshot_read_only_and_labels_partial(self):
-        with patch("gbi_data.usage._quota", return_value="/mnt/lustre 3G 0 0 - 30 0 0 -"):
+        with patch("gbi_data.usage._quota", return_value={
+            "status": "available", "filesystem": "/mnt/lustre", "used": "3G",
+            "quota": "0", "limit": "0", "grace": "-", "files": "30",
+            "file_quota": "0", "file_limit": "0", "file_grace": "-",
+        }):
             result = usage.report(self.site, None, 1, 20)
         self.assertEqual(result["summary"], (3000, 30))
         self.assertEqual(result["rows"], [("project", 2000, 20), ("deleted", 500, 5)])
@@ -104,7 +108,9 @@ class Usage(unittest.TestCase):
                     "/mnt/lustre\n"
                     "85.2G 0 0 - 2888 0 0 -\n"),
         )
-        self.assertIn("filesystem=/mnt/lustre used=85.2G", usage._quota(self.site))
+        quota = usage._quota(self.site)
+        self.assertEqual((quota["filesystem"], quota["used"], quota["files"]),
+                         ("/mnt/lustre", "85.2G", "2888"))
         self.assertEqual(run.call_args.args[0][4], str(os.getuid()))
 
     def test_malformed_snapshot_time_is_rejected_and_future_is_not_fresh(self):
@@ -118,19 +124,93 @@ class Usage(unittest.TestCase):
         self.assertEqual(usage._age(usage._timestamp("2999-01-01T00:00:00Z")), "future timestamp")
         self.assertIsNone(usage._timestamp("2026-09-23T12:00:00"))
 
+    def test_partial_publication_names_unreadable_folders(self):
+        database = self.root / ".gbi" / "usage.sqlite3"
+        connection = sqlite3.connect(database)
+        connection.execute("UPDATE metadata SET value = 'partial' WHERE key = 'status'")
+        connection.execute("INSERT INTO metadata VALUES ('unreadable_directories', '6')")
+        connection.commit()
+        connection.close()
+        with patch("gbi_data.usage._quota", return_value={"status": "unavailable", "detail": "x"}):
+            result = usage.report(self.site, None, 1, 20)
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            usage.print_report(result, 1, 20)
+        self.assertIn("partial; 6 folders you cannot open were not scanned", output.getvalue())
+
+    def test_lfs_human_sizes_use_the_report_units(self):
+        self.assertEqual(usage._lfs_size("85.2G"), "85.2 GiB")
+        self.assertEqual(usage._lfs_size("12.5T*"), "12.5 TiB")
+        self.assertEqual(usage._lfs_size("2048"), "2.0 MiB")
+        self.assertEqual(usage._limit("0k"), "--")
+        self.assertEqual(usage._lfs_size("junk"), "--")
+
     def test_control_characters_are_escaped_for_terminal_output(self):
         self.assertEqual(usage._display_path("folder\tname\nnext"), "folder\\tname\\nnext")
 
     def test_live_quota_survives_missing_cache(self):
         self.root.joinpath(".gbi", "usage.sqlite3").unlink()
-        with patch("gbi_data.usage._quota", return_value="whole-filesystem UID row: /mnt/lustre 1G"):
+        with patch("gbi_data.usage._quota", return_value={
+            "status": "available", "filesystem": "/mnt/lustre", "used": "1G",
+            "quota": "0", "limit": "0", "grace": "-", "files": "2",
+            "file_quota": "0", "file_limit": "0", "file_grace": "-",
+        }):
             result = usage.report(self.site, None, 1, 20)
         self.assertIsNone(result["summary"])
         output = io.StringIO()
         with contextlib.redirect_stdout(output):
             usage.print_report(result, 1, 20)
-        self.assertIn("whole-filesystem UID row", output.getvalue())
-        self.assertIn("No cached folder report is available", output.getvalue())
+        self.assertIn("live UID quota", output.getvalue())
+        self.assertIn("No published Lustre folder inventory is available", output.getvalue())
+
+    def test_report_formats_lustre_and_fss_as_aligned_storage_summary(self):
+        database = self.root / ".gbi" / "usage.sqlite3"
+        connection = sqlite3.connect(database)
+        connection.executemany("INSERT INTO metadata VALUES (?, ?)", [
+            ("fss_used_bytes", str(12 * 1024**3)),
+            ("fss_limit_bytes", str(1024**5)),
+            ("fss_files", "12345"),
+            ("fss_observed_at", "2026-09-23T12:00:00Z"),
+            ("fss_source", "OCI per-UID usage"),
+        ])
+        connection.commit()
+        connection.close()
+        quota = {
+            "status": "available", "filesystem": "/mnt/lustre", "used": "85.2G",
+            "quota": "0", "limit": "0", "grace": "-", "files": "2888",
+            "file_quota": "0", "file_limit": "0", "file_grace": "-",
+        }
+        with patch("gbi_data.usage._quota", return_value=quota):
+            result = usage.report(self.site, None, 1, 20)
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            usage.print_report(result, 1, 20)
+        rendered = output.getvalue()
+        self.assertIn("Storage summary", rendered)
+        self.assertRegex(rendered, r"Lustre\s+85\.2 GiB")
+        self.assertFalse(any(line != line.rstrip() for line in rendered.splitlines()))
+        self.assertIn("FSS", rendered)
+        self.assertIn("12.0 GiB", rendered)
+        self.assertIn("1.0 PiB", rendered)
+        self.assertIn("12,345", rendered)
+        self.assertIn("Folder", rendered)
+        self.assertNotIn("filesystem=/mnt/lustre", rendered)
+
+    def test_missing_fss_measurement_is_explicit(self):
+        quota = {"status": "unavailable", "detail": "lfs is not installed"}
+        with patch("gbi_data.usage._quota", return_value=quota):
+            result = usage.report(self.site, None, 1, 20)
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            usage.print_report(result, 1, 20)
+        self.assertIn("not published", output.getvalue())
+
+    def test_long_folder_names_are_clipped_without_terminal_controls(self):
+        value = "x" * 80 + "\nnext"
+        clipped = usage._clip(value)
+        self.assertEqual(len(clipped), 56)
+        self.assertTrue(clipped.endswith("..."))
+        self.assertNotIn("\n", clipped)
 
     def test_open_failure_is_not_reported_as_an_unpublished_scan(self):
         with patch("gbi_data.usage.sqlite3.connect", side_effect=sqlite3.OperationalError("denied")):

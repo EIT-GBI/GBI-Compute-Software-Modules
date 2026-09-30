@@ -7,7 +7,7 @@ FSS and Object Storage. It runs with your Unix permissions and verifies the
 destination before removing an eligible filesystem source. Object Storage is
 the durable store: normal moves and restores always retain its originals.
 
-This guide describes the installed **0.4.14 release** (0.4.11 plus the archive-move cleanup and lock-stripe fixes), accepted for ordinary
+This guide describes the **0.4.15 release** (0.4.11 plus the archive-move cleanup and lock-stripe fixes of 0.4.12–0.4.14 and the readable usage summary of 0.4.15). The 0.4.11 transfer behaviour was accepted for ordinary
 users on 28 September 2026. Check `gbi --version` and the
 [README](../README.md) before using new options. Its matching typed broker and
 production FSS/Lustre archive and restore flows are deployed and accepted,
@@ -307,18 +307,50 @@ be actual booleans. `delete_source=False` is compatibility-only:
 
 ## Cached usage
 
-`usage` shows live UID quota when the Lustre client is available, plus a
-cached owner-scoped inventory snapshot:
+`usage` starts with an aligned storage summary, then lists your largest Lustre
+folders. It never scans a filesystem itself:
 
 ```bash
 gbi data usage
 gbi data usage results --depth 2 --limit 20
 ```
 
-The optional path must be below your own Lustre root. Depth and limit must
-be positive. The report shows capture time, age and incomplete/stale states.
-It reports logical apparent bytes, not allocated filesystem space, and does
-not recursively scan Lustre or start the separate inventory publisher.
+`results` in the second example is a directory below your Lustre root, not a
+subcommand. Depth and limit must be positive.
+
+```text
+Usage for /your/lustre
+
+Storage summary
+Tier        Used  Limit   Files  Measured by
+------  --------  -----  ------  -----------------------------------
+Lustre  85.2 GiB     --   2,888  live UID quota
+FSS     12.0 GiB     --      --  OCI FSS quota accounting, 2d old
+
+Lustre folder breakdown (complete snapshot 2026-09-27T02:00:00+00:00, 2d old)
+Apparent total: 64.0 GiB across 2,876 inventory entries
+Folder   Apparent size  Entries
+-------  -------------  -------
+results       60.0 GiB    2,000
+code           4.0 GiB      876
+```
+
+Where the numbers come from:
+
+- **Lustre** is your live UID quota from the Lustre client (`lfs`), for the
+  whole filesystem. It is read every time you run the command.
+- **FSS** is OCI's per-UID accounting for the shared FSS file system: logical
+  data bytes you own, excluding snapshots, with no file count. The site
+  records it when it publishes your snapshot, so its age is shown. It reads
+  `not published` until your first snapshot includes it.
+- **The folder breakdown** comes from the site's weekly inventory of your
+  Lustre root (Sunday 02:00 UTC). Sizes are apparent bytes, including
+  directory and symlink entries, not allocated space. A snapshot marked
+  `partial` could not open some folders in your root (for example ones owned
+  by a service account); the warning says how many.
+
+These are three different measurements, so they are not added together or
+compared as one total. A `Limit` of `--` means no limit applies.
 
 ## Expert options
 

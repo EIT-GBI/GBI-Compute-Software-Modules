@@ -21,7 +21,10 @@ tripwire, is a master round trip per path component and held 22,604- and
 136,542-entry moves to eight to twelve files per second), and shared lock
 stripes widen from 4,096 to 65,536 so an hours-long archive pack no longer
 blocks unrelated file moves that hash to the same stripe. Formats, receipts and
-journals are unchanged. Automatic `--archive --prefect`,
+journals are unchanged. **0.4.15** changes only `gbi data usage`: an aligned
+Lustre/FSS storage summary, readable sizes and counts, clipped folder names,
+and an explicit `not published` FSS state; transfer behaviour is identical to
+0.4.14. Automatic `--archive --prefect`,
 selection filters, portable archive formats, distinct destinations and small
 restore reservations are active through the production FSS and Lustre archive
 and restore flows. Existing jobs and explicitly loaded older modules are
@@ -42,6 +45,12 @@ gbi data move SOURCE DESTINATION --archive
 gbi data status TRANSFER_ID --watch
 gbi data usage --depth 1 --limit 20
 ```
+
+`usage` prints a compact Lustre/FSS summary followed by the largest folders
+from the latest published Lustre inventory. Lustre is your live UID quota; FSS
+and the folder report come from the snapshot the site publishes weekly
+(Sunday 02:00 UTC). It never starts a filesystem walk. FSS shows
+`not published` until your snapshot includes an OCI measurement.
 
 Use paths printed by `roots`. For directories, contents go inside the
 destination you name. For a single file, name its destination file or an

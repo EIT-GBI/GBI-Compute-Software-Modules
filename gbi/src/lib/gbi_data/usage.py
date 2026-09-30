@@ -91,16 +91,16 @@ def _age(timestamp):
 def _quota(site):
     command = shutil.which(site.values.get("lfs_bin", "lfs"))
     if not command:
-        return "unavailable (lfs is not installed)"
+        return {"status": "unavailable", "detail": "lfs is not installed"}
     try:
         result = subprocess.run(
             [command, "quota", "-h", "-u", str(os.getuid()), str(site.roots["lustre"])],
             capture_output=True, text=True, timeout=5, check=False,
         )
     except (OSError, subprocess.SubprocessError):
-        return "unavailable (lfs quota did not respond)"
+        return {"status": "unavailable", "detail": "lfs quota did not respond"}
     if result.returncode:
-        return "unavailable (lfs quota failed)"
+        return {"status": "unavailable", "detail": "lfs quota failed"}
     lines = [line.strip() for line in result.stdout.splitlines() if line.strip()]
     for index, line in enumerate(lines):
         if not line.startswith("/"):
@@ -111,9 +111,9 @@ def _quota(site):
         if len(tokens) >= 9:
             labels = ("filesystem", "used", "quota", "limit", "grace",
                       "files", "file_quota", "file_limit", "file_grace")
-            return " ".join(f"{label}={value}" for label, value in zip(labels, tokens[:9]))
-        return f"whole-filesystem UID quota: {' '.join(tokens)}"
-    return "unavailable (no quota row)"
+            return {"status": "available", **dict(zip(labels, tokens[:9]))}
+        return {"status": "unavailable", "detail": "malformed Lustre quota row"}
+    return {"status": "unavailable", "detail": "no Lustre quota row"}
 
 
 def _canonical_path(site, requested):
@@ -181,7 +181,7 @@ def report(site, requested, depth, limit):
 
 def _size(value):
     value = float(value)
-    units = ("B", "KiB", "MiB", "GiB", "TiB")
+    units = ("B", "KiB", "MiB", "GiB", "TiB", "PiB")
     index = 0
     while abs(value) >= 1024 and index < len(units) - 1:
         value /= 1024
@@ -193,21 +193,85 @@ def _display_path(path):
     return str(path).encode("unicode_escape").decode("ascii")
 
 
+def _lfs_size(value):
+    """Render an ``lfs quota -h`` value (``85.2G``) in the same units as FSS."""
+    value = str(value or "").rstrip("*")
+    scale = {"k": 1, "K": 1, "M": 2, "G": 3, "T": 4, "P": 5}
+    try:
+        if value[-1:] in scale:
+            return _size(float(value[:-1]) * 1024 ** scale[value[-1]])
+        return _size(float(value) * 1024)  # lfs reports bare numbers in KiB
+    except ValueError:
+        return "--"
+
+
+def _limit(value):
+    return "--" if not value or value in {"0", "0k", "0K", "-"} else _lfs_size(value)
+
+
+def _count(value):
+    try:
+        return f"{int(value):,}"
+    except (TypeError, ValueError):
+        return "--"
+
+
+def _clip(value, width=56):
+    value = _display_path(value)
+    return value if len(value) <= width else value[:width - 3] + "..."
+
+
+def _fss_row(metadata):
+    if not metadata or "fss_used_bytes" not in metadata:
+        return ["FSS", "--", "--", "--", "not published"]
+    observed = _timestamp(metadata.get("fss_observed_at"))
+    source = metadata.get("fss_source", "OCI per-UID usage")
+    if observed:
+        source = f"{_display_path(source)}, {_age(observed)}"
+    return [
+        "FSS", _size(metadata["fss_used_bytes"]),
+        _size(metadata["fss_limit_bytes"]) if metadata.get("fss_limit_bytes") else "--",
+        _count(metadata.get("fss_files")), source,
+    ]
+
+
+def _table(headers, rows, *, right=()):
+    widths = [max(len(str(value)) for value in [header, *(row[index] for row in rows)])
+              for index, header in enumerate(headers)]
+    for row in (headers, ["-" * width for width in widths], *rows):
+        print("  ".join(str(value).rjust(widths[index]) if index in right
+                        else str(value).ljust(widths[index])
+                        for index, value in enumerate(row)).rstrip())
+
+
 def print_report(result, depth, limit):
     metadata = result["metadata"]
-    print(f"Selected Lustre root: {_display_path(result['path'])}")
-    print(f"Lustre quota (live, whole-filesystem UID): {result['quota']}")
+    print(f"Usage for {_display_path(result['path'])}")
+    print("\nStorage summary")
+    quota = result["quota"]
+    if quota["status"] == "available":
+        lustre = ["Lustre", _lfs_size(quota["used"]), _limit(quota["limit"]),
+                  _count(quota["files"]), "live UID quota"]
+    else:
+        lustre = ["Lustre", "--", "--", "--", quota["detail"]]
+    _table(("Tier", "Used", "Limit", "Files", "Measured by"),
+           [lustre, _fss_row(metadata)], right={1, 2, 3})
     if result["summary"] is None:
-        print("No cached folder report is available yet. No filesystem scan was started.")
+        print("\nFolder breakdown\nNo published Lustre folder inventory is available."
+              " No filesystem scan was started.")
         return
     status = metadata.get("status", "complete")
     stamp = metadata["snapshot_at"]
     parsed_stamp = _timestamp(stamp)
-    print(f"Inventory apparent bytes ({status}, snapshot {stamp}, {_age(parsed_stamp)}): "
-          f"{_size(result['summary'][0])}; entries: {result['summary'][1]}")
+    print(f"\nLustre folder breakdown ({status} snapshot {stamp}, {_age(parsed_stamp)})")
+    print(f"Apparent total: {_size(result['summary'][0])} across "
+          f"{result['summary'][1]:,} inventory entries")
     if status == "partial":
-        print("Warning: this publication is partial; missing paths are not included.")
-    print("Folder\tApparent size\tEntries")
-    for path, apparent_bytes, entries in result["rows"]:
-        print(f"{_display_path(path)}\t{_size(apparent_bytes)}\t{entries} entries")
-    print("Snapshot totals include directory and symlink sizes; they are not allocated disk space.")
+        unreadable = _count(metadata.get("unreadable_directories"))
+        detail = (f"{unreadable} folders you cannot open were not scanned"
+                  if unreadable not in {"--", "0"} else "missing paths are not included")
+        print(f"Warning: this publication is partial; {detail}.")
+    rows = [[_clip(path), _size(apparent_bytes), f"{entries:,}"]
+            for path, apparent_bytes, entries in result["rows"]]
+    _table(("Folder", "Apparent size", "Entries"), rows, right={1, 2})
+    print("\nApparent sizes include directory and symlink entries; they are not allocated space.")
