@@ -124,6 +124,13 @@ class Usage(unittest.TestCase):
         self.assertEqual(usage._age(usage._timestamp("2999-01-01T00:00:00Z")), "future timestamp")
         self.assertIsNone(usage._timestamp("2026-09-23T12:00:00"))
 
+    def test_lfs_human_sizes_use_the_report_units(self):
+        self.assertEqual(usage._lfs_size("85.2G"), "85.2 GiB")
+        self.assertEqual(usage._lfs_size("12.5T*"), "12.5 TiB")
+        self.assertEqual(usage._lfs_size("2048"), "2.0 MiB")
+        self.assertEqual(usage._limit("0k"), "--")
+        self.assertEqual(usage._lfs_size("junk"), "--")
+
     def test_control_characters_are_escaped_for_terminal_output(self):
         self.assertEqual(usage._display_path("folder\tname\nnext"), "folder\\tname\\nnext")
 
@@ -166,7 +173,8 @@ class Usage(unittest.TestCase):
             usage.print_report(result, 1, 20)
         rendered = output.getvalue()
         self.assertIn("Storage summary", rendered)
-        self.assertRegex(rendered, r"Lustre\s+85\.2G")
+        self.assertRegex(rendered, r"Lustre\s+85\.2 GiB")
+        self.assertFalse(any(line != line.rstrip() for line in rendered.splitlines()))
         self.assertIn("FSS", rendered)
         self.assertIn("12.0 GiB", rendered)
         self.assertIn("1.0 PiB", rendered)

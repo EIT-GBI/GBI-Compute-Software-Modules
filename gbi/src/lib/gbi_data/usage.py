@@ -193,8 +193,20 @@ def _display_path(path):
     return str(path).encode("unicode_escape").decode("ascii")
 
 
+def _lfs_size(value):
+    """Render an ``lfs quota -h`` value (``85.2G``) in the same units as FSS."""
+    value = str(value or "").rstrip("*")
+    scale = {"k": 1, "K": 1, "M": 2, "G": 3, "T": 4, "P": 5}
+    try:
+        if value[-1:] in scale:
+            return _size(float(value[:-1]) * 1024 ** scale[value[-1]])
+        return _size(float(value) * 1024)  # lfs reports bare numbers in KiB
+    except ValueError:
+        return "--"
+
+
 def _limit(value):
-    return "--" if not value or value in {"0", "0k", "0K", "-"} else value
+    return "--" if not value or value in {"0", "0k", "0K", "-"} else _lfs_size(value)
 
 
 def _count(value):
@@ -215,7 +227,7 @@ def _fss_row(metadata):
     observed = _timestamp(metadata.get("fss_observed_at"))
     source = metadata.get("fss_source", "OCI per-UID usage")
     if observed:
-        source = f"{source}, {_age(observed)}"
+        source = f"{_display_path(source)}, {_age(observed)}"
     return [
         "FSS", _size(metadata["fss_used_bytes"]),
         _size(metadata["fss_limit_bytes"]) if metadata.get("fss_limit_bytes") else "--",
@@ -226,14 +238,10 @@ def _fss_row(metadata):
 def _table(headers, rows, *, right=()):
     widths = [max(len(str(value)) for value in [header, *(row[index] for row in rows)])
               for index, header in enumerate(headers)]
-    print("  ".join(str(header).rjust(widths[index]) if index in right
-                    else str(header).ljust(widths[index])
-                    for index, header in enumerate(headers)))
-    print("  ".join("-" * width for width in widths))
-    for row in rows:
+    for row in (headers, ["-" * width for width in widths], *rows):
         print("  ".join(str(value).rjust(widths[index]) if index in right
                         else str(value).ljust(widths[index])
-                        for index, value in enumerate(row)))
+                        for index, value in enumerate(row)).rstrip())
 
 
 def print_report(result, depth, limit):
@@ -242,7 +250,7 @@ def print_report(result, depth, limit):
     print("\nStorage summary")
     quota = result["quota"]
     if quota["status"] == "available":
-        lustre = ["Lustre", quota["used"], _limit(quota["limit"]),
+        lustre = ["Lustre", _lfs_size(quota["used"]), _limit(quota["limit"]),
                   _count(quota["files"]), "live UID quota"]
     else:
         lustre = ["Lustre", "--", "--", "--", quota["detail"]]

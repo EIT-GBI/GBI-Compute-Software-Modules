@@ -326,10 +326,10 @@ Usage for /mnt/lustre/users/alice
 Storage summary
 Tier        Used    Limit   Files  Measured by
 ------  --------  -------  ------  --------------------------
-Lustre     85.2G       --   2,888  live UID quota
+Lustre  85.2 GiB       --   2,888  live UID quota
 FSS     12.0 GiB  1.0 PiB  12,345  OCI per-UID usage, 2h old
 
-Lustre folder breakdown (complete snapshot, 2h old)
+Lustre folder breakdown (complete snapshot 2026-09-30T02:00:00+00:00, 2h old)
 Apparent total: 64.0 GiB across 2,876 inventory entries
 Folder   Apparent size  Entries
 -------  -------------  -------
