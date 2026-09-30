@@ -303,6 +303,7 @@ module dependencies from the `module load` lines of its `install.sh`.
 | `cc` | C/C++ compiler and binutils front ends over `zig cc`: `cc`, `c++`, `ar`, `ranlib` (+ `ld` on linux), pinned to the fleet's oldest glibc — a build-essential that needs nothing from the host, not even libc6-dev | no — a set of shims over the `zig` module, which it `depends_on`; versioned by that zig |
 | `make` | GNU make, built through the `cc` module's shims: no host compiler needed, and the binary runs on every host | no — the source build *is* the default: GNU make's tarball builds itself with its `build.sh`, no make required |
 | `cargo-zigbuild` | `cargo build` with zig as the linker — rust on hosts without a system linker; loading it also routes plain `cargo build` / `cargo install` and the `cc` crate through zig, pinned to the `cc` module's glibc floor | no — installed from the PyPI wheel with `uv`; `cargo install`ing it would need the very linker it provides |
+| `lustre-dlm` | per-owner Lustre usage collection (`lustre-dlm-usage`) behind the cached `gbi data usage` report; run weekly by the Prefect storage-usage flow | no — a pinned Lustre-DLM release tag (verified tarball digest) with its frozen `uv.lock` on a uv-managed Python; needs `uv` at build time |
 
 Upstream `eza` and `ncdu` ship no macOS binaries, so their default-mode recipes
 fail fast on darwin with a pointer to `make <target> MODE=build`.

@@ -1,0 +1,5 @@
+name = "lustre-dlm"
+
+relocate = true
+destination = "{SM_ROOT}/lustre-dlm"
+modules = "{SM_ROOT}/modules"
