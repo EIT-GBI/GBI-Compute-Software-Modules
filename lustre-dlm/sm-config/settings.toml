@@ -8,11 +8,11 @@ UV_PYTHON_INSTALL_DIR = "{SITE_DESTINATION}/python"
 VERSION = "{INSTALL_VERSION}"
 # The GitHub release tarball of that tag, and the commit it was cut from.
 # Bump all three together; install.sh refuses a tarball with another digest.
-LUSTRE_DLM_SHA256 = "0654b30bc6b6d620e766489120b01cc6541af2b4bba37b4d17ac494a0445c661"
-LUSTRE_DLM_COMMIT = "cbeec1bc6874c9722eb64bc998d03685f0abb0b3"
+LUSTRE_DLM_SHA256 = "1a105a32710f2b28bc7ff6a500e63ff1d64943f1d2fcb2bd10c48d923c3a6f97"
+LUSTRE_DLM_COMMIT = "0997f8db00f87a56510acbeee0ad483120034bad"
 
 [install]
-versions = ["0.2.2"]
+versions = ["0.2.3"]
 prefix = "{SITE_DESTINATION}"
 # note: this is Lua regex: you will need to escape - and + (using %)
 format = "^{INSTALL_VERSION_VARIANT}$"
