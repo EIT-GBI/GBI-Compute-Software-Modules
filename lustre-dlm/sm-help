@@ -1,0 +1,3 @@
+Lustre-DLM per-owner usage collection (lustre-dlm-usage), pinned release tag with a frozen venv
+installed with uv (build time) from the verified GitHub release tarball; runs on a uv-managed Python
+used by the weekly Prefect storage-usage flow; see https://github.com/EIT-GBI/Lustre-DLM

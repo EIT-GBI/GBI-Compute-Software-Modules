@@ -32,6 +32,7 @@ make parallel-tar
 make go
 make rclone
 make gbi
+make lustre-dlm         # needs uv (above)
 make java
 make nextflow
 # NO LFS on macOS -- Lustre client utilities are linux/amd64 only
