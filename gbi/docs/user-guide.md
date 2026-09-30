@@ -319,7 +319,7 @@ gbi data usage results --depth 2 --limit 20
 subcommand. Depth and limit must be positive.
 
 ```text
-Usage for /mnt/lustre/users/alice
+Usage for /your/lustre
 
 Storage summary
 Tier        Used  Limit   Files  Measured by
