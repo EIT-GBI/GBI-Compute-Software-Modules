@@ -21,7 +21,10 @@ tripwire, is a master round trip per path component and held 22,604- and
 136,542-entry moves to eight to twelve files per second), and shared lock
 stripes widen from 4,096 to 65,536 so an hours-long archive pack no longer
 blocks unrelated file moves that hash to the same stripe. Formats, receipts and
-journals are unchanged. Automatic `--archive --prefect`,
+journals are unchanged. **0.4.15** changes only `gbi data usage`: an aligned
+Lustre/FSS storage summary, readable sizes and counts, clipped folder names,
+and an explicit `not published` FSS state; transfer behaviour is identical to
+0.4.14. Automatic `--archive --prefect`,
 selection filters, portable archive formats, distinct destinations and small
 restore reservations are active through the production FSS and Lustre archive
 and restore flows. Existing jobs and explicitly loaded older modules are

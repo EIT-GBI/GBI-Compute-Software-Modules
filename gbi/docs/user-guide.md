@@ -7,7 +7,7 @@ FSS and Object Storage. It runs with your Unix permissions and verifies the
 destination before removing an eligible filesystem source. Object Storage is
 the durable store: normal moves and restores always retain its originals.
 
-This guide describes the installed **0.4.14 release** (0.4.11 plus the archive-move cleanup and lock-stripe fixes), accepted for ordinary
+This guide describes the **0.4.15 release** (0.4.11 plus the archive-move cleanup and lock-stripe fixes of 0.4.12–0.4.14 and the readable usage summary of 0.4.15). The 0.4.11 transfer behaviour was accepted for ordinary
 users on 28 September 2026. Check `gbi --version` and the
 [README](../README.md) before using new options. Its matching typed broker and
 production FSS/Lustre archive and restore flows are deployed and accepted,
