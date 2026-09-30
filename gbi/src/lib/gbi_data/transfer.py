@@ -14,7 +14,7 @@ import subprocess
 import sys
 import time
 
-from .storage import fingerprint, overlap
+from .storage import fingerprint, overlap, lock_stripe
 
 
 def validate_source_retention(task, storage_roots=()):
@@ -187,7 +187,7 @@ def transfer(task):
     journal = state / "pending" / (key + ".json")
     # Fixed lock stripes avoid leaving millions of lock files after a move.
     # Unfinished state is separate and removed only while the stripe is held.
-    with (state / "locks" / key[:3]).open("a+") as lock:
+    with (state / "locks" / lock_stripe(key)).open("a+") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
         check_parent(source, source_root)
         ensure_parent(target, target_root)
