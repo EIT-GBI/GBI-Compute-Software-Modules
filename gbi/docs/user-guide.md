@@ -307,18 +307,41 @@ be actual booleans. `delete_source=False` is compatibility-only:
 
 ## Cached usage
 
-`usage` shows live UID quota when the Lustre client is available, plus a
-cached owner-scoped inventory snapshot:
+`usage` starts with an aligned storage summary. Lustre comes from the live UID
+quota API when the client is available. FSS comes from the site's owner-scoped
+OCI usage publication; it is labelled `not published` when that measurement is
+not available. The command then shows the largest folders from a cached,
+owner-scoped Lustre inventory snapshot:
 
 ```bash
 gbi data usage
 gbi data usage results --depth 2 --limit 20
 ```
 
-The optional path must be below your own Lustre root. Depth and limit must
-be positive. The report shows capture time, age and incomplete/stale states.
-It reports logical apparent bytes, not allocated filesystem space, and does
-not recursively scan Lustre or start the separate inventory publisher.
+The default view is deliberately compact and aligned:
+
+```text
+Usage for /mnt/lustre/users/alice
+
+Storage summary
+Tier        Used    Limit   Files  Measured by
+------  --------  -------  ------  --------------------------
+Lustre     85.2G       --   2,888  live UID quota
+FSS     12.0 GiB  1.0 PiB  12,345  OCI per-UID usage, 2h old
+
+Lustre folder breakdown (complete snapshot, 2h old)
+Apparent total: 64.0 GiB across 2,876 inventory entries
+Folder   Apparent size  Entries
+-------  -------------  -------
+results       60.0 GiB    2,000
+code           4.0 GiB      876
+```
+
+The optional path must be below your own Lustre root. Depth and limit must be
+positive. The report shows capture time, age and incomplete/stale states.
+FSS and Lustre quota rows are allocation measurements; folder rows are logical
+apparent bytes and inventory entries. The command does not recursively scan
+either filesystem or start the separate inventory publisher.
 
 ## Expert options
 

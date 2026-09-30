@@ -43,6 +43,11 @@ gbi data status TRANSFER_ID --watch
 gbi data usage --depth 1 --limit 20
 ```
 
+`usage` prints a compact Lustre/FSS summary followed by the largest folders
+from the latest published Lustre inventory. It never starts a filesystem walk.
+FSS shows `not published` until the site usage publisher supplies owner-scoped
+OCI measurements.
+
 Use paths printed by `roots`. For directories, contents go inside the
 destination you name. For a single file, name its destination file or an
 existing destination directory.
