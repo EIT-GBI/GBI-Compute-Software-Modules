@@ -103,7 +103,7 @@ def parser(*, advanced=False):
         "data", help="move data, inspect transfer state, or report usage",
         description=("Public data commands. `copy` keeps the source; `move` removes only sources\n"
                      "whose verified deletion policy allows it. `status` and `retry` use a saved\n"
-                     "transfer ID; `usage` reads the owner-scoped Lustre snapshot."),
+                     "transfer ID; `usage` reads live quota and the owner-scoped Lustre snapshot."),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     data.add_argument("--help-all", action=_FullHelp, nargs=0,
@@ -197,8 +197,10 @@ def parser(*, advanced=False):
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     usage_command = verbs.add_parser(
-        "usage", help="show live quota and your cached Lustre folder usage",
-        description=("Show live quota for your UID and a cached, owner-scoped Lustre folder report.\n"
+        "usage", help="show your Lustre and FSS usage and your largest Lustre folders",
+        description=("Show a Lustre/FSS storage summary, then your largest Lustre folders.\n"
+                     "Lustre uses your live UID quota; FSS and the folder report come from the\n"
+                     "owner-scoped snapshot the site publishes weekly (Sunday 02:00 UTC).\n"
                      "PATH is relative to your own Lustre root; omit it for the root report.\n"
                      "The folder report is apparent bytes from the dated snapshot, not live\n"
                      "recursive usage."),

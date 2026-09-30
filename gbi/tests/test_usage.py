@@ -124,6 +124,20 @@ class Usage(unittest.TestCase):
         self.assertEqual(usage._age(usage._timestamp("2999-01-01T00:00:00Z")), "future timestamp")
         self.assertIsNone(usage._timestamp("2026-09-23T12:00:00"))
 
+    def test_partial_publication_names_unreadable_folders(self):
+        database = self.root / ".gbi" / "usage.sqlite3"
+        connection = sqlite3.connect(database)
+        connection.execute("UPDATE metadata SET value = 'partial' WHERE key = 'status'")
+        connection.execute("INSERT INTO metadata VALUES ('unreadable_directories', '6')")
+        connection.commit()
+        connection.close()
+        with patch("gbi_data.usage._quota", return_value={"status": "unavailable", "detail": "x"}):
+            result = usage.report(self.site, None, 1, 20)
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            usage.print_report(result, 1, 20)
+        self.assertIn("partial; 6 folders you cannot open were not scanned", output.getvalue())
+
     def test_lfs_human_sizes_use_the_report_units(self):
         self.assertEqual(usage._lfs_size("85.2G"), "85.2 GiB")
         self.assertEqual(usage._lfs_size("12.5T*"), "12.5 TiB")

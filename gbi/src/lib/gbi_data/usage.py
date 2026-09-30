@@ -267,7 +267,10 @@ def print_report(result, depth, limit):
     print(f"Apparent total: {_size(result['summary'][0])} across "
           f"{result['summary'][1]:,} inventory entries")
     if status == "partial":
-        print("Warning: this publication is partial; missing paths are not included.")
+        unreadable = _count(metadata.get("unreadable_directories"))
+        detail = (f"{unreadable} folders you cannot open were not scanned"
+                  if unreadable not in {"--", "0"} else "missing paths are not included")
+        print(f"Warning: this publication is partial; {detail}.")
     rows = [[_clip(path), _size(apparent_bytes), f"{entries:,}"]
             for path, apparent_bytes, entries in result["rows"]]
     _table(("Folder", "Apparent size", "Entries"), rows, right={1, 2})

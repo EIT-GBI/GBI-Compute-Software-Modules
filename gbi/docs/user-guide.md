@@ -307,29 +307,27 @@ be actual booleans. `delete_source=False` is compatibility-only:
 
 ## Cached usage
 
-`usage` starts with an aligned storage summary. Lustre comes from the live UID
-quota API when the client is available. FSS comes from the site's owner-scoped
-OCI usage publication; it is labelled `not published` when that measurement is
-not available. The command then shows the largest folders from a cached,
-owner-scoped Lustre inventory snapshot:
+`usage` starts with an aligned storage summary, then lists your largest Lustre
+folders. It never scans a filesystem itself:
 
 ```bash
 gbi data usage
 gbi data usage results --depth 2 --limit 20
 ```
 
-The default view is deliberately compact and aligned:
+`results` in the second example is a directory below your Lustre root, not a
+subcommand. Depth and limit must be positive.
 
 ```text
 Usage for /mnt/lustre/users/alice
 
 Storage summary
-Tier        Used    Limit   Files  Measured by
-------  --------  -------  ------  --------------------------
-Lustre  85.2 GiB       --   2,888  live UID quota
-FSS     12.0 GiB  1.0 PiB  12,345  OCI per-UID usage, 2h old
+Tier        Used  Limit   Files  Measured by
+------  --------  -----  ------  -----------------------------------
+Lustre  85.2 GiB     --   2,888  live UID quota
+FSS     12.0 GiB     --      --  OCI FSS quota accounting, 2d old
 
-Lustre folder breakdown (complete snapshot 2026-09-30T02:00:00+00:00, 2h old)
+Lustre folder breakdown (complete snapshot 2026-09-27T02:00:00+00:00, 2d old)
 Apparent total: 64.0 GiB across 2,876 inventory entries
 Folder   Apparent size  Entries
 -------  -------------  -------
@@ -337,11 +335,22 @@ results       60.0 GiB    2,000
 code           4.0 GiB      876
 ```
 
-The optional path must be below your own Lustre root. Depth and limit must be
-positive. The report shows capture time, age and incomplete/stale states.
-FSS and Lustre quota rows are allocation measurements; folder rows are logical
-apparent bytes and inventory entries. The command does not recursively scan
-either filesystem or start the separate inventory publisher.
+Where the numbers come from:
+
+- **Lustre** is your live UID quota from the Lustre client (`lfs`), for the
+  whole filesystem. It is read every time you run the command.
+- **FSS** is OCI's per-UID accounting for the shared FSS file system: logical
+  data bytes you own, excluding snapshots, with no file count. The site
+  records it when it publishes your snapshot, so its age is shown. It reads
+  `not published` until your first snapshot includes it.
+- **The folder breakdown** comes from the site's weekly inventory of your
+  Lustre root (Sunday 02:00 UTC). Sizes are apparent bytes, including
+  directory and symlink entries, not allocated space. A snapshot marked
+  `partial` could not open some folders in your root (for example ones owned
+  by a service account); the warning says how many.
+
+These are three different measurements, so they are not added together or
+compared as one total. A `Limit` of `--` means no limit applies.
 
 ## Expert options
 

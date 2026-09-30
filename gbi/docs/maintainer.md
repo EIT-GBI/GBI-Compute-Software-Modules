@@ -13,9 +13,12 @@ newer must be available on every selected node. The module loads the pinned
 rclone dependency automatically. If installed at the site, the optional Lmod
 `lfs/2.16.1` module lets `gbi data usage` read live Lustre quotas.
 Optional FSS usage is read from the owner-scoped SQLite publication as the
-metadata keys `fss_used_bytes`, `fss_files`, `fss_observed_at`,
-`fss_limit_bytes` (when configured), and `fss_source`. The public CLI never
-receives OCI credentials and does not walk FSS.
+metadata keys `fss_used_bytes`, `fss_observed_at`, `fss_source`, and, when
+the producer has them, `fss_files` and `fss_limit_bytes`. The weekly
+`storage-usage` Prefect flow (gbi-data-platform) publishes it with the pinned
+`lustre-dlm` module; OCI FSS quota accounting supplies bytes only. A partial
+snapshot may carry `unreadable_directories`. The public CLI never receives
+OCI credentials and does not walk FSS.
 
 ```bash
 make rclone

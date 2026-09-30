@@ -47,9 +47,10 @@ gbi data usage --depth 1 --limit 20
 ```
 
 `usage` prints a compact Lustre/FSS summary followed by the largest folders
-from the latest published Lustre inventory. It never starts a filesystem walk.
-FSS shows `not published` until the site usage publisher supplies owner-scoped
-OCI measurements.
+from the latest published Lustre inventory. Lustre is your live UID quota; FSS
+and the folder report come from the snapshot the site publishes weekly
+(Sunday 02:00 UTC). It never starts a filesystem walk. FSS shows
+`not published` until your snapshot includes an OCI measurement.
 
 Use paths printed by `roots`. For directories, contents go inside the
 destination you name. For a single file, name its destination file or an
