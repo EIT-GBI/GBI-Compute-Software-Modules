@@ -138,6 +138,17 @@ class Usage(unittest.TestCase):
             usage.print_report(result, 1, 20)
         self.assertIn("partial; 6 folders you cannot open were not scanned", output.getvalue())
 
+    def test_failed_fss_lookup_is_named_not_reported_as_unpublished(self):
+        self.assertEqual(usage._fss_row({"fss_lookup_failed_at": "2026-10-04T02:00:00+00:00"})[4],
+                         "lookup failed, no earlier value")
+        row = usage._fss_row({"fss_used_bytes": "1024", "fss_source": "OCI FSS quota accounting",
+                              "fss_observed_at": "2026-09-27T02:00:00+00:00",
+                              "fss_lookup_failed_at": "2026-10-04T02:00:00+00:00"})
+        self.assertEqual(row[1], "1.0 KiB")
+        self.assertTrue(row[4].endswith("(latest lookup failed)"))
+        self.assertIn("OCI FSS quota accounting", row[4])
+        self.assertEqual(usage._fss_row({})[4], "not published")
+
     def test_lfs_human_sizes_use_the_report_units(self):
         self.assertEqual(usage._lfs_size("85.2G"), "85.2 GiB")
         self.assertEqual(usage._lfs_size("12.5T*"), "12.5 TiB")

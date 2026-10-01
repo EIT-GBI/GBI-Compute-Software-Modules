@@ -222,12 +222,18 @@ def _clip(value, width=56):
 
 
 def _fss_row(metadata):
+    # The weekly publisher records fss_lookup_failed_at when it could not read
+    # OCI; it then keeps the previous value, whose own observation time is kept.
+    failed = bool(metadata) and "fss_lookup_failed_at" in metadata
     if not metadata or "fss_used_bytes" not in metadata:
-        return ["FSS", "--", "--", "--", "not published"]
+        detail = "lookup failed, no earlier value" if failed else "not published"
+        return ["FSS", "--", "--", "--", detail]
     observed = _timestamp(metadata.get("fss_observed_at"))
     source = metadata.get("fss_source", "OCI per-UID usage")
     if observed:
         source = f"{_display_path(source)}, {_age(observed)}"
+    if failed:
+        source = f"{source} (latest lookup failed)"
     return [
         "FSS", _size(metadata["fss_used_bytes"]),
         _size(metadata["fss_limit_bytes"]) if metadata.get("fss_limit_bytes") else "--",

@@ -24,7 +24,9 @@ blocks unrelated file moves that hash to the same stripe. Formats, receipts and
 journals are unchanged. **0.4.15** changes only `gbi data usage`: an aligned
 Lustre/FSS storage summary, readable sizes and counts, clipped folder names,
 and an explicit `not published` FSS state; transfer behaviour is identical to
-0.4.14. Automatic `--archive --prefect`,
+0.4.14. **0.4.16** names a failed weekly FSS lookup: the row keeps last
+week's value with its real age and adds `(latest lookup failed)` instead of
+reporting `not published`. Automatic `--archive --prefect`,
 selection filters, portable archive formats, distinct destinations and small
 restore reservations are active through the production FSS and Lustre archive
 and restore flows. Existing jobs and explicitly loaded older modules are
@@ -50,7 +52,8 @@ gbi data usage --depth 1 --limit 20
 from the latest published Lustre inventory. Lustre is your live UID quota; FSS
 and the folder report come from the snapshot the site publishes weekly
 (Sunday 02:00 UTC). It never starts a filesystem walk. FSS shows
-`not published` until your snapshot includes an OCI measurement.
+`not published` until your snapshot includes an OCI measurement, and
+`(latest lookup failed)` when the weekly lookup failed and last week's value is shown.
 
 Use paths printed by `roots`. For directories, contents go inside the
 destination you name. For a single file, name its destination file or an
