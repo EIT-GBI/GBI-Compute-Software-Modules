@@ -7,7 +7,7 @@ FSS and Object Storage. It runs with your Unix permissions and verifies the
 destination before removing an eligible filesystem source. Object Storage is
 the durable store: normal moves and restores always retain its originals.
 
-This guide describes the **0.4.15 release** (0.4.11 plus the archive-move cleanup and lock-stripe fixes of 0.4.12–0.4.14 and the readable usage summary of 0.4.15). The 0.4.11 transfer behaviour was accepted for ordinary
+This guide describes the **0.4.16 release** (0.4.11 plus the archive-move cleanup and lock-stripe fixes of 0.4.12–0.4.14 and the readable usage summary of 0.4.15–0.4.16). The 0.4.11 transfer behaviour was accepted for ordinary
 users on 28 September 2026. Check `gbi --version` and the
 [README](../README.md) before using new options. Its matching typed broker and
 production FSS/Lustre archive and restore flows are deployed and accepted,
@@ -342,7 +342,9 @@ Where the numbers come from:
 - **FSS** is OCI's per-UID accounting for the shared FSS file system: logical
   data bytes you own, excluding snapshots, with no file count. The site
   records it when it publishes your snapshot, so its age is shown. It reads
-  `not published` until your first snapshot includes it.
+  `not published` until your first snapshot includes it. If the weekly lookup
+  fails, the row keeps last week's value with its real age and adds
+  `(latest lookup failed)`; the next weekly run tries again.
 - **The folder breakdown** comes from the site's weekly inventory of your
   Lustre root (Sunday 02:00 UTC). Sizes are apparent bytes, including
   directory and symlink entries, not allocated space. A snapshot marked
