@@ -154,9 +154,11 @@ creates a completion result only after destination readback. For recovery from
 an interrupted cleanup, `retain_safety_copy=True` reconstructs and verifies a
 read-only tar under the user's `.gbi/recovery-payloads/` before cleanup; the
 copy remains for independent recovery. The bounded maintainer entrypoint is
-`python3 -m gbi_data.david_recovery`, with repeated `--unit-sha256` values so
-only explicitly named saved units are processed. It is not a general retry or
-retarget path.
+`python3 -B /path/to/david_recovery.py`, with `PYTHONPATH` set to the frozen
+run's `runtime/` directory. This lets recovery use the exact run-time archive
+helpers while loading only this maintained incident helper from a separate,
+hash-verified recovery-code directory. Repeated `--unit-sha256` values select
+only explicitly named saved units. It is not a general retry or retarget path.
 
 ```bash
 GBI_SITE_LUSTRE_ROOT=/site/scratch/users \
