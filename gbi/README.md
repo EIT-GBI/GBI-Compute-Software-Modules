@@ -150,8 +150,13 @@ The David archive supersets are handled only by the incident helper
 `gbi_data.david_recovery.recover_completed_superset_unit`. It requires frozen
 writers and the exact saved plan hash, verifies the existing chunk layout and
 selected source contents, records provenance before guarded cleanup, and
-creates a completion result only after destination readback. It is not a
-general retry or retarget path.
+creates a completion result only after destination readback. For recovery from
+an interrupted cleanup, `retain_safety_copy=True` reconstructs and verifies a
+read-only tar under the user's `.gbi/recovery-payloads/` before cleanup; the
+copy remains for independent recovery. The bounded maintainer entrypoint is
+`python3 -m gbi_data.david_recovery`, with repeated `--unit-sha256` values so
+only explicitly named saved units are processed. It is not a general retry or
+retarget path.
 
 ```bash
 GBI_SITE_LUSTRE_ROOT=/site/scratch/users \
