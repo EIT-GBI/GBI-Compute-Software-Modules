@@ -6,10 +6,12 @@ source cleanup through the maintained archive cleanup API and records explicit
 recovery provenance.
 """
 
+import argparse
 import fcntl
 import hashlib
 import json
 import os
+import tempfile
 from pathlib import Path
 import stat
 import time
@@ -64,17 +66,86 @@ def _write_new_json(path, value):
         os.close(parent_fd)
 
 
+def _verified_safety_copy(state_root, run_id, unit_key, target, outer, archive_digest):
+    """Persist one independently verified tar stream on the user's Lustre state."""
+    root = state_root / "recovery-payloads" / run_id
+    root.mkdir(mode=0o700, parents=True, exist_ok=True)
+    if root.is_symlink() or root.resolve() != root.absolute():
+        raise ValueError("recovery payload directory contains a symlink")
+    destination = root / f"{unit_key}.{outer['sha256']}.tar"
+    if os.path.lexists(destination):
+        before = _safety_copy_snapshot(destination)
+        digest = hashlib.sha256()
+        size = 0
+        with destination.open("rb") as stream:
+            for block in iter(lambda: stream.read(1024 * 1024), b""):
+                digest.update(block)
+                size += len(block)
+        if size != outer["size"] or digest.hexdigest() != outer["sha256"]:
+            raise ValueError("existing recovery payload differs from the verified chunk archive")
+        stored = archives.inspect_archive(destination)
+        if stored is None or formats._manifest_digest(stored) != archive_digest:
+            raise ValueError("existing recovery payload does not match the archived manifest")
+        if _safety_copy_snapshot(destination) != before:
+            raise ValueError("recovery payload changed during its readback")
+        return destination, before, digest.hexdigest(), size
+
+    fd, temporary_name = tempfile.mkstemp(prefix=f".{destination.name}.",
+                                          suffix=".partial", dir=root)
+    temporary = Path(temporary_name)
+    digest = hashlib.sha256()
+    size = 0
+    try:
+        with os.fdopen(fd, "wb") as stream, chunks.open_chunks(target) as reader:
+            for block in iter(lambda: reader.read(1024 * 1024), b""):
+                stream.write(block)
+                digest.update(block)
+                size += len(block)
+            stream.flush()
+            os.fchmod(stream.fileno(), 0o400)
+            os.fsync(stream.fileno())
+        actual_digest = digest.hexdigest()
+        if size != outer["size"] or actual_digest != outer["sha256"]:
+            raise ValueError("streamed recovery payload differs from the complete chunk manifest")
+        os.link(temporary, destination, follow_symlinks=False)
+        temporary.unlink()
+        parent_fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        try:
+            os.fsync(parent_fd)
+        finally:
+            os.close(parent_fd)
+        stored = archives.inspect_archive(destination)
+        if stored is None or formats._manifest_digest(stored) != archive_digest:
+            raise ValueError("reconstructed recovery payload does not match the archived manifest")
+        snapshot = _safety_copy_snapshot(destination)
+        return destination, snapshot, actual_digest, size
+    except BaseException:
+        if temporary.exists():
+            temporary.unlink()
+        raise
+
+
+def _safety_copy_snapshot(path):
+    info = path.lstat()
+    if not stat.S_ISREG(info.st_mode) or stat.S_IMODE(info.st_mode) != 0o400:
+        raise ValueError("recovery payload must remain a read-only regular file")
+    return (info.st_dev, info.st_ino, info.st_mode, info.st_size,
+            info.st_mtime_ns, info.st_ctime_ns)
+
+
 def recover_completed_superset_unit(
         state_root, run_id, source_relative_sha256, expected_plan_sha256,
-        provenance_id=None):
+        provenance_id=None, retain_safety_copy=False):
     """Finish one frozen chunk unit whose valid archive contains source state.
 
     ``source_relative_sha256`` identifies one unit in the saved plan without
     copying a potentially long source selection into a command or log. The
     saved plan, original destination, run request, filters and unit mapping are
     read in place and never changed. A new provenance record is created before
-    cleanup. The original unit result is created exclusively after full
-    cleanup and destination readback succeed.
+    cleanup. With ``retain_safety_copy=True``, a verified tar is reconstructed
+    under the user's Lustre ``.gbi/recovery-payloads`` and used for per-unlink
+    stability checks. The original unit result is created exclusively after
+    full cleanup and original destination readback succeed.
 
     The caller must freeze all writers to both source and destination first.
     """
@@ -227,10 +298,24 @@ def recover_completed_superset_unit(
 
         outer_digest = hashlib.sha256(json.dumps(outer, sort_keys=True,
                                                  separators=(",", ":")).encode()).hexdigest()
+        archived_digest = formats._manifest_digest(archived)
 
         def destination_unchanged():
             if chunks.read_manifest(target) != outer or _chunk_snapshot(target, outer) != target_layout:
                 raise ValueError("chunk destination changed during source cleanup")
+
+        safety_path = None
+        safety_snapshot = None
+        safety_digest = None
+        safety_size = None
+        if retain_safety_copy:
+            safety_path, safety_snapshot, safety_digest, safety_size = _verified_safety_copy(
+                state_root, run_id, source_relative_sha256, target, outer, archived_digest)
+            destination_unchanged()
+
+            def safety_copy_unchanged():
+                if _safety_copy_snapshot(safety_path) != safety_snapshot:
+                    raise ValueError("verified recovery payload changed; remaining sources kept")
 
         recovery_dir = state_root / "recovery-receipts" / run_id
         provenance_id = provenance_id or uuid.uuid4().hex
@@ -239,7 +324,6 @@ def recover_completed_superset_unit(
         provenance_path = recovery_dir / f"{source_relative_sha256}.{provenance_id}.json"
         if provenance_path.exists() or provenance_path.is_symlink():
             raise ValueError("immutable recovery provenance already exists")
-        archived_digest = formats._manifest_digest(archived)
         source_digest = formats._manifest_digest(current)
         provenance = {
             "schema": "gbi-archive-superset-recovery-v1",
@@ -258,13 +342,20 @@ def recover_completed_superset_unit(
             "archive_only_entries": len(archived_by_path) - len(current_by_path),
             "directory_mtime_differences": len(metadata_differences),
             "operation": "verified existing archive superset; resume per-file guarded source cleanup",
+            "recovery_payload": str(safety_path) if safety_path else None,
+            "recovery_payload_sha256": safety_digest,
+            "recovery_payload_bytes": safety_size,
             "created_unix_ns": time.time_ns(),
         }
         _write_new_json(provenance_path, provenance)
 
         cleanup = archives.resume_cleanup_source(
-            source, combined, lambda: chunks.open_chunks(target),
-            destination_unchanged=destination_unchanged)
+            source, combined,
+            safety_path if safety_path else lambda: chunks.open_chunks(target),
+            destination_unchanged=(safety_copy_unchanged if safety_path
+                                   else destination_unchanged))
+        if safety_path:
+            safety_copy_unchanged()
         destination_unchanged()
         after = archives.inspect_archive(lambda: chunks.open_chunks(target))
         if after is None or formats._manifest_digest(after) != archived_digest:
@@ -308,3 +399,24 @@ def recover_completed_superset_unit(
                 "freed_bytes": cleanup["freed_bytes"],
                 "removed": cleanup["removed"], "manifest_sha256": archived_digest,
                 "entries": len(after["entries"]), "replay_deleted": replay["deleted"]}
+
+
+def main(argv=None):
+    """Run explicitly selected frozen units from a bounded Slurm allocation."""
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--state-root", required=True)
+    parser.add_argument("--run-id", required=True)
+    parser.add_argument("--plan-sha256", required=True)
+    parser.add_argument("--unit-sha256", action="append", required=True)
+    parser.add_argument("--provenance-prefix", required=True)
+    args = parser.parse_args(argv)
+    for unit_key in args.unit_sha256:
+        result = recover_completed_superset_unit(
+            args.state_root, args.run_id, unit_key, args.plan_sha256,
+            provenance_id=f"{args.provenance_prefix}-{unit_key[:12]}-retry2",
+            retain_safety_copy=True)
+        print(json.dumps(result, sort_keys=True))
+
+
+if __name__ == "__main__":
+    main()

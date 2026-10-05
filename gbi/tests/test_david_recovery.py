@@ -6,6 +6,7 @@ from pathlib import Path
 import stat
 import tempfile
 import unittest
+from unittest import mock
 
 from gbi_data import archive_state, archives, chunks, david_recovery, formats
 
@@ -121,7 +122,8 @@ class DavidArchiveRecoveryTests(unittest.TestCase):
         fixture = _fixture(self.root)
         result = david_recovery.recover_completed_superset_unit(
             fixture["state"], fixture["run_id"], fixture["unit_key"],
-            fixture["plan_sha256"], provenance_id="attempt-one")
+            fixture["plan_sha256"], provenance_id="attempt-one",
+            retain_safety_copy=True)
 
         self.assertEqual(result["freed_bytes"], len(b"remaining selected payload"))
         self.assertFalse(fixture["keep"].exists())
@@ -136,6 +138,10 @@ class DavidArchiveRecoveryTests(unittest.TestCase):
         self.assertEqual(completion["recovery_provenance"], result["provenance"])
         self.assertGreater(provenance["archive_only_entries"], 0)
         self.assertEqual(provenance["directory_mtime_differences"], 1)
+        safety_copy = Path(provenance["recovery_payload"])
+        self.assertEqual(stat.S_IMODE(safety_copy.stat().st_mode), 0o400)
+        self.assertEqual(provenance["recovery_payload_sha256"],
+                         hashlib.sha256(safety_copy.read_bytes()).hexdigest())
         self.assertEqual(archive_state.resume_completed({
             "target_root": str(self.root / "storage"), "source": str(fixture["source"]),
             "archive_destination": str(fixture["target"]), "archive_completed": completion,
@@ -151,6 +157,66 @@ class DavidArchiveRecoveryTests(unittest.TestCase):
                 fixture["plan_sha256"], provenance_id="attempt-one")
         self.assertTrue(fixture["keep"].exists())
         self.assertFalse((fixture["state"] / "recovery-receipts").exists())
+
+    def test_safety_copy_mutation_fails_guard_before_more_source_cleanup(self):
+        fixture = _fixture(self.root)
+        original_cleanup = archives.resume_cleanup_source
+
+        def mutate_copy(source, manifest, stored_archive, destination_unchanged=None):
+            os.chmod(stored_archive, 0o600)
+            with open(stored_archive, "ab") as stream:
+                stream.write(b"changed")
+            return original_cleanup(source, manifest, stored_archive,
+                                    destination_unchanged=destination_unchanged)
+
+        with mock.patch.object(archives, "resume_cleanup_source", mutate_copy):
+            with self.assertRaisesRegex(ValueError, "recovery payload must remain"):
+                david_recovery.recover_completed_superset_unit(
+                    fixture["state"], fixture["run_id"], fixture["unit_key"],
+                    fixture["plan_sha256"], provenance_id="safety-copy-change",
+                    retain_safety_copy=True)
+
+        self.assertTrue(fixture["keep"].exists())
+        self.assertFalse((fixture["state"] / "archive-plans" /
+                          (archive_state._key(str(self.root / "storage" / "archive")) +
+                           ".units") / f"{fixture['unit_key']}.json").exists())
+
+    def test_original_target_change_after_cleanup_leaves_verified_safety_copy(self):
+        fixture = _fixture(self.root)
+        original_cleanup = archives.resume_cleanup_source
+
+        def mutate_target_after_cleanup(source, manifest, stored_archive,
+                                        destination_unchanged=None):
+            result = original_cleanup(source, manifest, stored_archive,
+                                      destination_unchanged=destination_unchanged)
+            part = fixture["target"] / ".gbi" / "parts" / "00000000.part"
+            with part.open("ab") as stream:
+                stream.write(b"changed")
+            return result
+
+        with mock.patch.object(archives, "resume_cleanup_source",
+                               mutate_target_after_cleanup):
+            with self.assertRaisesRegex(ValueError, "chunk destination changed"):
+                david_recovery.recover_completed_superset_unit(
+                    fixture["state"], fixture["run_id"], fixture["unit_key"],
+                    fixture["plan_sha256"], provenance_id="original-target-change",
+                    retain_safety_copy=True)
+
+        copies = list((fixture["state"] / "recovery-payloads" /
+                       fixture["run_id"]).glob("*.tar"))
+        self.assertEqual(len(copies), 1)
+        self.assertTrue(copies[0].is_file())
+        saved_archive = archives.inspect_archive(copies[0])
+        self.assertIsNotNone(saved_archive)
+        result_files = list((fixture["state"] / "recovery-receipts" /
+                             fixture["run_id"]).glob("*.json"))
+        self.assertEqual(len(result_files), 1)
+        provenance = json.loads(result_files[0].read_text())
+        self.assertEqual(formats._manifest_digest(saved_archive),
+                         provenance["stored_manifest_sha256"])
+        self.assertFalse((fixture["state"] / "archive-plans" /
+                          (archive_state._key(str(self.root / "storage" / "archive")) +
+                           ".units") / f"{fixture['unit_key']}.json").exists())
         self.assertFalse((fixture["state"] / "archive-plans" / "unused").exists())
 
     def test_plan_byte_mismatch_fails_before_cleanup(self):
