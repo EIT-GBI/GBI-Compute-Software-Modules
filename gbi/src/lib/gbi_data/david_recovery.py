@@ -17,7 +17,7 @@ import stat
 import time
 import uuid
 
-from . import archive_state, archives, chunks, formats
+from gbi_data import archive_state, archives, chunks, formats
 
 
 def _key(value):
