@@ -146,6 +146,13 @@ separate managed job on a supported personal route.
 Installation, site settings and validation are in
 [docs/maintainer.md](docs/maintainer.md). Use the existing Lmod module harness:
 
+The David archive supersets are handled only by the incident helper
+`gbi_data.david_recovery.recover_completed_superset_unit`. It requires frozen
+writers and the exact saved plan hash, verifies the existing chunk layout and
+selected source contents, records provenance before guarded cleanup, and
+creates a completion result only after destination readback. It is not a
+general retry or retarget path.
+
 ```bash
 GBI_SITE_LUSTRE_ROOT=/site/scratch/users \
 GBI_SITE_FSS_ROOT=/site/home/users \
