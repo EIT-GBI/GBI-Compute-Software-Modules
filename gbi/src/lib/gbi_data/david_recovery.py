@@ -282,7 +282,7 @@ def recover_completed_superset_unit(
         if retained:
             saved = json.loads(retained[verified_path])
             intent = {"source": str(source), "target": str(target), "action": "pack",
-                      "pack": request.get("pack", "tar"), "chunk_size": unit["chunk_size"],
+                      "pack": request.get("pack") or "tar", "chunk_size": unit["chunk_size"],
                       "include": request["include"], "exclude": request["exclude"]}
             digest = formats._manifest_digest(archived)
             if (saved.get("phase") != "verified" or saved.get("intent") != intent

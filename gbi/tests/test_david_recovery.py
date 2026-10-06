@@ -103,7 +103,7 @@ def _fixture(root, *, changed_source=False, with_symlink=False):
     request = {
         "source": str(source_root), "target": str(old_target),
         "target_root": str(target_root), "target_kind": "alluxio", "delete": True,
-        "include": [], "exclude": ["*.py"], "reserved_names": [],
+        "include": [], "exclude": ["*.py"], "reserved_names": [], "pack": None,
     }
     (run / "request.json").write_text(json.dumps(request, sort_keys=True))
     return {
@@ -148,7 +148,7 @@ class DavidArchiveRecoveryTests(unittest.TestCase):
             "target_root": str(self.root / "storage"), "source": str(fixture["source"]),
             "archive_destination": str(fixture["target"]), "archive_completed": completion,
             "format_action": "pack", "chunk_size": fixture["unit"]["chunk_size"],
-            "empty": False, "include": [], "exclude": ["*.py"], "reserved_names": [],
+            "empty": False, "include": [], "exclude": ["*.py"], "reserved_names": [], "pack": None,
         })["deleted"], False)
 
     def _verified_journal(self, fixture, phase="verified"):
