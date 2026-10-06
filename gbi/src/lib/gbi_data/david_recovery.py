@@ -7,6 +7,7 @@ recovery provenance.
 """
 
 import argparse
+from contextlib import ExitStack
 import fcntl
 import hashlib
 import json
@@ -17,7 +18,7 @@ import stat
 import time
 import uuid
 
-from gbi_data import archive_state, archives, chunks, formats
+from gbi_data import archive_state, archives, chunks, formats, storage
 
 
 def _key(value):
@@ -135,7 +136,10 @@ def _safety_copy_snapshot(path):
 
 def recover_completed_superset_unit(
         state_root, run_id, source_relative_sha256, expected_plan_sha256,
-        provenance_id=None, retain_safety_copy=False):
+        provenance_id=None, retain_safety_copy=False, *,
+        expected_current_root=None, verified_journal_sha256=None,
+        chunk_journal_sha256=None, stage_journal_sha256=None,
+        recovery_request_path=None, recovery_request_sha256=None):
     """Finish one frozen chunk unit whose valid archive contains source state.
 
     ``source_relative_sha256`` identifies one unit in the saved plan without
@@ -158,7 +162,19 @@ def recover_completed_superset_unit(
         raise ValueError("source unit identity must be a lowercase SHA-256")
 
     request_path = state_root / "runs" / run_id / "request.json"
-    request = json.loads(request_path.read_text())
+    if recovery_request_path is None and recovery_request_sha256 is not None:
+        raise ValueError("explicit recovery request pin requires its request path")
+    if recovery_request_path is not None:
+        request_path = Path(recovery_request_path).absolute()
+        if (request_path.parent != state_root / "recovery-requests"
+                or request_path.resolve() != request_path or not request_path.is_file()
+                or stage_journal_sha256 is None or recovery_request_sha256 is None):
+            raise ValueError("legacy recovery requires a pinned explicit request and complete stage")
+    request_bytes = request_path.read_bytes()
+    if (recovery_request_path is not None
+            and hashlib.sha256(request_bytes).hexdigest() != recovery_request_sha256):
+        raise ValueError("explicit recovery request differs from its pinned identity")
+    request = json.loads(request_bytes)
     old_target = Path(request["target"])
     plan_key = _key(str(old_target))
     plan_root = state_root / "archive-plans"
@@ -170,6 +186,10 @@ def recover_completed_superset_unit(
         raise ValueError("saved archive plan differs from the authorized frozen plan")
     record = json.loads(plan_bytes)
     plan = record["plan"]
+    if recovery_request_path is not None:
+        if any(request.get(name) != record.get("intent", {}).get(name)
+               for name in ("source", "target", "include", "exclude")):
+            raise ValueError("explicit recovery request differs from the original saved plan selection")
     if (record.get("intent", {}).get("target") != str(old_target)
             or Path(plan["destination"]) != old_target):
         raise ValueError("saved plan target does not match the run request")
@@ -199,7 +219,7 @@ def recover_completed_superset_unit(
 
     # This is the same lock used by archive_state.prepared. It prevents a
     # concurrent resume from changing the plan or source/destination mapping.
-    with lock_path.open("rb") as lock:
+    with lock_path.open("rb") as lock, ExitStack() as held:
         try:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError as error:
@@ -207,16 +227,51 @@ def recover_completed_superset_unit(
 
         if hashlib.sha256(plan_path.read_bytes()).hexdigest() != expected_plan_sha256:
             raise ValueError("saved archive plan changed while acquiring its lock")
-        if json.loads(request_path.read_text()) != request:
+        if request_path.read_bytes() != request_bytes:
             raise ValueError("saved run request changed while acquiring the plan lock")
 
-        for journal in (
-                state_root / "pending" / f"{_key(str(target))}.format.json",
-                state_root / "pending" / f"{_key(str(target))}.json",
-                state_root / "chunks" / "pending" / f"{_key(str(target))}.json",
-                state_root / "format-staging" / _key(str(target)) / "stage.json"):
-            if journal.exists() or journal.is_symlink():
-                raise ValueError("archive destination has an unresolved transfer journal")
+        retained = {}
+        # Normal GBI transfer state is below .gbi/state, separate from plans.
+        # Keep legacy locations fail-closed too; only the explicitly pinned,
+        # verified format journal and its matching complete stage may remain.
+        key = _key(str(target))
+        transfer_state = state_root / "state"
+        verified_path = transfer_state / "pending" / f"{key}.format.json"
+        stage_path = transfer_state / "format-staging" / key / "stage.json"
+        chunk_path = transfer_state / "chunks" / "pending" / f"{key}.json"
+        for base in (state_root, transfer_state):
+            for relative in (f"pending/{key}.format.json", f"pending/{key}.json",
+                             f"chunks/pending/{key}.json", f"format-staging/{key}/stage.json"):
+                journal = base / relative
+                if not os.path.lexists(journal):
+                    continue
+                if (journal.is_symlink() or journal.resolve() != journal.absolute()
+                        or journal not in (verified_path, stage_path, chunk_path)
+                        or not (verified_journal_sha256 or stage_journal_sha256)
+                        or (journal == verified_path and verified_journal_sha256 is None)):
+                    raise ValueError("archive destination has an unresolved transfer journal")
+                if journal == chunk_path and chunk_journal_sha256 is None:
+                    raise ValueError("archive destination has an unpinned chunk journal")
+                retained[journal] = journal.read_bytes()
+        if verified_journal_sha256 is not None:
+            if (verified_path not in retained or
+                    hashlib.sha256(retained[verified_path]).hexdigest() != verified_journal_sha256):
+                raise ValueError("retained verified journal differs from the pinned recovery journal")
+        if stage_journal_sha256 is not None:
+            if (stage_path not in retained or
+                    hashlib.sha256(retained[stage_path]).hexdigest() != stage_journal_sha256):
+                raise ValueError("retained stage differs from the pinned recovery journal")
+        if verified_journal_sha256 is not None or stage_journal_sha256 is not None:
+            lock_fd = os.open(transfer_state / "locks" / storage.lock_stripe(key),
+                              os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+            unit_lock = held.enter_context(os.fdopen(lock_fd, "a+"))
+            fcntl.flock(unit_lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+        if chunk_journal_sha256 is not None:
+            if (chunk_path not in retained or
+                    hashlib.sha256(retained[chunk_path]).hexdigest() != chunk_journal_sha256):
+                raise ValueError("retained chunk journal differs from the pinned recovery journal")
+            held.enter_context(chunks._locked(transfer_state, target))
 
         if (source.is_symlink() or not source.is_dir() or source.resolve() != source.absolute()
                 or target.is_symlink() or not target.is_dir() or target.resolve() != target.absolute()):
@@ -243,11 +298,77 @@ def recover_completed_superset_unit(
         planned_root = unit.get("expected_source")
         current_root = current["_source"]["root"]
         if (not isinstance(planned_root, list) or len(planned_root) < 3
-                or current_root[:3] != planned_root[:3]):
+                or current_root[1:3] != planned_root[1:3]):
             raise ValueError("source root identity differs from the frozen plan")
+        if expected_current_root is None:
+            if current_root[:3] != planned_root[:3]:
+                raise ValueError("source root identity differs from the frozen plan")
+        elif (not isinstance(expected_current_root, list) or len(expected_current_root) != 3
+              or any(type(value) is not int for value in expected_current_root)
+              or current_root[:3] != expected_current_root):
+            raise ValueError("source root differs from the pinned current mount identity")
+
         archived = archives.inspect_archive(lambda: chunks.open_chunks(target))
         if archived is None:
             raise ValueError("existing destination is not a marked GBI archive")
+
+        digest = formats._manifest_digest(archived)
+        if verified_path in retained:
+            saved = json.loads(retained[verified_path])
+            intent = {"source": str(source), "target": str(target), "action": "pack",
+                      "pack": request.get("pack") or "tar", "chunk_size": unit["chunk_size"],
+                      "include": request["include"], "exclude": request["exclude"]}
+            if (saved.get("phase") != "verified" or saved.get("intent") != intent
+                    or formats._manifest_digest(saved.get("manifest", {})) != digest
+                    or saved.get("record", {}).get("manifest_sha256") != digest
+                    or saved["record"].get("source") != str(source)
+                    or saved["record"].get("destination") != str(target)
+                    or saved["record"].get("kind") != "pack"
+                    or saved["record"].get("bytes") != formats._source_bytes(saved["manifest"])):
+                raise ValueError("retained journal is not the exact verified archive selection")
+        if stage_path in retained:
+            stage = json.loads(retained[stage_path])
+            payload = Path(outer["source"])
+            if (stage.get("phase") != "complete" or payload.parent != stage_path.parent
+                    or payload.resolve() != payload.absolute()
+                    or stage.get("intent", {}).get("source") != str(source)
+                    or formats._manifest_digest(stage.get("manifest", {})) != digest
+                    or stage.get("sha256") != outer["sha256"]
+                    or storage.fingerprint(payload) != outer["source_fingerprint"]):
+                raise ValueError("retained stage differs from the verified archive")
+            if stage_journal_sha256 is not None:
+                options = formats._pack_options({**request, "pack": request.get("pack") or "tar"})
+                if stage.get("intent") != {"source": str(source), "options": options}:
+                    raise ValueError("retained stage selection differs from the saved request")
+
+        def retained_unchanged():
+            if any(path.read_bytes() != encoded for path, encoded in retained.items()):
+                raise ValueError("retained recovery journal changed; remaining source kept")
+
+        if chunk_path in retained:
+            ownership = json.loads(retained[chunk_path])
+            expected_paths = {str(target / "manifest.json"), str(target / ".gbi" / "complete.json")}
+            expected_paths.update(str(target / ".gbi" / "parts" / part["name"])
+                                  for part in outer["parts"])
+            # These historical inodes may predate an Alluxio metadata import.
+            # They authorize no destination writes; acceptance comes from the
+            # complete manifest and full checksums, guarded by a live snapshot.
+            identities = [ownership.get("store_identity"), *ownership.get("owned", {}).values()]
+            owned_paths = set(ownership.get("owned", {}))
+            paths_match = owned_paths == expected_paths
+            if stage_journal_sha256 is not None and verified_path not in retained:
+                paths_match = (str(target / "manifest.json") in owned_paths
+                               and owned_paths <= expected_paths)
+            if (ownership.get("store") != str(target)
+                    or ownership.get("manifest_sha256") !=
+                    hashlib.sha256((target / "manifest.json").read_bytes()).hexdigest()
+                    or not paths_match
+                    or any(not isinstance(value, list) or len(value) != 3
+                           or any(type(item) is not int for item in value)
+                           for value in identities)):
+                raise ValueError("retained chunk journal differs from the complete archive namespace")
+
+        retained_unchanged()
 
         archived_by_path = {entry["path"]: entry for entry in archived["entries"]}
         current_by_path = {entry["path"]: entry for entry in current["entries"]}
@@ -329,8 +450,15 @@ def recover_completed_superset_unit(
             "schema": "gbi-archive-superset-recovery-v1",
             "status": "preflight-verified; cleanup follows",
             "run_id": run_id,
+            "request_path": str(request_path),
+            "request_sha256": hashlib.sha256(request_bytes).hexdigest(),
+            "request_origin": "explicit-plan-recovery" if recovery_request_path else "original-run",
             "source_relative_sha256": source_relative_sha256,
             "plan_sha256": plan_sha256,
+            "planned_source_root": planned_root[:3],
+            "current_source_root": current_root[:3],
+            "retained_journal_sha256": {str(path): hashlib.sha256(encoded).hexdigest()
+                                        for path, encoded in retained.items()},
             "source_manifest_sha256": source_digest,
             "stored_manifest_sha256": archived_digest,
             "chunk_layout_sha256": outer_digest,
@@ -347,6 +475,7 @@ def recover_completed_superset_unit(
             "recovery_payload_bytes": safety_size,
             "created_unix_ns": time.time_ns(),
         }
+        retained_unchanged()
         _write_new_json(provenance_path, provenance)
 
         cleanup = archives.resume_cleanup_source(
@@ -356,6 +485,7 @@ def recover_completed_superset_unit(
                                    else destination_unchanged))
         if safety_path:
             safety_copy_unchanged()
+        retained_unchanged()
         destination_unchanged()
         after = archives.inspect_archive(lambda: chunks.open_chunks(target))
         if after is None or formats._manifest_digest(after) != archived_digest:

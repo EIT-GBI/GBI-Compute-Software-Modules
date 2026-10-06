@@ -159,6 +159,26 @@ run's `runtime/` directory. This lets recovery use the exact run-time archive
 helpers while loading only this maintained incident helper from a separate,
 hash-verified recovery-code directory. Repeated `--unit-sha256` values select
 only explicitly named saved units. It is not a general retry or retarget path.
+For an already verified journal under `.gbi/state/pending`, pass its exact
+`verified_journal_sha256` to the Python helper. The phase, original selection,
+archive digest and retained complete stage must agree; journals remain unchanged.
+For a reconstructed archive whose original writer never produced a verified
+format journal, pin `stage_journal_sha256` instead. The complete stage must match
+the saved request's exact selection, archive manifest, payload hash and identity.
+Its pinned partial chunk journal may name only paths in that complete archive;
+historical ownership never authorizes destination writes. A surviving unverified
+format journal still stops recovery. Full destination and current-source checks
+remain required before native source cleanup.
+Older saved plans may predate run-request records. For an explicitly approved
+move, keep its new recovery request under `.gbi/recovery-requests/` and pass
+`recovery_request_path` plus `recovery_request_sha256`. Its source, target and
+filters must equal the pinned original plan, and a pinned complete stage remains
+mandatory. The recovery label identifies new provenance only: no original run
+or request history is fabricated, and the plan and retained journals stay intact.
+If the same NFS export is mounted on a different execution host, independently
+verify both mount routes and pin `expected_current_root=[device, inode, mode]`.
+The inode and mode must still match the original plan. Provenance records both
+actual identities without rewriting historical source observations.
 
 ```bash
 GBI_SITE_LUSTRE_ROOT=/site/scratch/users \
@@ -175,3 +195,10 @@ Keep test dependencies and caches in the system temporary directory.
 PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=gbi/src/lib \
   python3 -B -m unittest discover -s gbi/tests -v
 ```
+
+A completed chunk writer also retains its ownership journal. Pin its exact SHA-256
+with `chunk_journal_sha256` when recovering such a unit. Recovery holds the native
+chunk lock and checks the complete manifest and exact owned path set. Historical
+Alluxio inode observations are preserved as provenance; they authorize no writes
+to the destination. Full archive readback and current namespace snapshots still
+guard source cleanup. An unpinned or mismatched journal stops recovery.
