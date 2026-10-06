@@ -137,7 +137,8 @@ def _safety_copy_snapshot(path):
 def recover_completed_superset_unit(
         state_root, run_id, source_relative_sha256, expected_plan_sha256,
         provenance_id=None, retain_safety_copy=False, *,
-        expected_current_root=None, verified_journal_sha256=None):
+        expected_current_root=None, verified_journal_sha256=None,
+        chunk_journal_sha256=None):
     """Finish one frozen chunk unit whose valid archive contains source state.
 
     ``source_relative_sha256`` identifies one unit in the saved plan without
@@ -220,6 +221,7 @@ def recover_completed_superset_unit(
         transfer_state = state_root / "state"
         verified_path = transfer_state / "pending" / f"{key}.format.json"
         stage_path = transfer_state / "format-staging" / key / "stage.json"
+        chunk_path = transfer_state / "chunks" / "pending" / f"{key}.json"
         for base in (state_root, transfer_state):
             for relative in (f"pending/{key}.format.json", f"pending/{key}.json",
                              f"chunks/pending/{key}.json", f"format-staging/{key}/stage.json"):
@@ -227,9 +229,11 @@ def recover_completed_superset_unit(
                 if not os.path.lexists(journal):
                     continue
                 if (journal.is_symlink() or journal.resolve() != journal.absolute()
-                        or journal not in (verified_path, stage_path)
+                        or journal not in (verified_path, stage_path, chunk_path)
                         or verified_journal_sha256 is None):
                     raise ValueError("archive destination has an unresolved transfer journal")
+                if journal == chunk_path and chunk_journal_sha256 is None:
+                    raise ValueError("archive destination has an unpinned chunk journal")
                 retained[journal] = journal.read_bytes()
         if verified_journal_sha256 is not None:
             if (verified_path not in retained or
@@ -239,6 +243,12 @@ def recover_completed_superset_unit(
                               os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
             unit_lock = held.enter_context(os.fdopen(lock_fd, "a+"))
             fcntl.flock(unit_lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+        if chunk_journal_sha256 is not None:
+            if (chunk_path not in retained or
+                    hashlib.sha256(retained[chunk_path]).hexdigest() != chunk_journal_sha256):
+                raise ValueError("retained chunk journal differs from the pinned recovery journal")
+            held.enter_context(chunks._locked(transfer_state, target))
 
         if (source.is_symlink() or not source.is_dir() or source.resolve() != source.absolute()
                 or target.is_symlink() or not target.is_dir() or target.resolve() != target.absolute()):
@@ -307,6 +317,24 @@ def recover_completed_superset_unit(
         def retained_unchanged():
             if any(path.read_bytes() != encoded for path, encoded in retained.items()):
                 raise ValueError("retained recovery journal changed; remaining source kept")
+
+        if chunk_path in retained:
+            ownership = json.loads(retained[chunk_path])
+            expected_paths = {str(target / "manifest.json"), str(target / ".gbi" / "complete.json")}
+            expected_paths.update(str(target / ".gbi" / "parts" / part["name"])
+                                  for part in outer["parts"])
+            # These historical inodes may predate an Alluxio metadata import.
+            # They authorize no destination writes; acceptance comes from the
+            # complete manifest and full checksums, guarded by a live snapshot.
+            identities = [ownership.get("store_identity"), *ownership.get("owned", {}).values()]
+            if (ownership.get("store") != str(target)
+                    or ownership.get("manifest_sha256") !=
+                    hashlib.sha256((target / "manifest.json").read_bytes()).hexdigest()
+                    or set(ownership.get("owned", {})) != expected_paths
+                    or any(not isinstance(value, list) or len(value) != 3
+                           or any(type(item) is not int for item in value)
+                           for value in identities)):
+                raise ValueError("retained chunk journal differs from the complete archive namespace")
 
         retained_unchanged()
 

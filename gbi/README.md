@@ -182,3 +182,10 @@ Keep test dependencies and caches in the system temporary directory.
 PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=gbi/src/lib \
   python3 -B -m unittest discover -s gbi/tests -v
 ```
+
+A completed chunk writer also retains its ownership journal. Pin its exact SHA-256
+with `chunk_journal_sha256` when recovering such a unit. Recovery holds the native
+chunk lock and checks the complete manifest and exact owned path set. Historical
+Alluxio inode observations are preserved as provenance; they authorize no writes
+to the destination. Full archive readback and current namespace snapshots still
+guard source cleanup. An unpinned or mismatched journal stops recovery.

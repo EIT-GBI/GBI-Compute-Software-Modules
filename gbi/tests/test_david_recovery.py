@@ -190,6 +190,47 @@ class DavidArchiveRecoveryTests(unittest.TestCase):
         self.assertNotEqual(provenance["planned_source_root"][0], root_identity[0])
         self.assertEqual(provenance["retained_journal_sha256"][str(path)], digest)
 
+    def test_pinned_complete_chunk_journal_is_retained_without_reusing_old_inodes(self):
+        fixture = _fixture(self.root)
+        _, digest = self._verified_journal(fixture)
+        target = fixture["target"]
+        key = david_recovery._key(str(target))
+        path = fixture["state"] / "state" / "chunks" / "pending" / (key + ".json")
+        path.parent.mkdir(parents=True)
+        journal = {"store": str(target), "store_identity": [999, 1, 16384],
+                   "manifest_sha256": hashlib.sha256((target / "manifest.json").read_bytes()).hexdigest(),
+                   "owned": {str(leaf): [999, index, 32768] for index, leaf in
+                             enumerate(target.rglob("*"), 1) if leaf.is_file()}}
+        path.write_text(json.dumps(journal))
+        encoded = path.read_bytes()
+        pin = hashlib.sha256(encoded).hexdigest()
+        with self.assertRaisesRegex(ValueError, "unpinned chunk journal"):
+            david_recovery.recover_completed_superset_unit(
+                fixture["state"], fixture["run_id"], fixture["unit_key"], fixture["plan_sha256"],
+                verified_journal_sha256=digest)
+        with self.assertRaisesRegex(ValueError, "pinned recovery journal"):
+            david_recovery.recover_completed_superset_unit(
+                fixture["state"], fixture["run_id"], fixture["unit_key"], fixture["plan_sha256"],
+                verified_journal_sha256=digest, chunk_journal_sha256="0" * 64)
+        wrong = dict(journal, manifest_sha256="0" * 64)
+        path.write_text(json.dumps(wrong))
+        with self.assertRaisesRegex(ValueError, "complete archive namespace"):
+            david_recovery.recover_completed_superset_unit(
+                fixture["state"], fixture["run_id"], fixture["unit_key"], fixture["plan_sha256"],
+                verified_journal_sha256=digest,
+                chunk_journal_sha256=hashlib.sha256(path.read_bytes()).hexdigest())
+        self.assertTrue(fixture["keep"].exists())
+        path.write_bytes(encoded)
+        with mock.patch.object(chunks, "_locked", wraps=chunks._locked) as locked:
+            result = david_recovery.recover_completed_superset_unit(
+                fixture["state"], fixture["run_id"], fixture["unit_key"], fixture["plan_sha256"],
+                verified_journal_sha256=digest, chunk_journal_sha256=pin)
+        locked.assert_called_once_with(fixture["state"] / "state", target)
+        self.assertFalse(fixture["keep"].exists())
+        self.assertEqual(path.read_bytes(), encoded)
+        provenance = json.loads(Path(result["provenance"]).read_bytes())
+        self.assertEqual(provenance["retained_journal_sha256"][str(path)], pin)
+
     def test_actual_transfer_state_journal_is_rejected_without_explicit_pin(self):
         fixture = _fixture(self.root)
         self._verified_journal(fixture)
