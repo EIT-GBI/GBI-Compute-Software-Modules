@@ -159,6 +159,13 @@ run's `runtime/` directory. This lets recovery use the exact run-time archive
 helpers while loading only this maintained incident helper from a separate,
 hash-verified recovery-code directory. Repeated `--unit-sha256` values select
 only explicitly named saved units. It is not a general retry or retarget path.
+For an already verified journal under `.gbi/state/pending`, pass its exact
+`verified_journal_sha256` to the Python helper. The phase, original selection,
+archive digest and retained complete stage must agree; journals remain unchanged.
+If the same NFS export is mounted on a different execution host, independently
+verify both mount routes and pin `expected_current_root=[device, inode, mode]`.
+The inode and mode must still match the original plan. Provenance records both
+actual identities without rewriting historical source observations.
 
 ```bash
 GBI_SITE_LUSTRE_ROOT=/site/scratch/users \

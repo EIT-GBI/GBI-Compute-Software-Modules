@@ -42,7 +42,7 @@ def _write_chunk_store(path, data, source, chunk_size):
     complete.write_text(json.dumps(chunks._completion(manifest, encoded), sort_keys=True))
 
 
-def _fixture(root, *, changed_source=False):
+def _fixture(root, *, changed_source=False, with_symlink=False):
     root = Path(root).resolve()
     state = root / ".gbi"
     run_id = "run-david-recovery-test"
@@ -56,6 +56,8 @@ def _fixture(root, *, changed_source=False):
     old.mkdir()
     keep = shared / "keep.dat"
     keep.write_bytes(b"remaining selected payload")
+    if with_symlink:
+        (shared / "link").symlink_to("keep.dat")
     (old / "already-moved.dat").write_bytes(b"historical selected payload")
     (source / "excluded.py").write_text("keep this excluded source")
 
@@ -148,6 +150,140 @@ class DavidArchiveRecoveryTests(unittest.TestCase):
             "format_action": "pack", "chunk_size": fixture["unit"]["chunk_size"],
             "empty": False, "include": [], "exclude": ["*.py"], "reserved_names": [],
         })["deleted"], False)
+
+    def _verified_journal(self, fixture, phase="verified"):
+        archived = archives.inspect_archive(lambda: chunks.open_chunks(fixture["target"]))
+        key = david_recovery._key(str(fixture["target"]))
+        state = fixture["state"] / "state"
+        (state / "pending").mkdir(parents=True)
+        (state / "locks").mkdir()
+        path = state / "pending" / (key + ".format.json")
+        record = {"source": str(fixture["source"]), "destination": str(fixture["target"]),
+                  "kind": "pack", "bytes": formats._source_bytes(archived),
+                  "manifest_sha256": formats._manifest_digest(archived)}
+        journal = {"phase": phase, "manifest": archived, "record": record,
+                   "intent": {"source": str(fixture["source"]), "target": str(fixture["target"]),
+                              "action": "pack", "pack": "tar", "chunk_size": 1024,
+                              "include": [], "exclude": ["*.py"]}}
+        path.write_text(json.dumps(journal))
+        return path, hashlib.sha256(path.read_bytes()).hexdigest()
+
+    def test_pinned_verified_journal_survives_explicit_mount_binding_recovery(self):
+        fixture = _fixture(self.root, with_symlink=True)
+        path, digest = self._verified_journal(fixture)
+        encoded = path.read_bytes()
+        root_identity = archives._observation(fixture["source"].lstat())[:3]
+        plan_path = next((fixture["state"] / "archive-plans").glob("*.json"))
+        plan = json.loads(plan_path.read_bytes())
+        plan["plan"]["units"][0]["expected_source"][0] += 1
+        plan_path.write_text(json.dumps(plan))
+        plan_digest = hashlib.sha256(plan_path.read_bytes()).hexdigest()
+        result = david_recovery.recover_completed_superset_unit(
+            fixture["state"], fixture["run_id"], fixture["unit_key"], plan_digest,
+            provenance_id="verified-journal", retain_safety_copy=True,
+            expected_current_root=root_identity, verified_journal_sha256=digest)
+        self.assertFalse(fixture["keep"].exists())
+        self.assertTrue((fixture["source"] / "excluded.py").exists())
+        self.assertEqual(path.read_bytes(), encoded)
+        provenance = json.loads(Path(result["provenance"]).read_bytes())
+        self.assertEqual(provenance["current_source_root"], root_identity)
+        self.assertNotEqual(provenance["planned_source_root"][0], root_identity[0])
+        self.assertEqual(provenance["retained_journal_sha256"][str(path)], digest)
+
+    def test_actual_transfer_state_journal_is_rejected_without_explicit_pin(self):
+        fixture = _fixture(self.root)
+        self._verified_journal(fixture)
+        with self.assertRaisesRegex(ValueError, "unresolved transfer journal"):
+            david_recovery.recover_completed_superset_unit(
+                fixture["state"], fixture["run_id"], fixture["unit_key"], fixture["plan_sha256"])
+        self.assertTrue(fixture["keep"].exists())
+
+    def test_pinned_writing_journal_cannot_authorize_cleanup(self):
+        fixture = _fixture(self.root)
+        path, digest = self._verified_journal(fixture, phase="writing")
+        with self.assertRaisesRegex(ValueError, "exact verified archive selection"):
+            david_recovery.recover_completed_superset_unit(
+                fixture["state"], fixture["run_id"], fixture["unit_key"], fixture["plan_sha256"],
+                verified_journal_sha256=digest)
+        self.assertTrue(fixture["keep"].exists())
+        self.assertFalse((fixture["state"] / "recovery-receipts").exists())
+
+    def test_mismatched_current_root_pin_fails_before_cleanup(self):
+        fixture = _fixture(self.root)
+        current = archives._observation(fixture["source"].lstat())[:3]
+        current[1] += 1
+        with self.assertRaisesRegex(ValueError, "pinned current mount identity"):
+            david_recovery.recover_completed_superset_unit(
+                fixture["state"], fixture["run_id"], fixture["unit_key"], fixture["plan_sha256"],
+                expected_current_root=current)
+        self.assertTrue(fixture["keep"].exists())
+
+
+    def test_verified_journal_pin_rejects_changed_selection(self):
+        fixture = _fixture(self.root)
+        path, _ = self._verified_journal(fixture)
+        journal = json.loads(path.read_bytes())
+        journal["intent"]["exclude"] = []
+        path.write_text(json.dumps(journal))
+        digest = hashlib.sha256(path.read_bytes()).hexdigest()
+        with self.assertRaisesRegex(ValueError, "exact verified archive selection"):
+            david_recovery.recover_completed_superset_unit(
+                fixture["state"], fixture["run_id"], fixture["unit_key"], fixture["plan_sha256"],
+                verified_journal_sha256=digest)
+        self.assertTrue(fixture["keep"].exists())
+
+    def test_current_mount_pin_never_bypasses_original_inode_identity(self):
+        fixture = _fixture(self.root)
+        current = archives._observation(fixture["source"].lstat())[:3]
+        plan_path = next((fixture["state"] / "archive-plans").glob("*.json"))
+        plan = json.loads(plan_path.read_bytes())
+        plan["plan"]["units"][0]["expected_source"][1] += 1
+        plan_path.write_text(json.dumps(plan))
+        with self.assertRaisesRegex(ValueError, "frozen plan"):
+            david_recovery.recover_completed_superset_unit(
+                fixture["state"], fixture["run_id"], fixture["unit_key"],
+                hashlib.sha256(plan_path.read_bytes()).hexdigest(), expected_current_root=current)
+        self.assertTrue(fixture["keep"].exists())
+
+    def test_complete_stage_is_preserved_and_writing_stage_is_rejected(self):
+        for phase in ("complete", "writing"):
+            with self.subTest(phase=phase), tempfile.TemporaryDirectory() as directory:
+                fixture = _fixture(Path(directory).resolve())
+                path, journal_digest = self._verified_journal(fixture)
+                encoded = path.read_bytes()
+                key = david_recovery._key(str(fixture["target"]))
+                stage = fixture["state"] / "state" / "format-staging" / key
+                stage.mkdir(parents=True)
+                payload = stage / "unit.gbi.tar"
+                payload.write_bytes(fixture["target_bytes"])
+                payload.chmod(0o400)
+                outer_path = fixture["target"] / "manifest.json"
+                outer = json.loads(outer_path.read_bytes())
+                outer["source"] = str(payload)
+                outer["source_fingerprint"] = david_recovery.storage.fingerprint(payload)
+                outer_encoded = chunks._encoded(outer)
+                outer_path.write_bytes(outer_encoded)
+                (fixture["target"] / ".gbi" / "complete.json").write_text(
+                    json.dumps(chunks._completion(outer, outer_encoded)))
+                stage_path = stage / "stage.json"
+                stage_path.write_text(json.dumps({"phase": phase, "intent": {"source": str(fixture["source"])},
+                    "manifest": json.loads(encoded)["manifest"], "sha256": outer["sha256"]}))
+                before = stage_path.read_bytes()
+                if phase == "writing":
+                    with self.assertRaisesRegex(ValueError, "retained stage differs"):
+                        david_recovery.recover_completed_superset_unit(
+                            fixture["state"], fixture["run_id"], fixture["unit_key"],
+                            fixture["plan_sha256"], verified_journal_sha256=journal_digest)
+                    self.assertTrue(fixture["keep"].exists())
+                else:
+                    david_recovery.recover_completed_superset_unit(
+                        fixture["state"], fixture["run_id"], fixture["unit_key"],
+                        fixture["plan_sha256"], verified_journal_sha256=journal_digest,
+                        retain_safety_copy=True)
+                    self.assertFalse(fixture["keep"].exists())
+                self.assertEqual(stage_path.read_bytes(), before)
+                self.assertEqual(path.read_bytes(), encoded)
+
 
     def test_source_payload_difference_fails_before_provenance_or_cleanup(self):
         fixture = _fixture(self.root, changed_source=True)
