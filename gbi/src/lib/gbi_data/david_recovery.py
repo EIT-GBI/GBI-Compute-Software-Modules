@@ -138,7 +138,7 @@ def recover_completed_superset_unit(
         state_root, run_id, source_relative_sha256, expected_plan_sha256,
         provenance_id=None, retain_safety_copy=False, *,
         expected_current_root=None, verified_journal_sha256=None,
-        chunk_journal_sha256=None):
+        chunk_journal_sha256=None, stage_journal_sha256=None):
     """Finish one frozen chunk unit whose valid archive contains source state.
 
     ``source_relative_sha256`` identifies one unit in the saved plan without
@@ -230,7 +230,8 @@ def recover_completed_superset_unit(
                     continue
                 if (journal.is_symlink() or journal.resolve() != journal.absolute()
                         or journal not in (verified_path, stage_path, chunk_path)
-                        or verified_journal_sha256 is None):
+                        or not (verified_journal_sha256 or stage_journal_sha256)
+                        or (journal == verified_path and verified_journal_sha256 is None)):
                     raise ValueError("archive destination has an unresolved transfer journal")
                 if journal == chunk_path and chunk_journal_sha256 is None:
                     raise ValueError("archive destination has an unpinned chunk journal")
@@ -239,6 +240,11 @@ def recover_completed_superset_unit(
             if (verified_path not in retained or
                     hashlib.sha256(retained[verified_path]).hexdigest() != verified_journal_sha256):
                 raise ValueError("retained verified journal differs from the pinned recovery journal")
+        if stage_journal_sha256 is not None:
+            if (stage_path not in retained or
+                    hashlib.sha256(retained[stage_path]).hexdigest() != stage_journal_sha256):
+                raise ValueError("retained stage differs from the pinned recovery journal")
+        if verified_journal_sha256 is not None or stage_journal_sha256 is not None:
             lock_fd = os.open(transfer_state / "locks" / storage.lock_stripe(key),
                               os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
             unit_lock = held.enter_context(os.fdopen(lock_fd, "a+"))
@@ -289,12 +295,12 @@ def recover_completed_superset_unit(
         if archived is None:
             raise ValueError("existing destination is not a marked GBI archive")
 
-        if retained:
+        digest = formats._manifest_digest(archived)
+        if verified_path in retained:
             saved = json.loads(retained[verified_path])
             intent = {"source": str(source), "target": str(target), "action": "pack",
                       "pack": request.get("pack") or "tar", "chunk_size": unit["chunk_size"],
                       "include": request["include"], "exclude": request["exclude"]}
-            digest = formats._manifest_digest(archived)
             if (saved.get("phase") != "verified" or saved.get("intent") != intent
                     or formats._manifest_digest(saved.get("manifest", {})) != digest
                     or saved.get("record", {}).get("manifest_sha256") != digest
@@ -303,16 +309,20 @@ def recover_completed_superset_unit(
                     or saved["record"].get("kind") != "pack"
                     or saved["record"].get("bytes") != formats._source_bytes(saved["manifest"])):
                 raise ValueError("retained journal is not the exact verified archive selection")
-            if stage_path in retained:
-                stage = json.loads(retained[stage_path])
-                payload = Path(outer["source"])
-                if (stage.get("phase") != "complete" or payload.parent != stage_path.parent
-                        or payload.resolve() != payload.absolute()
-                        or stage.get("intent", {}).get("source") != str(source)
-                        or formats._manifest_digest(stage.get("manifest", {})) != digest
-                        or stage.get("sha256") != outer["sha256"]
-                        or storage.fingerprint(payload) != outer["source_fingerprint"]):
-                    raise ValueError("retained stage differs from the verified archive")
+        if stage_path in retained:
+            stage = json.loads(retained[stage_path])
+            payload = Path(outer["source"])
+            if (stage.get("phase") != "complete" or payload.parent != stage_path.parent
+                    or payload.resolve() != payload.absolute()
+                    or stage.get("intent", {}).get("source") != str(source)
+                    or formats._manifest_digest(stage.get("manifest", {})) != digest
+                    or stage.get("sha256") != outer["sha256"]
+                    or storage.fingerprint(payload) != outer["source_fingerprint"]):
+                raise ValueError("retained stage differs from the verified archive")
+            if stage_journal_sha256 is not None:
+                options = formats._pack_options({**request, "pack": request.get("pack") or "tar"})
+                if stage.get("intent") != {"source": str(source), "options": options}:
+                    raise ValueError("retained stage selection differs from the saved request")
 
         def retained_unchanged():
             if any(path.read_bytes() != encoded for path, encoded in retained.items()):
@@ -327,10 +337,15 @@ def recover_completed_superset_unit(
             # They authorize no destination writes; acceptance comes from the
             # complete manifest and full checksums, guarded by a live snapshot.
             identities = [ownership.get("store_identity"), *ownership.get("owned", {}).values()]
+            owned_paths = set(ownership.get("owned", {}))
+            paths_match = owned_paths == expected_paths
+            if stage_journal_sha256 is not None and verified_path not in retained:
+                paths_match = (str(target / "manifest.json") in owned_paths
+                               and owned_paths <= expected_paths)
             if (ownership.get("store") != str(target)
                     or ownership.get("manifest_sha256") !=
                     hashlib.sha256((target / "manifest.json").read_bytes()).hexdigest()
-                    or set(ownership.get("owned", {})) != expected_paths
+                    or not paths_match
                     or any(not isinstance(value, list) or len(value) != 3
                            or any(type(item) is not int for item in value)
                            for value in identities)):

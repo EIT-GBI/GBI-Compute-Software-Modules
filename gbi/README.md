@@ -162,6 +162,13 @@ only explicitly named saved units. It is not a general retry or retarget path.
 For an already verified journal under `.gbi/state/pending`, pass its exact
 `verified_journal_sha256` to the Python helper. The phase, original selection,
 archive digest and retained complete stage must agree; journals remain unchanged.
+For a reconstructed archive whose original writer never produced a verified
+format journal, pin `stage_journal_sha256` instead. The complete stage must match
+the saved request's exact selection, archive manifest, payload hash and identity.
+Its pinned partial chunk journal may name only paths in that complete archive;
+historical ownership never authorizes destination writes. A surviving unverified
+format journal still stops recovery. Full destination and current-source checks
+remain required before native source cleanup.
 If the same NFS export is mounted on a different execution host, independently
 verify both mount routes and pin `expected_current_root=[device, inode, mode]`.
 The inode and mode must still match the original plan. Provenance records both

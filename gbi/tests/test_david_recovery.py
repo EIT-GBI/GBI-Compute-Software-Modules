@@ -239,6 +239,85 @@ class DavidArchiveRecoveryTests(unittest.TestCase):
                 fixture["state"], fixture["run_id"], fixture["unit_key"], fixture["plan_sha256"])
         self.assertTrue(fixture["keep"].exists())
 
+    def _complete_stage_with_partial_journal(self, fixture):
+        target = fixture["target"]
+        state = fixture["state"] / "state"
+        (state / "locks").mkdir(parents=True)
+        key = david_recovery._key(str(target))
+        stage = state / "format-staging" / key / "stage.json"
+        stage.parent.mkdir(parents=True)
+        payload = stage.parent / "unit.gbi.tar"
+        payload.write_bytes(fixture["target_bytes"])
+        payload.chmod(0o400)
+        archived = archives.inspect_archive(lambda: chunks.open_chunks(target))
+        outer = json.loads((target / "manifest.json").read_bytes())
+        outer.update(source=str(payload), source_fingerprint=david_recovery.storage.fingerprint(payload))
+        encoded = chunks._encoded(outer)
+        (target / "manifest.json").write_bytes(encoded)
+        (target / ".gbi" / "complete.json").write_text(json.dumps(chunks._completion(outer, encoded)))
+        request = json.loads((fixture["state"] / "runs" / fixture["run_id"] / "request.json").read_bytes())
+        stage.write_text(json.dumps({"phase": "complete", "manifest": archived,
+            "sha256": outer["sha256"], "intent": {"source": str(fixture["source"]),
+                "options": formats._pack_options({**request, "pack": "tar"})}}))
+        journal = state / "chunks" / "pending" / (key + ".json")
+        journal.parent.mkdir(parents=True)
+        journal.write_text(json.dumps({"store": str(target), "store_identity": [999, 1, 16384],
+            "manifest_sha256": hashlib.sha256(encoded).hexdigest(),
+            "owned": {str(target / "manifest.json"): [999, 2, 32768],
+                      str(target / ".gbi" / "parts" / "00000000.part"): [999, 3, 32768]}}))
+        return stage, journal
+
+    def test_complete_stage_authorizes_rebuilt_archive_cleanup_without_format_journal(self):
+        fixture = _fixture(self.root, with_symlink=True)
+        stage, journal = self._complete_stage_with_partial_journal(fixture)
+        original = {p: p.read_bytes() for p in (stage, journal)}
+        result = david_recovery.recover_completed_superset_unit(
+            fixture["state"], fixture["run_id"], fixture["unit_key"], fixture["plan_sha256"],
+            retain_safety_copy=True,
+            stage_journal_sha256=hashlib.sha256(original[stage]).hexdigest(),
+            chunk_journal_sha256=hashlib.sha256(original[journal]).hexdigest())
+        self.assertFalse(fixture["keep"].exists())
+        self.assertTrue((fixture["source"] / "excluded.py").exists())
+        self.assertTrue(json.loads(Path(result["result"]).read_bytes())["deleted"])
+        for path, encoded in original.items():
+            self.assertEqual(path.read_bytes(), encoded)
+
+    def test_stage_only_recovery_rejects_unproven_stages_and_foreign_ownership(self):
+        for defect in ("unpinned", "stage-pin", "chunk-pin", "writing", "selection", "digest",
+                       "chunk-digest", "foreign-owned", "format-journal"):
+            with self.subTest(defect=defect), tempfile.TemporaryDirectory() as directory:
+                fixture = _fixture(Path(directory).resolve())
+                stage, journal = self._complete_stage_with_partial_journal(fixture)
+                saved = json.loads(stage.read_bytes())
+                if defect == "writing":
+                    saved["phase"] = "writing"
+                elif defect == "selection":
+                    saved["intent"]["options"]["exclusions"] = []
+                elif defect == "digest":
+                    saved["sha256"] = "0" * 64
+                elif defect in ("foreign-owned", "chunk-digest"):
+                    ownership = json.loads(journal.read_bytes())
+                    if defect == "foreign-owned":
+                        ownership["owned"][str(self.root / "unrelated")] = [999, 4, 32768]
+                    else:
+                        ownership["manifest_sha256"] = "0" * 64
+                    journal.write_text(json.dumps(ownership))
+                elif defect == "format-journal":
+                    (fixture["state"] / "state" / "pending").mkdir()
+                    (fixture["state"] / "state" / "pending" / (stage.parent.name + ".format.json")).write_text(
+                        json.dumps({"phase": "writing"}))
+                stage.write_text(json.dumps(saved))
+                stage_pin = hashlib.sha256(stage.read_bytes()).hexdigest()
+                chunk_pin = hashlib.sha256(journal.read_bytes()).hexdigest()
+                with self.assertRaises(ValueError):
+                    david_recovery.recover_completed_superset_unit(
+                        fixture["state"], fixture["run_id"], fixture["unit_key"], fixture["plan_sha256"],
+                        stage_journal_sha256=None if defect == "unpinned" else
+                            "0" * 64 if defect == "stage-pin" else stage_pin,
+                        chunk_journal_sha256="0" * 64 if defect == "chunk-pin" else chunk_pin)
+                self.assertTrue(fixture["keep"].exists())
+                self.assertFalse((fixture["state"] / "recovery-receipts").exists())
+
     def test_pinned_writing_journal_cannot_authorize_cleanup(self):
         fixture = _fixture(self.root)
         path, digest = self._verified_journal(fixture, phase="writing")
