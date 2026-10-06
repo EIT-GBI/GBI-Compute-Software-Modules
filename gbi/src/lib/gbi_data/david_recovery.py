@@ -138,7 +138,8 @@ def recover_completed_superset_unit(
         state_root, run_id, source_relative_sha256, expected_plan_sha256,
         provenance_id=None, retain_safety_copy=False, *,
         expected_current_root=None, verified_journal_sha256=None,
-        chunk_journal_sha256=None, stage_journal_sha256=None):
+        chunk_journal_sha256=None, stage_journal_sha256=None,
+        recovery_request_path=None, recovery_request_sha256=None):
     """Finish one frozen chunk unit whose valid archive contains source state.
 
     ``source_relative_sha256`` identifies one unit in the saved plan without
@@ -161,7 +162,19 @@ def recover_completed_superset_unit(
         raise ValueError("source unit identity must be a lowercase SHA-256")
 
     request_path = state_root / "runs" / run_id / "request.json"
-    request = json.loads(request_path.read_text())
+    if recovery_request_path is None and recovery_request_sha256 is not None:
+        raise ValueError("explicit recovery request pin requires its request path")
+    if recovery_request_path is not None:
+        request_path = Path(recovery_request_path).absolute()
+        if (request_path.parent != state_root / "recovery-requests"
+                or request_path.resolve() != request_path or not request_path.is_file()
+                or stage_journal_sha256 is None or recovery_request_sha256 is None):
+            raise ValueError("legacy recovery requires a pinned explicit request and complete stage")
+    request_bytes = request_path.read_bytes()
+    if (recovery_request_path is not None
+            and hashlib.sha256(request_bytes).hexdigest() != recovery_request_sha256):
+        raise ValueError("explicit recovery request differs from its pinned identity")
+    request = json.loads(request_bytes)
     old_target = Path(request["target"])
     plan_key = _key(str(old_target))
     plan_root = state_root / "archive-plans"
@@ -173,6 +186,10 @@ def recover_completed_superset_unit(
         raise ValueError("saved archive plan differs from the authorized frozen plan")
     record = json.loads(plan_bytes)
     plan = record["plan"]
+    if recovery_request_path is not None:
+        if any(request.get(name) != record.get("intent", {}).get(name)
+               for name in ("source", "target", "include", "exclude")):
+            raise ValueError("explicit recovery request differs from the original saved plan selection")
     if (record.get("intent", {}).get("target") != str(old_target)
             or Path(plan["destination"]) != old_target):
         raise ValueError("saved plan target does not match the run request")
@@ -210,7 +227,7 @@ def recover_completed_superset_unit(
 
         if hashlib.sha256(plan_path.read_bytes()).hexdigest() != expected_plan_sha256:
             raise ValueError("saved archive plan changed while acquiring its lock")
-        if json.loads(request_path.read_text()) != request:
+        if request_path.read_bytes() != request_bytes:
             raise ValueError("saved run request changed while acquiring the plan lock")
 
         retained = {}
@@ -433,6 +450,9 @@ def recover_completed_superset_unit(
             "schema": "gbi-archive-superset-recovery-v1",
             "status": "preflight-verified; cleanup follows",
             "run_id": run_id,
+            "request_path": str(request_path),
+            "request_sha256": hashlib.sha256(request_bytes).hexdigest(),
+            "request_origin": "explicit-plan-recovery" if recovery_request_path else "original-run",
             "source_relative_sha256": source_relative_sha256,
             "plan_sha256": plan_sha256,
             "planned_source_root": planned_root[:3],

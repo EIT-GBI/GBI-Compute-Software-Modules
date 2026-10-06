@@ -169,6 +169,12 @@ Its pinned partial chunk journal may name only paths in that complete archive;
 historical ownership never authorizes destination writes. A surviving unverified
 format journal still stops recovery. Full destination and current-source checks
 remain required before native source cleanup.
+Older saved plans may predate run-request records. For an explicitly approved
+move, keep its new recovery request under `.gbi/recovery-requests/` and pass
+`recovery_request_path` plus `recovery_request_sha256`. Its source, target and
+filters must equal the pinned original plan, and a pinned complete stage remains
+mandatory. The recovery label identifies new provenance only: no original run
+or request history is fabricated, and the plan and retained journals stay intact.
 If the same NFS export is mounted on a different execution host, independently
 verify both mount routes and pin `expected_current_root=[device, inode, mode]`.
 The inode and mode must still match the original plan. Provenance records both

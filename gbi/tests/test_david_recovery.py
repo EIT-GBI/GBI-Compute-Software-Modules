@@ -318,6 +318,65 @@ class DavidArchiveRecoveryTests(unittest.TestCase):
                 self.assertTrue(fixture["keep"].exists())
                 self.assertFalse((fixture["state"] / "recovery-receipts").exists())
 
+    def _explicit_plan_request(self, fixture):
+        original = fixture["state"] / "runs" / fixture["run_id"] / "request.json"
+        request = json.loads(original.read_bytes())
+        original.unlink()
+        plan_path = next((fixture["state"] / "archive-plans").glob("*.json"))
+        plan = json.loads(plan_path.read_bytes())
+        plan["intent"].update(include=request["include"], exclude=request["exclude"])
+        plan_path.write_text(json.dumps(plan))
+        fixture["plan_sha256"] = hashlib.sha256(plan_path.read_bytes()).hexdigest()
+        path = fixture["state"] / "recovery-requests" / "legacy-plan.json"
+        path.parent.mkdir()
+        path.write_text(json.dumps(request))
+        return path
+
+    def test_explicit_legacy_request_preserves_plan_without_inventing_run_history(self):
+        fixture = _fixture(self.root)
+        stage, journal = self._complete_stage_with_partial_journal(fixture)
+        request = self._explicit_plan_request(fixture)
+        plan_path = next((fixture["state"] / "archive-plans").glob("*.json"))
+        original = {p: p.read_bytes() for p in (stage, journal, request, plan_path)}
+        result = david_recovery.recover_completed_superset_unit(
+            fixture["state"], "legacy-plan-cleanup", fixture["unit_key"], fixture["plan_sha256"],
+            stage_journal_sha256=hashlib.sha256(original[stage]).hexdigest(),
+            chunk_journal_sha256=hashlib.sha256(original[journal]).hexdigest(),
+            recovery_request_path=request,
+            recovery_request_sha256=hashlib.sha256(original[request]).hexdigest(),
+            retain_safety_copy=True)
+        self.assertFalse(fixture["keep"].exists())
+        self.assertFalse((fixture["state"] / "runs" / "legacy-plan-cleanup").exists())
+        provenance = json.loads(Path(result["provenance"]).read_bytes())
+        self.assertEqual(provenance["request_origin"], "explicit-plan-recovery")
+        self.assertEqual(provenance["request_path"], str(request))
+        for path, encoded in original.items():
+            self.assertEqual(path.read_bytes(), encoded)
+
+    def test_explicit_legacy_request_rejects_wrong_pin_selection_and_unpinned_stage(self):
+        for defect in ("pin", "selection", "stage-pin", "outside-state"):
+            with self.subTest(defect=defect), tempfile.TemporaryDirectory() as directory:
+                fixture = _fixture(Path(directory).resolve())
+                stage, journal = self._complete_stage_with_partial_journal(fixture)
+                request = self._explicit_plan_request(fixture)
+                if defect == "selection":
+                    saved = json.loads(request.read_bytes())
+                    saved["exclude"] = []
+                    request.write_text(json.dumps(saved))
+                elif defect == "outside-state":
+                    elsewhere = Path(directory) / "legacy-plan.json"
+                    request.rename(elsewhere)
+                    request = elsewhere.resolve()
+                with self.assertRaises(ValueError):
+                    david_recovery.recover_completed_superset_unit(
+                        fixture["state"], "legacy-plan-cleanup", fixture["unit_key"], fixture["plan_sha256"],
+                        stage_journal_sha256=None if defect == "stage-pin" else hashlib.sha256(stage.read_bytes()).hexdigest(),
+                        chunk_journal_sha256=hashlib.sha256(journal.read_bytes()).hexdigest(),
+                        recovery_request_path=request,
+                        recovery_request_sha256="0" * 64 if defect == "pin" else hashlib.sha256(request.read_bytes()).hexdigest())
+                self.assertTrue(fixture["keep"].exists())
+                self.assertFalse((fixture["state"] / "recovery-receipts").exists())
+
     def test_pinned_writing_journal_cannot_authorize_cleanup(self):
         fixture = _fixture(self.root)
         path, digest = self._verified_journal(fixture, phase="writing")
