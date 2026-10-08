@@ -151,8 +151,9 @@ def _pack_direct(task, source, target, journal_path, journal, report, settle):
             # Rebuild only the source-side manifest, hashing while writing to a
             # null sink. No staging payload is created to compare a prior copy.
             manifest = archives.pack(source, _Output(None, report), **options)
-            report("verifying archive", 0, _source_bytes(manifest))
-            archives.verify_archive(target, manifest)
+            if not task.get("delete"):
+                report("verifying archive", 0, _source_bytes(manifest))
+                archives.verify_archive(target, manifest)
             return manifest, True
     fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
     with os.fdopen(fd, "wb") as output:
@@ -165,8 +166,9 @@ def _pack_direct(task, source, target, journal_path, journal, report, settle):
         report("closing archive", _source_bytes(manifest), _source_bytes(manifest))
     journal.update(phase="written", manifest=manifest)
     write_json(journal_path, journal)
-    report("verifying archive", 0, _source_bytes(manifest))
-    _readback(lambda: archives.verify_archive(target, manifest), settle)
+    if not task.get("delete"):
+        report("verifying archive", 0, _source_bytes(manifest))
+        _readback(lambda: archives.verify_archive(target, manifest), settle)
     return manifest, False
 
 
@@ -526,8 +528,9 @@ def transfer(task):
                 evidence = {"manifest_sha256": _manifest_digest(manifest), "entries": len(manifest["entries"])}
                 reused = True
                 stored = (lambda: chunks.open_chunks(target)) if task.get("chunk_size") else target
-                report("verifying archive")
-                archives.verify_archive(stored, manifest)
+                if not task.get("delete") or cleanup_complete:
+                    report("verifying archive")
+                    archives.verify_archive(stored, manifest)
                 if not task.get("delete"):
                     try:
                         archives.verify_source(source, manifest)
@@ -556,8 +559,9 @@ def transfer(task):
                         if complete["chunk_size"] != task["chunk_size"]:
                             raise ValueError("existing archive uses a different chunk size; choose a new destination")
                         manifest = archives.pack(source, _Output(None, report), **_pack_options(task))
-                        report("verifying archive")
-                        archives.verify_archive(stored, manifest)
+                        if not task.get("delete"):
+                            report("verifying archive")
+                            archives.verify_archive(stored, manifest)
                         reused = True
                     else:
                         report("checking Lustre archive staging")
@@ -566,8 +570,9 @@ def transfer(task):
                         chunks.write_chunks(payload, target, state=state, chunk_size=task["chunk_size"], settle_seconds=settle,
                                             progress=lambda p: report(f"verified archive parts {p['parts']}/{p['total_parts']}",
                                                                       p["bytes"], p["total_bytes"]))
-                        report("verifying archive")
-                        archives.verify_archive(stored, manifest)
+                        if not task.get("delete"):
+                            report("verifying archive")
+                            archives.verify_archive(stored, manifest)
                 else:
                     manifest, reused = _pack_direct(task, source, target, journal_path, journal, report, settle)
                     stored = target
@@ -602,35 +607,61 @@ def transfer(task):
                 manifest = chunk_snapshot[0]
                 source_size = manifest["size"]
                 evidence = {"sha256": manifest["sha256"], "parts": len(manifest["parts"])}
-        report("recording verified transfer", source_size, source_size)
         record = journal.get("record") if resumed_cleanup else None
         if resumed_cleanup and not isinstance(record, dict):
             raise ValueError("verified archive journal has no receipt record; source retained")
         if record is None:
             record = {"event": "verified", "source": str(source), "destination": str(target),
                       "kind": action, "bytes": source_size, "reused": reused, "time": time.time(), **evidence}
-        journal.update(phase="cleanup_complete" if cleanup_complete else "verified", record=record)
-        if action == "pack":
-            journal["manifest"] = manifest
-        write_json(journal_path, journal)
-        journal_identity = _identity(journal_path)
-        if action != "pack" or not resumed_cleanup:
-            receipt(Path(task["receipt"]), record)
-        elif not receipt_has("verified", record):
-            receipt(Path(task["receipt"]), record)
+        journal_identity = None
+
+        def record_verified():
+            nonlocal journal_identity
+            report("recording verified transfer", source_size, source_size)
+            journal.update(phase="cleanup_complete" if cleanup_complete else "verified", record=record)
+            if action == "pack":
+                journal["manifest"] = manifest
+            write_json(journal_path, journal)
+            journal_identity = _identity(journal_path)
+            if action != "pack" or not resumed_cleanup or not receipt_has("verified", record):
+                receipt(Path(task["receipt"]), record)
+
+        # A move verifies the complete archive inside cleanup immediately before
+        # its receipt and first unlink. Avoid reading the same archive twice.
+        if action != "pack" or not task.get("delete") or cleanup_complete:
+            record_verified()
         if task.get("delete") and not retained_reason:
             report("rechecking source before cleanup", source_size, source_size)
             if action == "pack":
                 if cleanup_complete:
                     cleanup = {"freed_bytes": 0}
                 else:
-                    if task.get("chunk_size"):
-                        guard = _ChunkGuard(target, _chunk_snapshot(target))
-                    else:
-                        guard = _StoredArchiveGuard(stored)
-                    cleanup = (archives.resume_cleanup_source(source, manifest, stored, destination_unchanged=guard)
+                    guard = None
+
+                    def destination_unchanged():
+                        if guard is not None:
+                            guard()
+
+                    report("verifying archive before cleanup", 0, source_size)
+                    def verify_stored_archive():
+                        def verify_once():
+                            nonlocal guard
+                            candidate = (_ChunkGuard(target, _chunk_snapshot(target))
+                                         if task.get("chunk_size") else _StoredArchiveGuard(stored))
+                            archives.verify_archive(stored, manifest)
+                            candidate.final()
+                            guard = candidate
+                        # Bracket each full read with its own identity snapshot.
+                        # A stale mount view retries before any receipt or unlink.
+                        _readback(verify_once, settle)
+
+                    cleanup = (archives.resume_cleanup_source(source, manifest, stored, destination_unchanged=destination_unchanged,
+                                                              on_verified=record_verified,
+                                                              verify_stored_archive=verify_stored_archive)
                                if resumed_cleanup else
-                               {"removed": archives.cleanup_source(source, manifest, stored, destination_unchanged=guard),
+                               {"removed": archives.cleanup_source(source, manifest, stored, destination_unchanged=destination_unchanged,
+                                                                   on_verified=record_verified,
+                                                                   verify_stored_archive=verify_stored_archive),
                                 "freed_bytes": _source_bytes(manifest)})
                     guard.final()
                 freed_bytes = cleanup["freed_bytes"]

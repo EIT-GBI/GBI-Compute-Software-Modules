@@ -604,13 +604,18 @@ def _verify_source_content(root_fd, entry, before, allow_ctime_change=False):
             raise ArchiveError("source checksum changed since packing; source kept")
 
 
-def cleanup_source(source, manifest, stored_archive, destination_unchanged=None, *, on_remove=None):
+def cleanup_source(source, manifest, stored_archive, destination_unchanged=None, *, on_remove=None,
+                   on_verified=None, verify_stored_archive=None):
     """Explicit move cleanup: full archive readback, stable tree, exact unlinks.
 
     Caller must retain its normal source/destination lock and immutable receipt.
     No recursive deletion; new or unselected entries are never removed.
     ``on_remove(entry)`` records each successful non-directory unlink immediately,
     so callers can account for a partial cleanup if a later check fails.
+    ``on_verified()`` publishes the caller's receipt after full destination and
+    source verification, before any unlink. A failed publication keeps sources.
+    ``verify_stored_archive()`` may wrap ``verify_archive`` in the caller's
+    bounded transport retry policy; it must perform the same complete check.
     """
     if destination_unchanged is None:
         if isinstance(stored_archive, (str, os.PathLike)):
@@ -628,7 +633,10 @@ def cleanup_source(source, manifest, stored_archive, destination_unchanged=None,
         else:
             raise ArchiveError("opaque archive cleanup requires a destination stability callback")
     destination_unchanged()
-    verify_archive(stored_archive, manifest)
+    if verify_stored_archive is None:
+        verify_archive(stored_archive, manifest)
+    else:
+        verify_stored_archive()
     destination_unchanged()
     verify_source(source, manifest)
     source = Path(source)
@@ -642,6 +650,9 @@ def cleanup_source(source, manifest, stored_archive, destination_unchanged=None,
             if entry["type"] != "directory":
                 _verify_source_content(root_fd, entry, evidence[entry["path"]])
         verify_source(source, manifest)
+        destination_unchanged()
+        if on_verified is not None:
+            on_verified()
         for entry in manifest["entries"]:
             if entry["type"] == "directory":
                 continue
@@ -678,7 +689,8 @@ def cleanup_source(source, manifest, stored_archive, destination_unchanged=None,
     return removed
 
 
-def resume_cleanup_source(source, manifest, stored_archive, destination_unchanged=None):
+def resume_cleanup_source(source, manifest, stored_archive, destination_unchanged=None, *,
+                          on_verified=None, verify_stored_archive=None):
     """Resume exact cleanup from a verified archive journal.
 
     Missing entries that were selected by the original manifest are treated as
@@ -741,8 +753,13 @@ def resume_cleanup_source(source, manifest, stored_archive, destination_unchange
                 raise ArchiveError(f"unselected source path changed during resumed cleanup: {name}")
 
     destination_unchanged()
-    verify_archive(stored_archive, manifest)
+    if verify_stored_archive is None:
+        verify_archive(stored_archive, manifest)
+    else:
+        verify_stored_archive()
     destination_unchanged()
+    if on_verified is not None:
+        on_verified()
     freed_bytes = removed_count = 0
     unlinked_inodes = set(removed_inodes)
     with _directory(source) as root_fd:

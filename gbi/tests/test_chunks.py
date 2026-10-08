@@ -8,6 +8,7 @@ import os
 import shutil
 from pathlib import Path
 import tempfile
+import threading
 import unittest
 from unittest.mock import patch
 
@@ -137,6 +138,36 @@ class Chunks(unittest.TestCase):
 
     def part(self, number=0):
         return self.store / ".gbi" / "parts" / f"{number:08d}.part"
+
+    def test_final_part_checks_overlap_and_remain_bounded(self):
+        original = chunks._part_digest
+        barrier = threading.Barrier(chunks.VERIFY_WORKERS)
+        lock = threading.Lock()
+        active = maximum = 0
+        checked = []
+
+        def verify(path, part, combined=None):
+            nonlocal active, maximum
+            if threading.current_thread() is threading.main_thread():
+                return original(path, part, combined)
+            with lock:
+                active += 1
+                maximum = max(maximum, active)
+            try:
+                barrier.wait(timeout=5)
+                result = original(path, part, combined)
+                checked.append(path.name)
+                return result
+            finally:
+                with lock:
+                    active -= 1
+
+        with patch.object(chunks, "_part_digest", side_effect=verify):
+            manifest = self.write()
+        self.assertEqual(maximum, chunks.VERIFY_WORKERS)
+        self.assertCountEqual(checked, [part["name"] for part in manifest["parts"]])
+        with chunks.open_chunks(self.store) as reader:
+            self.assertEqual(reader.read(), self.payload)
 
     def interrupt(self):
         def stop(_):
