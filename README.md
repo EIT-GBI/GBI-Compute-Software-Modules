@@ -419,6 +419,7 @@ Makefile              discovers recipes and generates the per-target rules
 run.sh                __PREFIX__ bootstrap + portable physical-path helpers
 opt/
   update_bin.sh       curls the standalone simple-modules / simple-templates
+  patches/            local fixes reapplied after upstream helper updates
   bin/                simple-modules.ex, simple-templates.ex, lua, luac, build.sh, render.sh
     check_versions.nu declared-vs-installed version check (see above)
     help.sh           renders `make help` from the discovered recipes
@@ -436,7 +437,8 @@ usr/                  default install root (gitignored)
 
 `make update` re-downloads the two standalone Lua executables from GitLab, so
 you pick up upstream `simple-modules` / `simple-templates` fixes without
-vendoring them.
+vendoring them. The updater reapplies the local permission-scope patch so an
+install only changes permissions beneath the versions installed by that run.
 
 ## Testing
 
@@ -447,6 +449,9 @@ mode into `test/usr`. It expects `__PREFIX__`, so run it through `run.sh`:
 ```bash
 ./run.sh test/test_macos.sh
 ```
+
+The macOS matrix also runs `test/test_simple_modules_permission_scope.sh` to
+confirm an install leaves older and unrelated software trees' modes unchanged.
 
 ## Rough edges
 
