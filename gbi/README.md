@@ -34,6 +34,15 @@ unchanged. Object Storage originals and versions remain retained. A published
 module or image alone does not establish runtime acceptance; unsupported
 requests fail rather than silently changing the operation.
 
+**0.4.17** removes a duplicate full destination archive read from ordinary
+archive moves, including resumed cleanup. The complete archive content and
+source checks now precede verified receipt publication in the cleanup path;
+receipt failure prevents deletion. The final chunk integrity pass checks four
+parts concurrently, using four 1 MiB streaming buffers per transfer worker.
+Every part and the reconstructed archive still receive full checksum checks.
+Saved plans, journals, archive formats and filters remain compatible. This is
+source release status; site installation and runtime acceptance are separate.
+
 ## Everyday commands
 
 ```bash

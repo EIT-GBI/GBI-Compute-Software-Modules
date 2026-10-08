@@ -42,7 +42,7 @@ class ArchiveCleanupResume(unittest.TestCase):
         self.first_removed = None
         failed = False
 
-        def injected(source, manifest, stored, destination_unchanged=None):
+        def injected(source, manifest, stored, destination_unchanged=None, **kwargs):
             nonlocal failed
 
             def after_unlink(entry):
@@ -53,7 +53,7 @@ class ArchiveCleanupResume(unittest.TestCase):
                     raise ValueError("injected cleanup interruption")
 
             return original(source, manifest, stored, destination_unchanged=destination_unchanged,
-                            on_remove=after_unlink)
+                            on_remove=after_unlink, **kwargs)
 
         return patch.object(formats.archives, "cleanup_source", side_effect=injected)
 
