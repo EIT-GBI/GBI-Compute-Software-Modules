@@ -18,6 +18,9 @@ pushd bin
 curl --fail --output simple-templates.ex ${STSRC}
 curl --fail --output simple-modules.ex ${SMSRC}
 
+# Keep the repository's install-scoped permission fix on the upstream helper.
+patch --batch --forward -p0 < ../patches/simple-modules-permission-scope.patch
+
 chmod u+x,o+x,g+x simple-templates.ex
 chmod u+x,o+x,g+x simple-modules.ex
 
