@@ -160,6 +160,16 @@ helpers while loading only this maintained incident helper from a separate,
 hash-verified recovery-code directory. Repeated `--unit-sha256` values select
 only explicitly named saved units. It is not a general retry or retarget path.
 
+For an exact historical unit with an accepted native checksum proof, the
+maintainer may pass the SHA-pinned enriched cleanup binding and a maintained
+Storage identity reader to the same helper. This path is eligible only when
+the freshly hashed FSS manifest exactly matches the producer's per-file
+manifest digest and every native part/control identity still matches before
+and after cleanup. It retains the already staged tar as the recovery copy and
+keeps the per-file source hash/unlink guards; it does not reread the chunk
+archive payload or reconstruct another tar. Ordinary recovery and archive
+superset cases retain the existing full readback path.
+
 ```bash
 GBI_SITE_LUSTRE_ROOT=/site/scratch/users \
 GBI_SITE_FSS_ROOT=/site/home/users \

@@ -1,5 +1,6 @@
 """Portable archive round trips and unsafe/corrupt input refusal."""
 
+import hashlib
 import io
 import json
 import os
@@ -396,6 +397,35 @@ class Archives(unittest.TestCase):
                     (target / "nested" / "file\n odd.txt").read_bytes(),
                     (self.source / "nested" / "file\n odd.txt").read_bytes(),
                 )
+
+    def test_resumed_cleanup_requires_typed_matching_archive_evidence(self):
+        self.fixture()
+        sink = io.BytesIO()
+        manifest = archives.pack(self.source, sink)
+        digest = hashlib.sha256(json.dumps(
+            {key: value for key, value in manifest.items() if not key.startswith("_")},
+            sort_keys=True, ensure_ascii=True, separators=(",", ":")
+        ).encode()).hexdigest()
+        evidence = archives.VerifiedArchiveEvidence._issue(digest, "a" * 64)
+        stored = io.BytesIO(b"native proof stands in for the destination archive")
+
+        with patch.object(archives, "verify_archive", side_effect=AssertionError("full readback")):
+            result = archives.resume_cleanup_source(
+                self.source, manifest, stored, destination_unchanged=lambda: None,
+                verified_archive=evidence)
+        self.assertGreater(result["removed"], 0)
+        self.assertFalse((self.source / "nested" / "file\n odd.txt").exists())
+
+    def test_resumed_cleanup_rejects_evidence_for_another_manifest(self):
+        self.fixture()
+        sink = io.BytesIO()
+        manifest = archives.pack(self.source, sink)
+        evidence = archives.VerifiedArchiveEvidence._issue("0" * 64, "a" * 64)
+        with self.assertRaisesRegex(archives.ArchiveError, "does not match"):
+            archives.resume_cleanup_source(
+                self.source, manifest, io.BytesIO(b"unused"),
+                destination_unchanged=lambda: None, verified_archive=evidence)
+        self.assertTrue((self.source / "nested" / "file\n odd.txt").exists())
 
 
 if __name__ == "__main__":

@@ -31,6 +31,31 @@ class ArchiveError(ValueError):
     """An archive or source cannot be verified safely."""
 
 
+class VerifiedArchiveEvidence:
+    """Capability issued by a maintained verifier for one public manifest."""
+
+    __slots__ = ("manifest_sha256", "evidence_sha256")
+
+    def __init__(self, manifest_sha256, evidence_sha256):
+        raise ArchiveError("verified archive evidence can only be issued by a maintained verifier")
+
+    @classmethod
+    def _issue(cls, manifest_sha256, evidence_sha256):
+        value = object.__new__(cls)
+        object.__setattr__(value, "manifest_sha256", manifest_sha256)
+        object.__setattr__(value, "evidence_sha256", evidence_sha256)
+        return value
+
+    def __setattr__(self, name, value):
+        raise AttributeError("verified archive evidence is immutable")
+
+    def assert_manifest(self, manifest):
+        from .formats import _manifest_digest
+
+        if _manifest_digest(manifest) != self.manifest_sha256:
+            raise ArchiveError("verified archive evidence does not match the cleanup manifest")
+
+
 def _json(value):
     result = json.dumps(value, ensure_ascii=True, sort_keys=True, separators=(",", ":")).encode()
     if len(result) > MAX_MANIFEST:
@@ -678,7 +703,8 @@ def cleanup_source(source, manifest, stored_archive, destination_unchanged=None,
     return removed
 
 
-def resume_cleanup_source(source, manifest, stored_archive, destination_unchanged=None):
+def resume_cleanup_source(source, manifest, stored_archive, destination_unchanged=None,
+                          *, verified_archive=None):
     """Resume exact cleanup from a verified archive journal.
 
     Missing entries that were selected by the original manifest are treated as
@@ -741,7 +767,16 @@ def resume_cleanup_source(source, manifest, stored_archive, destination_unchange
                 raise ArchiveError(f"unselected source path changed during resumed cleanup: {name}")
 
     destination_unchanged()
-    verify_archive(stored_archive, manifest)
+    if verified_archive is None:
+        verify_archive(stored_archive, manifest)
+    else:
+        # The narrowly scoped recovery caller may supply a typed proof object
+        # whose validator joins a fresh source manifest to an independently
+        # verified native destination. Ordinary archive execution still uses
+        # the full body readback above.
+        if not isinstance(verified_archive, VerifiedArchiveEvidence):
+            raise ArchiveError("invalid verified archive evidence")
+        verified_archive.assert_manifest(manifest)
     destination_unchanged()
     freed_bytes = removed_count = 0
     unlinked_inodes = set(removed_inodes)
