@@ -27,6 +27,7 @@ make uv
 make zig
 make cc                 # shims over zig -- versioned by it, so after zig
 make make               # built through cc
+make xz                 # built through cc + make
 make cargo-zigbuild     # needs uv (above) and cc
 # NO NCDU binary releases for macOS -- upstream ships linux static builds only
 make parallel-tar
