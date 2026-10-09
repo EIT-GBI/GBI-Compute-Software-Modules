@@ -43,6 +43,17 @@ Every part and the reconstructed archive still receive full checksum checks.
 Saved plans, journals, archive formats and filters remain compatible. This is
 source release status; site installation and runtime acceptance are separate.
 
+**0.4.18** reuses hashes from the current in-memory pack manifest during move
+cleanup while each source entry's identity, size, mode, mtime and ctime remain
+unchanged. Journal-only resumes hash each remaining source payload once per
+invocation, then reuse that verified observation before unlink; persisted
+journal digests alone are never reused. Unlinking a hardlink forces its
+remaining aliases to be rehashed. The bounded maintainer
+recovery helper can also reuse exact, source-bound native OCI checksum proof
+instead of downloading an already verified archive. Ordinary CLI archive
+verification and saved-plan compatibility remain unchanged. Site installation
+and runtime acceptance are pending.
+
 ## Everyday commands
 
 ```bash
@@ -168,6 +179,40 @@ run's `runtime/` directory. This lets recovery use the exact run-time archive
 helpers while loading only this maintained incident helper from a separate,
 hash-verified recovery-code directory. Repeated `--unit-sha256` values select
 only explicitly named saved units. It is not a general retry or retarget path.
+
+For an exact historical unit with an accepted native checksum proof, the
+maintainer may pass the SHA-pinned enriched cleanup binding and a maintained
+Storage identity reader to the same helper. `storage_identity_reader()` adapts
+the maintained `transfer_core.archive.OciSdkStorage.head()` interface; callers
+must construct it through the existing scoped Slurm worker environment, using
+its private `PREFECT_OBJECT_CREDENTIAL_FILE`. The helper does not read, create,
+copy, or broaden credentials. The adapter performs at most four concurrent
+HEADs and requires ETag, version ID, size, and metadata for every pinned object.
+This path is eligible only when
+the freshly hashed FSS manifest exactly matches the producer's per-file
+manifest digest and every native part/control identity still matches before
+and after cleanup. It retains the already staged tar as the recovery copy and
+keeps the per-file source hash/unlink guards; it does not reread the chunk
+archive payload or reconstruct another tar. Ordinary recovery and archive
+superset cases retain the existing full readback path.
+
+The optional `expected_request_sha256` argument pins the original saved request
+bytes both before and after acquiring the existing archive-plan lock. A
+content-addressed cleanup package should carry that request and plan alongside
+the native binding, source proof, terminal receipt, producer semantic proof,
+and frozen worklist; the worker still checks the live saved plan and all source
+and destination guards before unlinking.
+
+Older plans that have no saved run request use `recovery_request_path` and
+`recovery_request_sha256` for a separately recorded request under
+`.gbi/recovery-requests/`; its source, target and filters must match the frozen
+plan. Existing `verified_journal_sha256`, `stage_journal_sha256` and
+`chunk_journal_sha256` pins remain mandatory for any retained transfer journals,
+and `expected_current_root=[device, inode, mode]` permits an independently
+observed NFS mount device change while preserving the original inode and mode
+guards. The helper retains those journals and the staged tar byte-for-byte,
+rechecks their identities during cleanup, and records their hashes in
+provenance.
 
 ```bash
 GBI_SITE_LUSTRE_ROOT=/site/scratch/users \

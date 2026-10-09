@@ -96,6 +96,15 @@ every part twice; the final pass streams at most four parts concurrently
 (4 MiB of read buffers per transfer worker). This bounded concurrency does not
 change the saved plan, part order, combined checksum or completion marker.
 
+From 0.4.18, fresh archive moves pass their current in-memory pack manifest to
+cleanup and reuse each selected file's digest only while its device, inode, mode,
+size, mtime and ctime match. Journal-only resumes hash each remaining selected
+file once, then reuse that verified observation within the same invocation;
+persisted journal digests alone are never reused. The bounded recovery helper
+hashes the current source once, joins it to the original archived manifest, and
+reuses that fresh evidence under the same per-file guards. Hardlink ctime
+changes trigger a full rehash of remaining aliases.
+
 `GBI_SITE_PREFECT_URL` must be an HTTPS URL without credentials, query
 parameters or fragments. The CLI tries the local broker socket first and uses
 the HTTPS endpoint only when that socket is unavailable. HTTPS uses the caller's

@@ -1,5 +1,6 @@
 """Portable archive round trips and unsafe/corrupt input refusal."""
 
+import hashlib
 import io
 import json
 import os
@@ -120,8 +121,41 @@ class Archives(unittest.TestCase):
         stream, manifest = self.packed()
         (self.source / "b").write_text("changed")
         with self.assertRaises(archives.ArchiveError):
-            archives.cleanup_source(self.source, manifest, stream)
+            archives.cleanup_source(self.source, manifest, stream,
+                                    fresh_source_manifest=manifest)
         self.assertTrue((self.source / "a").exists())
+
+    def test_cleanup_reuses_unchanged_fresh_source_hashes(self):
+        (self.source / "a").write_text("a")
+        (self.source / "b").write_text("b")
+        stream, manifest = self.packed()
+        with patch.object(archives, "_hash_fd", wraps=archives._hash_fd) as hashed:
+            self.assertEqual(
+                archives.cleanup_source(self.source, manifest, stream,
+                                        fresh_source_manifest=manifest),
+                2,
+            )
+        self.assertEqual(hashed.call_count, 0)
+
+    def test_cleanup_without_fresh_source_hashes_each_pass(self):
+        (self.source / "a").write_text("a")
+        (self.source / "b").write_text("b")
+        stream, manifest = self.packed()
+        with patch.object(archives, "_hash_fd", wraps=archives._hash_fd) as hashed:
+            self.assertEqual(archives.cleanup_source(self.source, manifest, stream), 2)
+        self.assertEqual(hashed.call_count, 4)
+
+    def test_cleanup_rehashes_hardlink_after_ctime_change(self):
+        (self.source / "one").write_text("same")
+        (self.source / "two").hardlink_to(self.source / "one")
+        stream, manifest = self.packed()
+        with patch.object(archives, "_hash_fd", wraps=archives._hash_fd) as hashed:
+            self.assertEqual(
+                archives.cleanup_source(self.source, manifest, stream,
+                                        fresh_source_manifest=manifest),
+                2,
+            )
+        self.assertGreaterEqual(hashed.call_count, 1)
 
     def test_filtered_cleanup_keeps_unselected_and_root(self):
         (self.source / "yes.txt").write_text("yes")
@@ -396,6 +430,94 @@ class Archives(unittest.TestCase):
                     (target / "nested" / "file\n odd.txt").read_bytes(),
                     (self.source / "nested" / "file\n odd.txt").read_bytes(),
                 )
+
+    def test_resumed_cleanup_requires_typed_matching_archive_evidence(self):
+        self.fixture()
+        sink = io.BytesIO()
+        manifest = archives.pack(self.source, sink)
+        digest = hashlib.sha256(json.dumps(
+            {key: value for key, value in manifest.items() if not key.startswith("_")},
+            sort_keys=True, ensure_ascii=True, separators=(",", ":")
+        ).encode()).hexdigest()
+        evidence = archives.VerifiedArchiveEvidence._issue(digest, "a" * 64)
+        stored = io.BytesIO(b"native proof stands in for the destination archive")
+
+        with patch.object(archives, "verify_archive", side_effect=AssertionError("full readback")):
+            result = archives.resume_cleanup_source(
+                self.source, manifest, stored, destination_unchanged=lambda: None,
+                verified_archive=evidence)
+        self.assertGreater(result["removed"], 0)
+        self.assertFalse((self.source / "nested" / "file\n odd.txt").exists())
+
+    def test_resumed_cleanup_reuses_unchanged_fresh_source_hashes(self):
+        (self.source / "a").write_text("a")
+        (self.source / "b").write_text("b")
+        sink = io.BytesIO()
+        manifest = archives.pack(self.source, sink)
+        with patch.object(archives, "_hash_fd", wraps=archives._hash_fd) as hashed:
+            result = archives.resume_cleanup_source(
+                self.source, manifest, sink,
+                destination_unchanged=lambda: None,
+                fresh_source_manifest=manifest,
+            )
+        self.assertEqual(result["removed"], 2)
+        self.assertEqual(hashed.call_count, 0)
+
+    def test_resumed_cleanup_reuses_preflight_hashes_within_invocation(self):
+        (self.source / "a").write_text("a")
+        (self.source / "b").write_text("b")
+        sink, manifest = self.packed()
+        (self.source / "a").unlink()
+        with patch.object(archives, "_hash_fd", wraps=archives._hash_fd) as hashed:
+            result = archives.resume_cleanup_source(
+                self.source, manifest, sink,
+                destination_unchanged=lambda: None,
+            )
+        self.assertEqual(result["removed"], 1)
+        self.assertEqual(hashed.call_count, 1)
+
+    def test_resumed_cleanup_rejects_content_change_after_preflight(self):
+        path = self.source / "file"
+        path.write_text("before")
+        sink, manifest = self.packed()
+        calls = 0
+
+        def mutate_after_preflight():
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                path.write_text("changed")
+
+        with self.assertRaisesRegex(archives.ArchiveError, "changed"):
+            archives.resume_cleanup_source(
+                self.source, manifest, sink,
+                destination_unchanged=mutate_after_preflight,
+            )
+        self.assertTrue(path.exists())
+
+    def test_resumed_cleanup_rehashes_hardlink_after_ctime_change(self):
+        (self.source / "one").write_text("same")
+        (self.source / "two").hardlink_to(self.source / "one")
+        sink, manifest = self.packed()
+        (self.source / "one").unlink()
+        with patch.object(archives, "_hash_fd", wraps=archives._hash_fd) as hashed:
+            result = archives.resume_cleanup_source(
+                self.source, manifest, sink,
+                destination_unchanged=lambda: None,
+            )
+        self.assertEqual(result["removed"], 1)
+        self.assertGreaterEqual(hashed.call_count, 2)
+
+    def test_resumed_cleanup_rejects_evidence_for_another_manifest(self):
+        self.fixture()
+        sink = io.BytesIO()
+        manifest = archives.pack(self.source, sink)
+        evidence = archives.VerifiedArchiveEvidence._issue("0" * 64, "a" * 64)
+        with self.assertRaisesRegex(archives.ArchiveError, "does not match"):
+            archives.resume_cleanup_source(
+                self.source, manifest, io.BytesIO(b"unused"),
+                destination_unchanged=lambda: None, verified_archive=evidence)
+        self.assertTrue((self.source / "nested" / "file\n odd.txt").exists())
 
 
 if __name__ == "__main__":
