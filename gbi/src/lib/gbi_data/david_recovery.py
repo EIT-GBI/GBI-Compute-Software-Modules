@@ -870,6 +870,7 @@ def recover_completed_superset_unit(
 
         cleanup_arguments = {
             "destination_unchanged": cleanup_stability_guard,
+            "fresh_source_manifest": current,
         }
         if native_proof is not None:
             cleanup_arguments["verified_archive"] = native_proof.verified_archive

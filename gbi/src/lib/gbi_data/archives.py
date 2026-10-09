@@ -607,12 +607,47 @@ def verify_source(source, manifest):
         raise ArchiveError("source inventory changed since packing; source kept")
 
 
-def _verify_source_content(root_fd, entry, before, allow_ctime_change=False):
+def _fresh_source_entries(manifest):
+    """Return hashes from a caller-provided, freshly packed source manifest.
+
+    Cleanup callers must pass the in-memory result of their current
+    ``pack()`` call.  A persisted journal manifest is deliberately not
+    supplied here; omitting this argument keeps the full source hash path.
+    The caller's six-field observation remains the validity check at every
+    cleanup read.
+    """
+    if manifest is None:
+        return None
+    evidence = manifest.get("_source")
+    if not isinstance(evidence, dict) or not isinstance(evidence.get("observations"), dict):
+        raise ArchiveError("fresh source manifest has no source observations")
+    entries = {}
+    for entry in manifest.get("entries", ()):
+        if isinstance(entry, dict) and entry.get("type") != "directory":
+            entries[entry["path"]] = (entry, evidence["observations"].get(entry["path"]))
+    return entries
+
+
+def _verify_source_content(root_fd, entry, before, allow_ctime_change=False,
+                           fresh_entries=None, verified_entries=None):
     with _parent(root_fd, entry["path"], create=False) as (parent, leaf):
         info = os.stat(leaf, dir_fd=parent, follow_symlinks=False)
         observation = _observation(info)
         if (observation[:5] != before[:5] if allow_ctime_change else observation != before):
             raise ArchiveError("selected source changed before removal; source kept")
+        verified = verified_entries.get(entry["path"]) if verified_entries is not None else None
+        if (observation == before and verified is not None
+                and verified[0] == entry and verified[1] == before):
+            return observation
+        fresh = fresh_entries.get(entry["path"]) if fresh_entries is not None else None
+        if (observation == before and fresh is not None
+                and fresh[1] == before and fresh[0].get("type") == entry.get("type")
+                and fresh[0].get("size") == entry.get("size")
+                and fresh[0].get("mode") == entry.get("mode")
+                and fresh[0].get("mtime_ns") == entry.get("mtime_ns")
+                and fresh[0].get("sha256") == entry.get("sha256")
+                and fresh[0].get("target") == entry.get("target")):
+            return observation
         if entry["type"] == "symlink":
             digest = hashlib.sha256(os.fsencode(os.readlink(leaf, dir_fd=parent))).hexdigest()
         else:
@@ -627,10 +662,11 @@ def _verify_source_content(root_fd, entry, before, allow_ctime_change=False):
                 os.close(fd)
         if digest != entry["sha256"]:
             raise ArchiveError("source checksum changed since packing; source kept")
+        return observation
 
 
 def cleanup_source(source, manifest, stored_archive, destination_unchanged=None, *, on_remove=None,
-                   on_verified=None, verify_stored_archive=None):
+                   on_verified=None, verify_stored_archive=None, fresh_source_manifest=None):
     """Explicit move cleanup: full archive readback, stable tree, exact unlinks.
 
     Caller must retain its normal source/destination lock and immutable receipt.
@@ -641,6 +677,8 @@ def cleanup_source(source, manifest, stored_archive, destination_unchanged=None,
     source verification, before any unlink. A failed publication keeps sources.
     ``verify_stored_archive()`` may wrap ``verify_archive`` in the caller's
     bounded transport retry policy; it must perform the same complete check.
+    ``fresh_source_manifest`` is only the current in-memory ``pack`` result;
+    journal resumes must leave it unset.
     """
     if destination_unchanged is None:
         if isinstance(stored_archive, (str, os.PathLike)):
@@ -657,6 +695,7 @@ def cleanup_source(source, manifest, stored_archive, destination_unchanged=None,
                     raise ArchiveError("archive stream changed before source removal; sources kept")
         else:
             raise ArchiveError("opaque archive cleanup requires a destination stability callback")
+    fresh_entries = _fresh_source_entries(fresh_source_manifest)
     destination_unchanged()
     if verify_stored_archive is None:
         verify_archive(stored_archive, manifest)
@@ -673,7 +712,8 @@ def cleanup_source(source, manifest, stored_archive, destination_unchanged=None,
         # or changed entry cannot turn a failed preflight into a partial move.
         for entry in manifest["entries"]:
             if entry["type"] != "directory":
-                _verify_source_content(root_fd, entry, evidence[entry["path"]])
+                _verify_source_content(root_fd, entry, evidence[entry["path"]],
+                                       fresh_entries=fresh_entries)
         verify_source(source, manifest)
         destination_unchanged()
         if on_verified is not None:
@@ -683,7 +723,9 @@ def cleanup_source(source, manifest, stored_archive, destination_unchanged=None,
                 continue
             before = evidence[entry["path"]]
             identity = tuple(before[:2])
-            _verify_source_content(root_fd, entry, before, allow_ctime_change=identity in unlinked_inodes)
+            _verify_source_content(root_fd, entry, before,
+                                   allow_ctime_change=identity in unlinked_inodes,
+                                   fresh_entries=fresh_entries)
             with _parent(root_fd, entry["path"], create=False) as (parent, name):
                 now = os.stat(name, dir_fd=parent, follow_symlinks=False)
                 before = evidence[entry["path"]]
@@ -716,13 +758,15 @@ def cleanup_source(source, manifest, stored_archive, destination_unchanged=None,
 
 def resume_cleanup_source(source, manifest, stored_archive, destination_unchanged=None, *,
                           on_verified=None, verify_stored_archive=None,
-                          verified_archive=None):
+                          verified_archive=None, fresh_source_manifest=None):
     """Resume exact cleanup from a verified archive journal.
 
     Missing entries that were selected by the original manifest are treated as
     already removed.  Every remaining source entry is revalidated; additions,
-    excluded-entry changes and replacements fail closed.  The return value
-    counts only bytes unlinked by this invocation.
+    excluded-entry changes and replacements fail closed.  The optional
+    ``fresh_source_manifest`` is the current in-memory ``pack`` result, never
+    the persisted journal manifest. The return value counts only bytes
+    unlinked by this invocation.
     """
     if destination_unchanged is None:
         if isinstance(stored_archive, (str, os.PathLike)):
@@ -758,8 +802,10 @@ def resume_cleanup_source(source, manifest, stored_archive, destination_unchange
             raise ArchiveError(f"unselected source path disappeared: {sorted(invalid_missing)[0]}")
         return current, missing
 
+    fresh_entries = _fresh_source_entries(fresh_source_manifest) or {}
     current, missing = inventory()
     removed_inodes = {tuple(expected[name][:2]) for name in missing if name in selected_entries}
+    verified_entries = {}
     with _directory(source) as root_fd:
         for name, observation in current.items():
             before = expected[name]
@@ -768,8 +814,13 @@ def resume_cleanup_source(source, manifest, stored_archive, destination_unchange
                     if observation[:3] != before[:3]:
                         raise ArchiveError(f"source directory changed during resumed cleanup: {name}")
                 else:
-                    _verify_source_content(root_fd, selected_entries[name], before,
-                                           allow_ctime_change=tuple(observation[:2]) in removed_inodes)
+                    entry = selected_entries[name]
+                    verified_observation = _verify_source_content(
+                        root_fd, entry, before,
+                        allow_ctime_change=tuple(observation[:2]) in removed_inodes,
+                        fresh_entries=fresh_entries)
+                    if verified_observation == before:
+                        verified_entries[name] = (entry, before)
             elif stat.S_ISDIR(before[2]):
                 if observation[:3] != before[:3]:
                     raise ArchiveError(f"source directory changed during resumed cleanup: {name}")
@@ -804,7 +855,9 @@ def resume_cleanup_source(source, manifest, stored_archive, destination_unchange
                 continue
             before = expected[entry["path"]]
             _verify_source_content(root_fd, entry, before,
-                                   allow_ctime_change=tuple(before[:2]) in unlinked_inodes)
+                                   allow_ctime_change=tuple(before[:2]) in unlinked_inodes,
+                                   fresh_entries=fresh_entries,
+                                   verified_entries=verified_entries)
             with _parent(root_fd, entry["path"], create=False) as (parent, name):
                 now = os.stat(name, dir_fd=parent, follow_symlinks=False)
                 if stat.S_ISDIR(now.st_mode) or _observation(now)[:5] != before[:5]:

@@ -7,9 +7,13 @@ FSS and Object Storage. It runs with your Unix permissions and verifies the
 destination before removing an eligible filesystem source. Object Storage is
 the durable store: normal moves and restores always retain its originals.
 
-This guide describes the **0.4.17 release**, which speeds up archive moves by
-removing a duplicate archive read and checking the final chunk pass in parallel.
-Full destination verification and verified receipts still precede source removal.
+This guide describes the **0.4.18 release**. Archive moves reuse freshly computed
+source hashes while file identity and metadata remain unchanged. It also retains
+0.4.17's single destination archive check and parallel final chunk verification.
+Full destination verification and verified receipts still precede ordinary source
+removal. Journal-only resumes hash each remaining source file once per
+invocation, then reuse that verified observation before unlink; persisted journal
+digests alone are never reused, and a hardlink ctime change forces a rehash.
 The 0.4.11 transfer behaviour was accepted for ordinary
 users on 28 September 2026. Check `gbi --version` and the
 [README](../README.md) before using new options. Its matching typed broker and

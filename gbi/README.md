@@ -43,6 +43,17 @@ Every part and the reconstructed archive still receive full checksum checks.
 Saved plans, journals, archive formats and filters remain compatible. This is
 source release status; site installation and runtime acceptance are separate.
 
+**0.4.18** reuses hashes from the current in-memory pack manifest during move
+cleanup while each source entry's identity, size, mode, mtime and ctime remain
+unchanged. Journal-only resumes hash each remaining source payload once per
+invocation, then reuse that verified observation before unlink; persisted
+journal digests alone are never reused. Unlinking a hardlink forces its
+remaining aliases to be rehashed. The bounded maintainer
+recovery helper can also reuse exact, source-bound native OCI checksum proof
+instead of downloading an already verified archive. Ordinary CLI archive
+verification and saved-plan compatibility remain unchanged. Site installation
+and runtime acceptance are pending.
+
 ## Everyday commands
 
 ```bash

@@ -85,6 +85,40 @@ class ArchiveCleanupResume(unittest.TestCase):
         self.assertEqual([record["event"] for record in self.records()], ["verified", "deleted"])
         self.assertEqual(self.records()[-1]["freed_bytes"], sum(remaining.values()))
 
+    def test_fresh_pack_cleanup_receives_in_memory_manifest(self):
+        task = self.task()
+        original = archives.cleanup_source
+        observed = {}
+
+        def capture(source, manifest, stored, destination_unchanged=None, **kwargs):
+            observed["manifest"] = manifest
+            observed["fresh_source_manifest"] = kwargs.get("fresh_source_manifest")
+            return original(source, manifest, stored,
+                            destination_unchanged=destination_unchanged, **kwargs)
+
+        with patch.object(formats.archives, "cleanup_source", side_effect=capture):
+            formats.transfer(task)
+        self.assertIs(observed["manifest"], observed["fresh_source_manifest"])
+        self.assertIn("observations", observed["fresh_source_manifest"]["_source"])
+
+    def test_journal_resume_rehashes_source_without_fresh_snapshot(self):
+        task = self.task()
+        with self.fail_after_first_unlink(), self.assertRaisesRegex(ValueError, "interruption"):
+            formats.transfer(task)
+        original = archives.resume_cleanup_source
+        observed = {}
+
+        def capture(source, manifest, stored, destination_unchanged=None, **kwargs):
+            observed.update(kwargs)
+            return original(source, manifest, stored,
+                            destination_unchanged=destination_unchanged, **kwargs)
+
+        with patch.object(formats.archives, "resume_cleanup_source", side_effect=capture), \
+                patch.object(archives, "_hash_fd", wraps=archives._hash_fd) as hashed:
+            formats.transfer(task)
+        self.assertNotIn("fresh_source_manifest", observed)
+        self.assertGreater(hashed.call_count, 0)
+
     def test_corrupt_destination_keeps_remaining_source(self):
         task = self.task()
         with self.fail_after_first_unlink(), self.assertRaises(ValueError):

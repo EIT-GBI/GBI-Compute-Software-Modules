@@ -661,7 +661,8 @@ def transfer(task):
                                if resumed_cleanup else
                                {"removed": archives.cleanup_source(source, manifest, stored, destination_unchanged=destination_unchanged,
                                                                    on_verified=record_verified,
-                                                                   verify_stored_archive=verify_stored_archive),
+                                                                   verify_stored_archive=verify_stored_archive,
+                                                                   fresh_source_manifest=manifest),
                                 "freed_bytes": _source_bytes(manifest)})
                     guard.final()
                 freed_bytes = cleanup["freed_bytes"]

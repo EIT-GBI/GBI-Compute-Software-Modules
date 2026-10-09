@@ -301,6 +301,27 @@ class DavidArchiveRecoveryTests(unittest.TestCase):
             "empty": False, "include": [], "exclude": ["*.py"], "reserved_names": [],
         })["deleted"], False)
 
+    def test_superset_resume_passes_current_pack_as_fresh_source_manifest(self):
+        fixture = _fixture(self.root)
+        original = archives.resume_cleanup_source
+        observed = {}
+
+        def capture(source, manifest, stored_archive, **kwargs):
+            observed["manifest"] = manifest
+            observed["fresh_source_manifest"] = kwargs.get("fresh_source_manifest")
+            return original(source, manifest, stored_archive, **kwargs)
+
+        with mock.patch.object(archives, "resume_cleanup_source", side_effect=capture):
+            david_recovery.recover_completed_superset_unit(
+                fixture["state"], fixture["run_id"], fixture["unit_key"],
+                fixture["plan_sha256"], provenance_id="fresh-current-manifest",
+                retain_safety_copy=True)
+        fresh = observed["fresh_source_manifest"]
+        self.assertIsNotNone(fresh)
+        self.assertIsNot(fresh, observed["manifest"])
+        self.assertIn("shared/keep.dat", fresh["_source"]["observations"])
+        self.assertNotIn("old/already-moved.dat", fresh["_source"]["observations"])
+
     def _verified_journal(self, fixture, phase="verified"):
         archived = archives.inspect_archive(lambda: chunks.open_chunks(fixture["target"]))
         key = david_recovery._key(str(fixture["target"]))
@@ -459,12 +480,12 @@ class DavidArchiveRecoveryTests(unittest.TestCase):
         fixture = _fixture(self.root)
         original_cleanup = archives.resume_cleanup_source
 
-        def mutate_copy(source, manifest, stored_archive, destination_unchanged=None):
+        def mutate_copy(source, manifest, stored_archive, destination_unchanged=None, **kwargs):
             os.chmod(stored_archive, 0o600)
             with open(stored_archive, "ab") as stream:
                 stream.write(b"changed")
             return original_cleanup(source, manifest, stored_archive,
-                                    destination_unchanged=destination_unchanged)
+                                    destination_unchanged=destination_unchanged, **kwargs)
 
         with mock.patch.object(archives, "resume_cleanup_source", mutate_copy):
             with self.assertRaisesRegex(ValueError, "recovery payload must remain"):
@@ -483,9 +504,9 @@ class DavidArchiveRecoveryTests(unittest.TestCase):
         original_cleanup = archives.resume_cleanup_source
 
         def mutate_target_after_cleanup(source, manifest, stored_archive,
-                                        destination_unchanged=None):
+                                        destination_unchanged=None, **kwargs):
             result = original_cleanup(source, manifest, stored_archive,
-                                      destination_unchanged=destination_unchanged)
+                                      destination_unchanged=destination_unchanged, **kwargs)
             part = fixture["target"] / ".gbi" / "parts" / "00000000.part"
             with part.open("ab") as stream:
                 stream.write(b"changed")
