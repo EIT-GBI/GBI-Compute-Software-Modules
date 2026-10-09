@@ -441,7 +441,7 @@ def recover_completed_superset_unit(
         state_root, run_id, source_relative_sha256, expected_plan_sha256,
         provenance_id=None, retain_safety_copy=False, *,
         native_cleanup_binding=None, native_cleanup_binding_sha256=None,
-        evidence_root=None, identity_reader=None):
+        evidence_root=None, identity_reader=None, expected_request_sha256=None):
     """Finish one frozen chunk unit whose valid archive contains source state.
 
     ``source_relative_sha256`` identifies one unit in the saved plan without
@@ -459,6 +459,8 @@ def recover_completed_superset_unit(
     source/native/producer evidence and rechecks every provider identity before
     and after cleanup through an injected maintained Storage reader. It reuses
     the already retained staged tar as recovery material; it never rebuilds it.
+    ``expected_request_sha256`` also pins the original request bytes before and
+    after acquiring the existing archive-plan lock.
     The ordinary superset path keeps its full destination readback.
     """
     state_root = Path(state_root).absolute()
@@ -468,9 +470,18 @@ def recover_completed_superset_unit(
         raise ValueError("run id must be one path component")
     if len(source_relative_sha256) != 64 or any(c not in "0123456789abcdef" for c in source_relative_sha256):
         raise ValueError("source unit identity must be a lowercase SHA-256")
+    if (expected_request_sha256 is not None
+            and (not isinstance(expected_request_sha256, str)
+                 or len(expected_request_sha256) != 64
+                 or any(c not in "0123456789abcdef" for c in expected_request_sha256))):
+        raise ValueError("expected request identity must be a lowercase SHA-256")
 
     request_path = state_root / "runs" / run_id / "request.json"
-    request = json.loads(request_path.read_text())
+    request_bytes = request_path.read_bytes()
+    if (expected_request_sha256 is not None
+            and hashlib.sha256(request_bytes).hexdigest() != expected_request_sha256):
+        raise ValueError("saved run request differs from the authorized frozen request")
+    request = json.loads(request_bytes)
     old_target = Path(request["target"])
     plan_key = _key(str(old_target))
     plan_root = state_root / "archive-plans"
@@ -519,7 +530,10 @@ def recover_completed_superset_unit(
 
         if hashlib.sha256(plan_path.read_bytes()).hexdigest() != expected_plan_sha256:
             raise ValueError("saved archive plan changed while acquiring its lock")
-        if json.loads(request_path.read_text()) != request:
+        locked_request_bytes = request_path.read_bytes()
+        if (json.loads(locked_request_bytes) != request
+                or (expected_request_sha256 is not None
+                    and hashlib.sha256(locked_request_bytes).hexdigest() != expected_request_sha256)):
             raise ValueError("saved run request changed while acquiring the plan lock")
 
         for journal in (

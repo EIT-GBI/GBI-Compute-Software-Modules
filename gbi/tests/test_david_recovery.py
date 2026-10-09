@@ -310,6 +310,26 @@ class DavidArchiveRecoveryTests(unittest.TestCase):
         self.assertTrue(fixture["keep"].exists())
         self.assertFalse((fixture["state"] / "recovery-receipts").exists())
 
+    def test_expected_request_hash_is_rechecked_after_the_plan_lock(self):
+        fixture = _fixture(self.root)
+        request_path = fixture["state"] / "runs" / fixture["run_id"] / "request.json"
+        expected = hashlib.sha256(request_path.read_bytes()).hexdigest()
+        original_flock = david_recovery.fcntl.flock
+
+        def change_request_before_lock(fd, operation):
+            request_path.write_text(request_path.read_text() + " ")
+            return original_flock(fd, operation)
+
+        with mock.patch.object(david_recovery.fcntl, "flock", change_request_before_lock):
+            with self.assertRaisesRegex(ValueError, "saved run request changed"):
+                david_recovery.recover_completed_superset_unit(
+                    fixture["state"], fixture["run_id"], fixture["unit_key"],
+                    fixture["plan_sha256"], provenance_id="request-pin",
+                    expected_request_sha256=expected,
+                )
+        self.assertTrue(fixture["keep"].exists())
+        self.assertFalse((fixture["state"] / "recovery-receipts").exists())
+
     def test_safety_copy_mutation_fails_guard_before_more_source_cleanup(self):
         fixture = _fixture(self.root)
         original_cleanup = archives.resume_cleanup_source

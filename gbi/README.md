@@ -176,6 +176,13 @@ keeps the per-file source hash/unlink guards; it does not reread the chunk
 archive payload or reconstruct another tar. Ordinary recovery and archive
 superset cases retain the existing full readback path.
 
+The optional `expected_request_sha256` argument pins the original saved request
+bytes both before and after acquiring the existing archive-plan lock. A
+content-addressed cleanup package should carry that request and plan alongside
+the native binding, source proof, terminal receipt, producer semantic proof,
+and frozen worklist; the worker still checks the live saved plan and all source
+and destination guards before unlinking.
+
 ```bash
 GBI_SITE_LUSTRE_ROOT=/site/scratch/users \
 GBI_SITE_FSS_ROOT=/site/home/users \
