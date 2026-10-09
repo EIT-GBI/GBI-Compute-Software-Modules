@@ -87,6 +87,15 @@ per destination below `.gbi/archive-plans` on Lustre. Keep that plan and its
 unit results during recovery. The destination lock is held until all workers
 stop. A new selection must not be mixed into a saved destination.
 
+From 0.4.17, a move performs its complete destination archive verification
+once, inside cleanup, before publishing the verified journal and receipt and
+before the first unlink. A failed receipt write leaves sources in place. The
+existing settling deadline applies to that verification. Copies retain their
+full verification before the copy receipt. Chunk completion still verifies
+every part twice; the final pass streams at most four parts concurrently
+(4 MiB of read buffers per transfer worker). This bounded concurrency does not
+change the saved plan, part order, combined checksum or completion marker.
+
 `GBI_SITE_PREFECT_URL` must be an HTTPS URL without credentials, query
 parameters or fragments. The CLI tries the local broker socket first and uses
 the HTTPS endpoint only when that socket is unavailable. HTTPS uses the caller's

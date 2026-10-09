@@ -51,6 +51,130 @@ class Formats(unittest.TestCase):
         self.assertEqual(formats.source_format(task["format_target"]), "archive")
         self.assertFalse((self.state / "format-staging").exists())
 
+    def test_move_verifies_destination_once_before_receipt_and_any_unlink(self):
+        task = self.task(delete=True)
+        original_verify, original_receipt = archives.verify_archive, formats.receipt
+        events = []
+
+        def verify(*args, **kwargs):
+            result = original_verify(*args, **kwargs)
+            events.append("verified body")
+            return result
+
+        def record(path, value):
+            if value["event"] == "verified":
+                self.assertEqual(events, ["verified body"])
+                self.assertTrue((self.source / "a.txt").exists())
+                self.assertTrue((self.source / "b.bin").exists())
+            return original_receipt(path, value)
+
+        with patch.object(archives, "verify_archive", side_effect=verify), \
+                patch.object(formats, "receipt", side_effect=record):
+            self.assertTrue(transfer(task)["deleted"])
+        self.assertEqual(events, ["verified body"])
+
+    def test_failed_verified_receipt_retains_all_sources_and_resumes(self):
+        task = self.task(delete=True)
+        with patch.object(formats, "receipt", side_effect=OSError("receipt unavailable")):
+            with self.assertRaisesRegex(OSError, "receipt unavailable"):
+                transfer(task)
+        self.assertEqual((self.source / "a.txt").read_text(), "alpha")
+        self.assertEqual((self.source / "b.bin").read_text(), "beta")
+        with patch.object(archives, "verify_archive", wraps=archives.verify_archive) as verify:
+            self.assertTrue(transfer(task)["deleted"])
+        self.assertEqual(verify.call_count, 1)
+        self.assertEqual([r["event"] for r in self.records()], ["verified", "deleted"])
+
+    def test_corrupt_move_destination_never_publishes_verified_receipt(self):
+        task = self.task(delete=True)
+        original_verify = archives.verify_archive
+
+        def corrupt_then_verify(stored, manifest):
+            Path(stored).write_bytes(b"corrupt destination")
+            return original_verify(stored, manifest)
+
+        with patch.object(archives, "verify_archive", side_effect=corrupt_then_verify):
+            with self.assertRaises(archives.ArchiveError):
+                transfer(task)
+        self.assertTrue((self.source / "a.txt").exists())
+        self.assertTrue((self.source / "b.bin").exists())
+        self.assertFalse(Path(task["receipt"]).exists())
+
+    def test_move_retries_transient_destination_visibility_before_receipt(self):
+        task = self.task(delete=True, settle_seconds=2)
+        original = archives.verify_archive
+        attempts = 0
+
+        def verify(stored, manifest):
+            nonlocal attempts
+            attempts += 1
+            if attempts == 1:
+                self.assertFalse(Path(task["receipt"]).exists())
+                raise OSError("destination not visible yet")
+            return original(stored, manifest)
+
+        with patch.object(archives, "verify_archive", side_effect=verify), \
+                patch.object(formats.time, "sleep"):
+            self.assertTrue(transfer(task)["deleted"])
+        self.assertEqual(attempts, 2)
+
+    def test_move_retries_initial_guard_visibility_before_verification(self):
+        task = self.task(delete=True, settle_seconds=2)
+        original = formats._StoredArchiveGuard
+        attempts = 0
+
+        def guard(stored):
+            nonlocal attempts
+            attempts += 1
+            if attempts == 1:
+                self.assertFalse(Path(task["receipt"]).exists())
+                raise FileNotFoundError("archive not visible yet")
+            return original(stored)
+
+        with patch.object(formats, "_StoredArchiveGuard", side_effect=guard), \
+                patch.object(formats.time, "sleep"):
+            self.assertTrue(transfer(task)["deleted"])
+        self.assertEqual(attempts, 2)
+
+    def test_chunked_move_verifies_remote_archive_once(self):
+        task = self.task(delete=True, chunk_size=4096,
+                         format_target=str(self.target_root / "bundle.gbi.tar.gbi-chunks"))
+        original = archives.verify_archive
+        destination_passes = 0
+
+        def verify(stored, manifest):
+            nonlocal destination_passes
+            if callable(stored):
+                destination_passes += 1
+                self.assertFalse(Path(task["receipt"]).exists())
+            return original(stored, manifest)
+
+        with patch.object(archives, "verify_archive", side_effect=verify):
+            self.assertTrue(transfer(task)["deleted"])
+        self.assertEqual(destination_passes, 1)
+        self.assertEqual([r["event"] for r in self.records()], ["verified", "deleted"])
+
+    def test_move_retries_a_successful_stale_guard_snapshot(self):
+        task = self.task(delete=True, settle_seconds=2)
+        original = formats._StoredArchiveGuard
+        attempts = 0
+
+        def guard(stored):
+            nonlocal attempts
+            attempts += 1
+            candidate = original(stored)
+            if attempts == 1:
+                candidate.before = [0] * len(candidate.before)
+            return candidate
+
+        with patch.object(formats, "_StoredArchiveGuard", side_effect=guard), \
+                patch.object(formats.time, "sleep"), \
+                patch.object(archives, "verify_archive", wraps=archives.verify_archive) as verify:
+            self.assertTrue(transfer(task)["deleted"])
+        self.assertEqual(attempts, 2)
+        self.assertEqual(verify.call_count, 2)
+        self.assertEqual([r["event"] for r in self.records()], ["verified", "deleted"])
+
     def test_small_pack_requalifies_member_growth_before_output(self):
         policy = packing.PackingPolicy(10, 2, 100, 100, 10)
         self.assertEqual(len(packing.plan(self.source, policy, allow_root=True)["candidates"]), 1)

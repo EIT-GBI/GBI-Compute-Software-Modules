@@ -1,0 +1,26 @@
+--- simple-modules.ex
++++ simple-modules.ex
+@@ -5086,15 +5086,17 @@
+ else
+     find_cmd = "find . -type f -perm +111 -exec chmod o+x {} \\;"
+ end
+ 
+-sh.pushd(settings.site.destination)
+ sh.__verbose = true
+ 
+-sh.chmod("-R", "o+rX", ".")
+--- make all files that are executable by the user executable by everyone
+-sh.bash("-c", find_cmd)
++for _, install_dir in pairs(installed_versions) do
++    sh.pushd(install_dir)
++    sh.chmod("-R", "o+rX", ".")
++    -- make all files that are executable by the user executable by everyone
++    sh.bash("-c", find_cmd)
++    sh.popd()
++end
+ 
+ sh.__verbose = false
+-sh.popd()
+ 
+ --------------------------------------------------------------------------------
+ -- DONE! (the end)

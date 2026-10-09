@@ -6,6 +6,7 @@ Helpers never delete the source or stage a payload on another filesystem.
 """
 
 from contextlib import contextmanager
+from concurrent.futures import ThreadPoolExecutor
 import fcntl
 import hashlib
 import io
@@ -26,6 +27,7 @@ BLOCK_SIZE = 1024 * 1024
 DEFAULT_CHUNK_SIZE = 64 * BLOCK_SIZE
 MAX_PARTS = 100000
 MAX_MANIFEST_BYTES = 16 * BLOCK_SIZE
+VERIFY_WORKERS = 4
 
 
 def _identity(info):
@@ -354,7 +356,8 @@ def write_chunks(source, store, *, state, chunk_size=DEFAULT_CHUNK_SIZE,
         if (fingerprint(source) != before or final_digest != digest or
                 final_size != before[3] or combined.hexdigest() != digest):
             raise ValueError("source changed or full chunk checksum differs; source retained")
-        for path, identity, part in verified_parts:
+        def recheck(item):
+            path, identity, part = item
             try:
                 # A same-size rewrite can preserve a coarse filesystem mtime.
                 # Re-read the checksum before publishing completion rather than
@@ -364,6 +367,11 @@ def write_chunks(source, store, *, state, chunk_size=DEFAULT_CHUNK_SIZE,
                 _part_digest(path, part)
             except (OSError, ValueError) as error:
                 raise ValueError("verified chunk changed before completion; source retained") from error
+        # Each check streams one part in 1 MiB blocks. Submit bounded windows so
+        # even a 100,000-part store has at most four checks and buffers in flight.
+        with ThreadPoolExecutor(max_workers=VERIFY_WORKERS) as pool:
+            for start in range(0, len(verified_parts), VERIFY_WORKERS):
+                list(pool.map(recheck, verified_parts[start:start + VERIFY_WORKERS]))
         _remote_json(marker, _completion(manifest, encoded), journal, journal_path, settle_seconds)
         return {**manifest, "state": "complete"}
 

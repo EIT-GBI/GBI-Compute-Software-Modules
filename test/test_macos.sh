@@ -12,6 +12,7 @@ make realclean
 make bootstrap
 
 source ${__PREFIX__}/opt/share/env.sh
+./test/test_simple_modules_permission_scope.sh
 
 mkdir -p ${__PREFIX__}/test/usr
 
