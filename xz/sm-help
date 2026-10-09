@@ -1,0 +1,3 @@
+the .xz / LZMA compressor: xz, unxz, xzcat, xzgrep ... plus a static liblzma
+built from source through the cc module's zig shims and the make module (needs 'make cc' and 'make make' first) -- no host compiler, and the binaries run on every host of the fleet
+the release tarball must match a sha256 pinned in install.sh (this project's 5.6.0/5.6.1 tarballs carried a backdoor) -- a version bump adds the new digest there

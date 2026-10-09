@@ -146,6 +146,16 @@ idioms:
   output is right: `install.sh` runs under `set -o pipefail`, `grep -q` exits
   on the first match, and the writer's SIGPIPE fails the pipeline. Capture to
   a file, then grep the file (see `make/sm-config/install.sh`).
+- Smoke-test data: BSD `seq` (macOS) prints numbers from 1e6 up in `%g` form
+  (`1e+06`), so a `grep` for `1000000` finds nothing. Generate test data with
+  `awk` and end it with a fixed sentinel line (see `xz/sm-config/install.sh`).
+  The `lzma` / `unlzma` / `lzcat` links of xz read only the legacy `.lzma`
+  format -- test `.xz` files through `xzcat`.
+- `module help <name>` runs `help([[...]])` through Lmod's Markdown processor
+  (`libexec/MarkdownProcessor.lua`): `_..._` is emphasis and backticks are
+  code marks, both dropped on a terminal, so `PKG_CONFIG_PATH` prints as
+  `PKGCONFIGPATH`. Describe environment variables in words there and name
+  them in a Lua comment next to the `prepend_path` instead.
 - Cleanup of a test install: `make clean TARGET=<name> GBI_MODULE_PATH=./usr`.
 
 ## Docs checklist on promote

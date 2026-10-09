@@ -315,6 +315,7 @@ module dependencies from the `module load` lines of its `install.sh`.
 | `make` | GNU make, built through the `cc` module's shims: no host compiler needed, and the binary runs on every host | no — the source build *is* the default: GNU make's tarball builds itself with its `build.sh`, no make required |
 | `cargo-zigbuild` | `cargo build` with zig as the linker — rust on hosts without a system linker; loading it also routes plain `cargo build` / `cargo install` and the `cc` crate through zig, pinned to the `cc` module's glibc floor | no — installed from the PyPI wheel with `uv`; `cargo install`ing it would need the very linker it provides |
 | `lustre-dlm` | per-owner Lustre usage collection (`lustre-dlm-usage`) behind the cached `gbi data usage` report; run weekly by the Prefect storage-usage flow | no — a pinned Lustre-DLM release tag (verified tarball digest) with its frozen `uv.lock` on a uv-managed Python; needs `uv` at build time |
+| `xz` | XZ Utils — `xz`, `unxz`, `xzcat`, `xzgrep` & co.: the `.xz` / LZMA2 compressor (multi-threaded with `-T0`), built through the `cc` module's shims, with a static PIC `liblzma` + headers + `liblzma.pc` for builds that need the library | no — the source build *is* the default: upstream ships source tarballs only (and Windows binaries); needs `cc` + `make`. The tarball must match a sha256 pinned in the recipe |
 
 Upstream `eza` and `ncdu` ship no macOS binaries, so their default-mode recipes
 fail fast on darwin with a pointer to `make <target> MODE=build`.
@@ -350,7 +351,7 @@ of `make all`. Module dependencies are not declared anywhere extra — they are
 read from the `module load` lines of `install.sh`, in either mode: `make help`
 lists them, and `make all` installs a default-mode recipe after whatever its
 `install.sh` loads (`cc` after `zig`, `make` after `cc`, `cargo-zigbuild`
-after `uv` and `cc`), alphabetically otherwise.
+after `uv` and `cc`, `xz` after `cc` and `make`), alphabetically otherwise.
 
 ### From a template
 

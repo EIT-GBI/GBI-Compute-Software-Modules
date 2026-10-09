@@ -1,0 +1,37 @@
+[env]
+SOURCE_NAME    = "xz"
+SOURCE_PREFIX  = "https://github.com/tukaani-project/xz/releases/download/v{INSTALL_VERSION}"
+VERSION        = "{INSTALL_VERSION}"
+INSTALL_PREFIX = "{SITE_DESTINATION}/{INSTALL_VERSION_VARIANT}"
+# Built through the cc module's zig shims and driven by the make module, so
+# neither a host compiler nor a host make is needed, and the binaries run on
+# every host of the fleet (they target the cc module's glibc floor). Which
+# modules: keep in step with cc/sm-config/settings.toml and
+# make/sm-config/settings.toml.
+CC_MODULE   = "0.16.0-zig"
+MAKE_MODULE = "4.4.1"
+# `make -j` for the build: liblzma plus the tools, well under a minute at this
+NPROCS = 8
+
+[install]
+# Every version listed here needs the sha256 of its xz-<version>.tar.gz in
+# the table at the top of install.sh -- the install refuses a tarball with
+# another digest.
+versions = ["5.8.4"]
+prefix = "{SITE_DESTINATION}"
+# note: this is Lua regex: you will need to escape - and + (using %)
+format = "^{INSTALL_VERSION_VARIANT}$"
+# (optional) relocate after install
+destination = "{SITE_DESTINATION}/{INSTALL_VERSION_VARIANT}"
+stage = true
+
+[module]
+PATH = "{INSTALL_DIR}"
+INSTALL_VERSION = "{INSTALL_VERSION}"
+
+[post]
+# toggles mandatory relocate if `stage` and `clean` are true. If the install
+# script already relocates the package, then we can set `safe = false`
+safe = false
+# delete staging area after successful install
+clean = true

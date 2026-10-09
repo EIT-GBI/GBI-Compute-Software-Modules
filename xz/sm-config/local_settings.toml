@@ -1,0 +1,5 @@
+name = "xz"
+
+relocate = false
+destination = "{SM_ROOT}/xz"
+modules = "{SM_ROOT}/modules"
