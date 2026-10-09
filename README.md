@@ -86,7 +86,7 @@ The process of deploying your module (after successful tests) is:
 1. In a fresh shell (check tat `GBI_MODULE_PATH` is
    `/mnt/gbi-shared/software`); and that `lmod` is the GBI LMod install.
 2. Use the reviewed release checkout from the cluster maintainer's home:
-   `cd /mnt/gbi-shared/home/christiaan-viljoen/software-builds/GBI-Compute-Software-Modules`.
+   `cd "$HOME/software-builds/GBI-Compute-Software-Modules"`.
 3. Build into the shared installation prefix explicitly:
    `GBI_MODULE_PATH=/mnt/gbi-shared/software make <your module name>`
 

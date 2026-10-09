@@ -30,7 +30,7 @@ module at the repo root; the Makefile discovers them by layout.
   `opt/share/env.sh` may point at a stale tree (e.g. `test/usr/modules` after
   a smoke-test run).
 - Shared deployment source boundary: build the reviewed shared release from
-  `/mnt/gbi-shared/home/christiaan-viljoen/software-builds/GBI-Compute-Software-Modules`
+  `$HOME/software-builds/GBI-Compute-Software-Modules`
   with `GBI_MODULE_PATH=/mnt/gbi-shared/software`. Do not put additional
   source checkouts, staged source, build directories, worktrees, or
   hash-named retry copies under `/mnt/gbi-shared/software`. The existing
