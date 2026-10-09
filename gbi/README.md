@@ -162,7 +162,13 @@ only explicitly named saved units. It is not a general retry or retarget path.
 
 For an exact historical unit with an accepted native checksum proof, the
 maintainer may pass the SHA-pinned enriched cleanup binding and a maintained
-Storage identity reader to the same helper. This path is eligible only when
+Storage identity reader to the same helper. `storage_identity_reader()` adapts
+the maintained `transfer_core.archive.OciSdkStorage.head()` interface; callers
+must construct it through the existing scoped Slurm worker environment, using
+its private `PREFECT_OBJECT_CREDENTIAL_FILE`. The helper does not read, create,
+copy, or broaden credentials. The adapter performs at most four concurrent
+HEADs and requires ETag, version ID, size, and metadata for every pinned object.
+This path is eligible only when
 the freshly hashed FSS manifest exactly matches the producer's per-file
 manifest digest and every native part/control identity still matches before
 and after cleanup. It retains the already staged tar as the recovery copy and

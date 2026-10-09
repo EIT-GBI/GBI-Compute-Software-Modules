@@ -7,6 +7,8 @@ recovery provenance.
 """
 
 import argparse
+from collections.abc import Mapping
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 import fcntl
 import hashlib
@@ -384,6 +386,55 @@ class NativeArchiveProof:
 
     def assert_manifest(self, manifest):
         self.verified_archive.assert_manifest(manifest)
+
+
+def storage_identity_reader(storage, namespace, bucket, *, max_workers=4):
+    """Adapt maintained ``OciSdkStorage.head`` to the native cleanup contract.
+
+    The caller must construct ``storage`` through the existing scoped provider
+    path (for example ``ParClient.from_environment`` plus ``OciSdkStorage`` in
+    the Prefect-managed Slurm worker). This function neither loads credentials
+    nor widens the storage scope.
+    """
+    if (getattr(storage, "namespace", None) != namespace
+            or getattr(storage, "bucket", None) != bucket):
+        raise ValueError("provider adapter scope differs from the native proof")
+    if type(max_workers) is not int or not 1 <= max_workers <= 4:
+        raise ValueError("provider identity concurrency must be between one and four")
+
+    def read(request_namespace, request_bucket, expected):
+        if request_namespace != namespace or request_bucket != bucket:
+            raise ValueError("provider identity request escaped its configured scope")
+        names = [item.get("object_name") for item in expected]
+        if (len(names) != len(set(names))
+                or any(not isinstance(name, str) or not name for name in names)):
+            raise ValueError("provider identity request contains invalid object names")
+
+        def head(name):
+            return storage.head(name, require_integrity=False)
+
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            observed = list(executor.map(head, names))
+        result = []
+        for name, identity in zip(names, observed):
+            if identity is None:
+                raise ValueError("native proof object is missing from current provider state")
+            version_id = getattr(identity, "version_id", None)
+            etag = getattr(identity, "etag", None)
+            size = getattr(identity, "size", None)
+            metadata = getattr(identity, "metadata", None)
+            if not isinstance(version_id, str) or not version_id:
+                raise ValueError("maintained provider HEAD omitted version id")
+            if not isinstance(etag, str) or not etag:
+                raise ValueError("maintained provider HEAD omitted ETag")
+            if type(size) is not int or not isinstance(metadata, Mapping):
+                raise ValueError("maintained provider HEAD omitted size or metadata")
+            result.append({"namespace": namespace, "bucket": bucket,
+                           "object_name": name, "size": size, "etag": etag,
+                           "version_id": version_id, "metadata": dict(metadata)})
+        return result
+
+    return read
 
 
 def recover_completed_superset_unit(

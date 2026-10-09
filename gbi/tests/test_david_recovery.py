@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import stat
 import tempfile
+from types import SimpleNamespace
 import unittest
 from unittest import mock
 
@@ -452,6 +453,39 @@ class DavidArchiveRecoveryTests(unittest.TestCase):
                 evidence_root=proof["root"], identity_reader=identity_reader)
         self.assertTrue(fixture["keep"].exists())
         self.assertEqual(calls, [])
+
+    def test_storage_identity_reader_uses_scoped_head_and_requires_version(self):
+        class Storage:
+            namespace = "n"
+            bucket = "b"
+
+            def __init__(self):
+                self.names = []
+
+            def head(self, name, *, require_integrity):
+                self.names.append((name, require_integrity))
+                return SimpleNamespace(size=3, etag=f"etag-{name}",
+                                       version_id=f"version-{name}", metadata={"owner": "150016"})
+
+        storage = Storage()
+        reader = david_recovery.storage_identity_reader(storage, "n", "b")
+        expected = [{"object_name": f"part-{index}"} for index in range(6)]
+        observed = reader("n", "b", expected)
+        self.assertEqual([item["object_name"] for item in observed],
+                         [item["object_name"] for item in expected])
+        self.assertEqual(len(storage.names), 6)
+        self.assertTrue(all(require_integrity is False for _, require_integrity in storage.names))
+        self.assertEqual(observed[0], {"namespace": "n", "bucket": "b",
+                                       "object_name": "part-0", "size": 3,
+                                       "etag": "etag-part-0", "version_id": "version-part-0",
+                                       "metadata": {"owner": "150016"}})
+
+        reader_without_version = david_recovery.storage_identity_reader(
+            SimpleNamespace(namespace="n", bucket="b",
+                            head=lambda *_args, **_kwargs: SimpleNamespace(
+                                size=3, etag="etag", metadata={})), "n", "b")
+        with self.assertRaisesRegex(ValueError, "version id"):
+            reader_without_version("n", "b", [{"object_name": "part"}])
 
 
 if __name__ == "__main__":
