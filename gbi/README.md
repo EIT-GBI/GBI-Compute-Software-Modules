@@ -183,6 +183,17 @@ the native binding, source proof, terminal receipt, producer semantic proof,
 and frozen worklist; the worker still checks the live saved plan and all source
 and destination guards before unlinking.
 
+Older plans that have no saved run request use `recovery_request_path` and
+`recovery_request_sha256` for a separately recorded request under
+`.gbi/recovery-requests/`; its source, target and filters must match the frozen
+plan. Existing `verified_journal_sha256`, `stage_journal_sha256` and
+`chunk_journal_sha256` pins remain mandatory for any retained transfer journals,
+and `expected_current_root=[device, inode, mode]` permits an independently
+observed NFS mount device change while preserving the original inode and mode
+guards. The helper retains those journals and the staged tar byte-for-byte,
+rechecks their identities during cleanup, and records their hashes in
+provenance.
+
 ```bash
 GBI_SITE_LUSTRE_ROOT=/site/scratch/users \
 GBI_SITE_FSS_ROOT=/site/home/users \
