@@ -29,13 +29,23 @@ module at the repo root; the Makefile discovers them by layout.
   `module use` that path explicitly — the MODULEPATH baked into
   `opt/share/env.sh` may point at a stale tree (e.g. `test/usr/modules` after
   a smoke-test run).
+- Shared deployment source boundary: build the reviewed shared release from
+  `/mnt/gbi-shared/home/christiaan-viljoen/software-builds/GBI-Compute-Software-Modules`
+  with `GBI_MODULE_PATH=/mnt/gbi-shared/software`. Do not put additional
+  source checkouts, staged source, build directories, worktrees, or
+  hash-named retry copies under `/mnt/gbi-shared/software`. The existing
+  checkout used by the login startup bootstrap is a legacy canonical
+  bootstrap retained until a separately reviewed startup change; do not add
+  copies or relocate it in a module change. Local testing may continue to use
+  the default `./usr` install root.
 - Consistency check: `make check TARGET=<name> GBI_MODULE_PATH=./usr`
   (needs a nushell — `module load nu` first).
 - Destructive: `make realclean` deletes every installed module + modulefile
   **and** the bootstrapped Lua/Lmod. Deletions are scoped to the per-recipe
   dirs and `modules/` under `GBI_MODULE_PATH` — never the prefix itself, which
-  on shared deployments holds more than the install (it can even contain this
-  checkout). `./run.sh test/test_macos.sh` is a full teardown-and-rebuild
+  on shared deployments may contain other managed installations. The legacy
+  canonical startup bootstrap is retained separately pending its own reviewed
+  relocation. `./run.sh test/test_macos.sh` is a full teardown-and-rebuild
   (long, network-heavy). Don't run either casually.
 - Don't commit or push unless asked.
 

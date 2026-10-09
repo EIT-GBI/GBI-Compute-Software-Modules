@@ -85,15 +85,24 @@ The process of testing modules is:
 The process of deploying your module (after successful tests) is:
 1. In a fresh shell (check tat `GBI_MODULE_PATH` is
    `/mnt/gbi-shared/software`); and that `lmod` is the GBI LMod install.
-2. Go to the main config repo: `cd
-   $GBI_MODULE_PATH/GBI-Compute-Software-Module` and pull the latest version
-   (containing your module).
-3. Build the module: `make <your module name>`
+2. Use the reviewed release checkout from the cluster maintainer's home:
+   `cd /mnt/gbi-shared/home/christiaan-viljoen/software-builds/GBI-Compute-Software-Modules`.
+3. Build into the shared installation prefix explicitly:
+   `GBI_MODULE_PATH=/mnt/gbi-shared/software make <your module name>`
+
+The shared installation prefix is not a source or build workspace. Keep
+additional checkouts, staged source, build directories, worktrees, and
+hash-named retry copies in the maintainer's home or another approved local
+workspace. The existing checkout referenced by the login startup bootstrap is
+a legacy canonical bootstrap and remains in place until a separately reviewed
+startup change relocates it; do not add new source copies there as part of a
+module build.
 
 ### How it is deployed at GBI
 
 At GBI we define a `/mnt/gbi-shared/system/etc/bash_env.sh` script, which is
-automatically loaded during every shell startup. Its contents is roughly:
+automatically loaded during every shell startup. Its current contents is
+roughly:
 ```
 if [ -z "${__GBI_SHARED_ENV_LOADED:-}" ]; then
   __GBI_SHARED_ENV_LOADED=1
@@ -105,7 +114,9 @@ if [ -z "${__GBI_SHARED_ENV_LOADED:-}" ]; then
   export GBI_MODULE_PATH=/mnt/gbi-shared/software
 fi
 ```
-which does two things: 1) initialize the module system; 2) sets the
+This is the legacy canonical bootstrap path. Relocating it is a separate,
+reviewed startup change; this repository change does not edit that startup
+file. The script does two things: 1) initialize the module system; 2) sets the
 `GBI_MODULE_PATH` environment variable. The later is used by this project to
 deploy all assets into the correct place.
 
