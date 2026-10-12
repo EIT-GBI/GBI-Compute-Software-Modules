@@ -166,6 +166,42 @@ def _relative_evidence_reference(path):
     raise ValueError("native cleanup evidence reference is outside its evidence tree")
 
 
+def _validate_source_multipart_parts(source_proof, outer):
+    """Bind per-chunk checksums to outer GBI chunks and validate MD5 segment counts."""
+    upload_part_size = source_proof.get("upload_part_size")
+    parts = source_proof.get("parts", ())
+    outer_parts = outer.get("parts", ())
+    archive_size = source_proof.get("size")
+    if (source_proof.get("method") != "gbi_chunks_source_multipart_md5_v1"
+            or type(upload_part_size) is not int or upload_part_size < 1
+            or type(archive_size) is not int or archive_size != outer.get("size")
+            or not isinstance(parts, list) or len(parts) != len(outer_parts)):
+        raise ValueError("source proof has incomplete multipart coverage")
+
+    total_size = 0
+    for index, (outer_part, source_part) in enumerate(zip(outer_parts, parts)):
+        name = f"{index:08d}.part"
+        size = outer_part.get("size")
+        multipart_md5 = source_part.get("multipart_md5")
+        try:
+            segment_count = int(multipart_md5.rsplit("-", 1)[1])
+        except (AttributeError, IndexError, ValueError):
+            segment_count = 0
+        expected_segments = ((size + upload_part_size - 1) // upload_part_size
+                             if type(size) is int and size > 0 else 0)
+        if (outer_part.get("name") != name
+                or source_part.get("name") != name
+                or type(size) is not int or size < 1
+                or source_part.get("size") != size
+                or source_part.get("sha256") != outer_part.get("sha256")
+                or not source_part.get("sha256")
+                or segment_count != expected_segments):
+            raise ValueError("source proof part order, sizes or multipart checksums are invalid")
+        total_size += size
+    if total_size != archive_size:
+        raise ValueError("source proof part sizes do not sum to the archived size")
+
+
 def _source_identity(path):
     path = Path(path).absolute()
     if path.is_symlink() or path.resolve() != path:
@@ -312,17 +348,7 @@ class NativeArchiveProof:
                 or source_scan.get("raw_proof_sha256") != binding["source_proof"]["sha256"]
                 or source_scan.get("raw_proof_path") != binding["source_proof"]["path"]):
             raise ValueError("native source proof is not bound to a completed immutable scan")
-        source_part_size = source_proof.get("upload_part_size")
-        if (source_proof.get("method") != "gbi_chunks_source_multipart_md5_v1"
-                or type(source_part_size) is not int or source_part_size < 1
-                or len(source_proof.get("parts", ()))
-                != (source_proof.get("size", -1) + source_part_size - 1) // source_part_size):
-            raise ValueError("source proof has incomplete multipart coverage")
-        for index, part in enumerate(source_proof["parts"]):
-            expected_size = min(source_part_size, source_proof["size"] - index * source_part_size)
-            if (part.get("name") != f"{index:08d}.part" or part.get("size") != expected_size
-                    or not part.get("sha256") or not part.get("multipart_md5")):
-                raise ValueError("source proof part order, sizes or checksums are invalid")
+        _validate_source_multipart_parts(source_proof, outer)
 
         identities = []
         object_by_name = {item.get("object_name"): item for item in objects}
@@ -336,6 +362,7 @@ class NativeArchiveProof:
             item = object_by_name.get(name)
             if (source_part.get("name") != part["name"]
                     or source_part.get("size") != part["size"]
+                    or source_part.get("sha256") != part["sha256"]
                     or item is None or item.get("size") != part["size"]
                     or item.get("namespace") != binding.get("namespace")
                     or item.get("bucket") != binding.get("bucket")

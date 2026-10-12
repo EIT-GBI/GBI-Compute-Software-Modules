@@ -283,6 +283,46 @@ class DavidArchiveRecoveryTests(unittest.TestCase):
             source_relative="unit", current=current,
             outer=chunks.read_manifest(fixture["target"]), target_dir=fixture["target"])
 
+    def test_source_multipart_segments_are_checked_within_each_outer_chunk(self):
+        mib = 1024 * 1024
+        outer_parts = [
+            {"name": "00000000.part", "size": 64 * mib, "sha256": "a" * 64},
+            {"name": "00000001.part", "size": 219_301_879, "sha256": "b" * 64},
+            {"name": "00000002.part", "size": 51_451_904, "sha256": "c" * 64},
+        ]
+        proof_parts = [
+            {**outer_parts[0], "multipart_md5": "composite-md5-13"},
+            {**outer_parts[1], "multipart_md5": "composite-md5-42"},
+            {**outer_parts[2], "multipart_md5": "composite-md5-10"},
+        ]
+        proof = {"method": "gbi_chunks_source_multipart_md5_v1",
+                 "upload_part_size": 5 * mib,
+                 "size": sum(item["size"] for item in outer_parts),
+                 "parts": proof_parts}
+        outer = {"size": proof["size"], "parts": outer_parts}
+        david_recovery._validate_source_multipart_parts(proof, outer)
+
+        with self.subTest("truncated"):
+            with self.assertRaisesRegex(ValueError, "incomplete multipart coverage"):
+                david_recovery._validate_source_multipart_parts(
+                    {**proof, "parts": proof_parts[:-1]}, outer)
+        with self.subTest("out of order"):
+            with self.assertRaisesRegex(ValueError, "part order"):
+                david_recovery._validate_source_multipart_parts(
+                    {**proof, "parts": list(reversed(proof_parts))}, outer)
+        with self.subTest("changed size"):
+            changed = [dict(part) for part in proof_parts]
+            changed[0]["size"] += 1
+            with self.assertRaisesRegex(ValueError, "part order"):
+                david_recovery._validate_source_multipart_parts(
+                    {**proof, "parts": changed}, outer)
+        with self.subTest("changed segment count"):
+            changed = [dict(part) for part in proof_parts]
+            changed[0]["multipart_md5"] = "composite-md5-12"
+            with self.assertRaisesRegex(ValueError, "part order"):
+                david_recovery._validate_source_multipart_parts(
+                    {**proof, "parts": changed}, outer)
+
     def test_native_proof_load_accepts_frozen_source_in_retained_tar_proof(self):
         fixture = _fixture(self.root)
         bundle = _native_binding(fixture, row_source=False)
@@ -699,7 +739,7 @@ class DavidArchiveRecoveryTests(unittest.TestCase):
 
     def test_native_cleanup_rejects_destination_checksum_not_bound_to_source_part(self):
         fixture = _fixture(self.root, partial=False)
-        proof = _native_binding(fixture, source_part_md5="different-source-part")
+        proof = _native_binding(fixture, source_part_md5="different-source-part-1")
         calls = []
 
         def identity_reader(namespace, bucket, expected):
