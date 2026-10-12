@@ -7,6 +7,7 @@ The manifest is bounded to 64 MiB; payload size is not bounded by memory.
 
 from contextlib import contextmanager
 import gzip
+import inspect
 import fnmatch
 import hashlib
 import io
@@ -666,7 +667,8 @@ def _verify_source_content(root_fd, entry, before, allow_ctime_change=False,
 
 
 def cleanup_source(source, manifest, stored_archive, destination_unchanged=None, *, on_remove=None,
-                   on_verified=None, verify_stored_archive=None, fresh_source_manifest=None):
+                   on_verified=None, verify_stored_archive=None, fresh_source_manifest=None,
+                   verified_archive=None):
     """Explicit move cleanup: full archive readback, stable tree, exact unlinks.
 
     Caller must retain its normal source/destination lock and immutable receipt.
@@ -696,12 +698,24 @@ def cleanup_source(source, manifest, stored_archive, destination_unchanged=None,
         else:
             raise ArchiveError("opaque archive cleanup requires a destination stability callback")
     fresh_entries = _fresh_source_entries(fresh_source_manifest)
-    destination_unchanged()
-    if verify_stored_archive is None:
+    force_supported = "force" in inspect.signature(destination_unchanged).parameters
+
+    def check_destination(force=False):
+        if force and force_supported:
+            destination_unchanged(force=True)
+        else:
+            destination_unchanged()
+
+    check_destination()
+    if verified_archive is not None:
+        if verify_stored_archive is not None or not isinstance(verified_archive, VerifiedArchiveEvidence):
+            raise ArchiveError("archive verification evidence is ambiguous or invalid")
+        verified_archive.assert_manifest(manifest)
+    elif verify_stored_archive is None:
         verify_archive(stored_archive, manifest)
     else:
         verify_stored_archive()
-    destination_unchanged()
+    check_destination()
     verify_source(source, manifest)
     source = Path(source)
     removed = 0
@@ -715,9 +729,10 @@ def cleanup_source(source, manifest, stored_archive, destination_unchanged=None,
                 _verify_source_content(root_fd, entry, evidence[entry["path"]],
                                        fresh_entries=fresh_entries)
         verify_source(source, manifest)
-        destination_unchanged()
+        check_destination()
         if on_verified is not None:
             on_verified()
+        check_destination(force=True)
         for entry in manifest["entries"]:
             if entry["type"] == "directory":
                 continue
@@ -733,7 +748,7 @@ def cleanup_source(source, manifest, stored_archive, destination_unchanged=None,
                 # content, identity, size, mode and mtime must still match.
                 if _observation(now)[:5] != before[:5]:
                     raise ArchiveError("selected source changed before removal; remaining sources kept")
-                destination_unchanged()
+                check_destination()
                 os.unlink(name, dir_fd=parent)
                 unlinked_inodes.add(identity)
                 removed += 1
@@ -746,13 +761,14 @@ def cleanup_source(source, manifest, stored_archive, destination_unchanged=None,
                 now = os.stat(name, dir_fd=parent, follow_symlinks=False)
                 if [now.st_dev, now.st_ino, now.st_mode] != evidence[entry["path"]][:3]:
                     raise ArchiveError("selected source directory changed; directory kept")
-                destination_unchanged()
+                check_destination()
                 try:
                     os.rmdir(name, dir_fd=parent)
                 except OSError as error:
                     import errno
                     if error.errno not in (errno.ENOTEMPTY, errno.EEXIST):
                         raise
+        check_destination(force=True)
     return removed
 
 
@@ -777,6 +793,14 @@ def resume_cleanup_source(source, manifest, stored_archive, destination_unchange
                     raise ArchiveError("stored archive changed before source removal; remaining sources kept")
         else:
             raise ArchiveError("resumed archive cleanup requires a destination stability callback")
+
+    force_supported = "force" in inspect.signature(destination_unchanged).parameters
+
+    def check_destination(force=False):
+        if force and force_supported:
+            destination_unchanged(force=True)
+        else:
+            destination_unchanged()
 
     source = Path(source)
     evidence = manifest.get("_source")
@@ -829,7 +853,7 @@ def resume_cleanup_source(source, manifest, stored_archive, destination_unchange
             elif observation != before:
                 raise ArchiveError(f"unselected source path changed during resumed cleanup: {name}")
 
-    destination_unchanged()
+    check_destination()
     if verified_archive is not None:
         if verify_stored_archive is not None:
             raise ArchiveError("archive verification evidence is ambiguous")
@@ -844,9 +868,10 @@ def resume_cleanup_source(source, manifest, stored_archive, destination_unchange
         verify_stored_archive()
     else:
         verify_archive(stored_archive, manifest)
-    destination_unchanged()
+    check_destination()
     if on_verified is not None:
         on_verified()
+    check_destination(force=True)
     freed_bytes = removed_count = 0
     unlinked_inodes = set(removed_inodes)
     with _directory(source) as root_fd:
@@ -862,7 +887,7 @@ def resume_cleanup_source(source, manifest, stored_archive, destination_unchange
                 now = os.stat(name, dir_fd=parent, follow_symlinks=False)
                 if stat.S_ISDIR(now.st_mode) or _observation(now)[:5] != before[:5]:
                     raise ArchiveError("selected source changed before resumed cleanup; source kept")
-                destination_unchanged()
+                check_destination()
                 os.unlink(name, dir_fd=parent)
                 unlinked_inodes.add(tuple(before[:2]))
                 removed_count += 1
@@ -877,7 +902,7 @@ def resume_cleanup_source(source, manifest, stored_archive, destination_unchange
                 now = os.stat(name, dir_fd=parent, follow_symlinks=False)
                 if [now.st_dev, now.st_ino, now.st_mode] != before[:3]:
                     raise ArchiveError("selected source directory changed during resumed cleanup; source kept")
-                destination_unchanged()
+                check_destination()
                 try:
                     os.rmdir(name, dir_fd=parent)
                 except OSError as error:
@@ -885,6 +910,7 @@ def resume_cleanup_source(source, manifest, stored_archive, destination_unchange
                     if error.errno not in (errno.ENOTEMPTY, errno.EEXIST):
                         raise
     inventory()
+    check_destination(force=True)
     return {"removed": removed_count, "freed_bytes": freed_bytes}
 
 

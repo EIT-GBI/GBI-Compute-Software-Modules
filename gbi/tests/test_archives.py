@@ -449,6 +449,34 @@ class Archives(unittest.TestCase):
         self.assertGreater(result["removed"], 0)
         self.assertFalse((self.source / "nested" / "file\n odd.txt").exists())
 
+    def test_initial_cleanup_accepts_native_archive_evidence_with_fresh_source_guard(self):
+        self.fixture()
+        sink = io.BytesIO()
+        manifest = archives.pack(self.source, sink)
+        digest = hashlib.sha256(json.dumps(
+            {key: value for key, value in manifest.items() if not key.startswith("_")},
+            sort_keys=True, ensure_ascii=True, separators=(",", ":")
+        ).encode()).hexdigest()
+        evidence = archives.VerifiedArchiveEvidence._issue(digest, "b" * 64)
+        checks, forced = [], []
+
+        def destination_unchanged(*, force=False):
+            checks.append("head")
+            if force:
+                forced.append("head")
+
+        with patch.object(archives, "verify_archive", side_effect=AssertionError("full destination readback")):
+            removed = archives.cleanup_source(
+                self.source, manifest, object(),
+                destination_unchanged=destination_unchanged,
+                verified_archive=evidence,
+            )
+
+        self.assertGreater(removed, 0)
+        self.assertGreaterEqual(len(checks), removed + 2)
+        self.assertEqual(len(forced), 2)
+        self.assertFalse((self.source / "nested" / "file\n odd.txt").exists())
+
     def test_resumed_cleanup_reuses_unchanged_fresh_source_hashes(self):
         (self.source / "a").write_text("a")
         (self.source / "b").write_text("b")

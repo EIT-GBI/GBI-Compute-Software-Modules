@@ -116,7 +116,8 @@ def _fixture(root, *, changed_source=False, partial=True):
     }
 
 
-def _native_binding(fixture, *, source_part_md5="source-derived-test-md5-1"):
+def _native_binding(fixture, *, source_part_md5="source-derived-test-md5-1",
+                    row_source=True, retained_source=True):
     root = fixture["state"] / "native-evidence"
     root.mkdir()
     state_root = fixture["state"]
@@ -223,14 +224,18 @@ def _native_binding(fixture, *, source_part_md5="source-derived-test-md5-1"):
     base_path.write_text(json.dumps({"native_destination_content_accepted": True, **refs}, sort_keys=True))
     base_sha = hashlib.sha256(base_path.read_bytes()).hexdigest()
     worklist_path = root / "worklist.json"
-    worklist = {"rows": [{"row": {"source": str(fixture["source"]),
-                                     "canonical_target": str(target),
-                                     "root": prefix[:-1],
-                                     "manifest_sha256": fixture["outer_manifest_sha256"]},
-                          "full_retained_tar_proof": {
-                              "source": str(fixture["source"]), "payload": str(source_path),
-                              "manifest_sha256": fixture["archived_manifest_sha256"],
-                              "sha256": outer["sha256"], "bytes": outer["size"]}}]}
+    frozen_row = {"canonical_target": str(target),
+                  "root": prefix[:-1],
+                  "manifest_sha256": fixture["outer_manifest_sha256"]}
+    if row_source:
+        frozen_row["source"] = str(fixture["source"])
+    retained_proof = {"payload": str(source_path),
+                      "manifest_sha256": fixture["archived_manifest_sha256"],
+                      "sha256": outer["sha256"], "bytes": outer["size"]}
+    if retained_source:
+        retained_proof["source"] = str(fixture["source"])
+    worklist = {"rows": [{"row": frozen_row,
+                          "full_retained_tar_proof": retained_proof}]}
     worklist_path.write_text(json.dumps(worklist, sort_keys=True))
     worklist_sha = hashlib.sha256(worklist_path.read_bytes()).hexdigest()
     binding = {
@@ -269,6 +274,125 @@ class DavidArchiveRecoveryTests(unittest.TestCase):
         self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)
         self.root = Path(self.temporary.name).resolve()
+
+    def _load_native_proof(self, fixture, bundle):
+        current = archives.inspect_archive(lambda: chunks.open_chunks(fixture["target"]))
+        return david_recovery.NativeArchiveProof.load(
+            bundle["binding"], bundle["binding_sha256"], bundle["root"],
+            source=fixture["source"], target=fixture["target"],
+            source_relative="unit", current=current,
+            outer=chunks.read_manifest(fixture["target"]), target_dir=fixture["target"])
+
+    def test_source_multipart_segments_are_checked_within_each_outer_chunk(self):
+        mib = 1024 * 1024
+        outer_parts = [
+            {"name": "00000000.part", "size": 64 * mib, "sha256": "a" * 64},
+            {"name": "00000001.part", "size": 219_301_879, "sha256": "b" * 64},
+            {"name": "00000002.part", "size": 51_451_904, "sha256": "c" * 64},
+        ]
+        proof_parts = [
+            {**outer_parts[0], "multipart_md5": "composite-md5-13"},
+            {**outer_parts[1], "multipart_md5": "composite-md5-42"},
+            {**outer_parts[2], "multipart_md5": "composite-md5-10"},
+        ]
+        proof = {"method": "gbi_chunks_source_multipart_md5_v1",
+                 "upload_part_size": 5 * mib,
+                 "size": sum(item["size"] for item in outer_parts),
+                 "parts": proof_parts}
+        outer = {"size": proof["size"], "parts": outer_parts}
+        david_recovery._validate_source_multipart_parts(proof, outer)
+
+        with self.subTest("truncated"):
+            with self.assertRaisesRegex(ValueError, "incomplete multipart coverage"):
+                david_recovery._validate_source_multipart_parts(
+                    {**proof, "parts": proof_parts[:-1]}, outer)
+        with self.subTest("out of order"):
+            with self.assertRaisesRegex(ValueError, "part order"):
+                david_recovery._validate_source_multipart_parts(
+                    {**proof, "parts": list(reversed(proof_parts))}, outer)
+        with self.subTest("changed size"):
+            changed = [dict(part) for part in proof_parts]
+            changed[0]["size"] += 1
+            with self.assertRaisesRegex(ValueError, "part order"):
+                david_recovery._validate_source_multipart_parts(
+                    {**proof, "parts": changed}, outer)
+        with self.subTest("changed segment count"):
+            changed = [dict(part) for part in proof_parts]
+            changed[0]["multipart_md5"] = "composite-md5-12"
+            with self.assertRaisesRegex(ValueError, "part order"):
+                david_recovery._validate_source_multipart_parts(
+                    {**proof, "parts": changed}, outer)
+
+    def test_native_proof_load_accepts_frozen_source_in_retained_tar_proof(self):
+        fixture = _fixture(self.root)
+        bundle = _native_binding(fixture, row_source=False)
+        proof = self._load_native_proof(fixture, bundle)
+        self.assertEqual(proof.binding["source_fss"], str(fixture["source"]))
+        self.assertEqual(proof.native["source_scan_acceptance_receipt"], "scan.json")
+
+    def test_native_proof_load_accepts_workspace_prefixed_scan_path(self):
+        fixture = _fixture(self.root)
+        bundle = _native_binding(fixture)
+        root = bundle["root"]
+        metadata = root / "metadata"
+        metadata.mkdir()
+        source_path = root / "source.json"
+        source_proof_path = metadata / source_path.name
+        source_proof_path.write_bytes(source_path.read_bytes())
+
+        binding = json.loads(bundle["binding"].read_bytes())
+        binding["source_proof"]["path"] = "metadata/source.json"
+        scan_path = root / "scan.json"
+        scan = json.loads(scan_path.read_bytes())
+        scan["raw_proof_path"] = "ops-evidence/example/cutover/metadata/source.json"
+        scan_path.write_text(json.dumps(scan, sort_keys=True))
+        scan_sha = hashlib.sha256(scan_path.read_bytes()).hexdigest()
+
+        native_path = root / "native.json"
+        native = json.loads(native_path.read_bytes())
+        native["source_scan_acceptance_receipt_sha256"] = scan_sha
+        native_path.write_text(json.dumps(native, sort_keys=True))
+        native_sha = hashlib.sha256(native_path.read_bytes()).hexdigest()
+        terminal_path = root / "terminal.json"
+        terminal = json.loads(terminal_path.read_bytes())
+        terminal["stdout_sha256"] = native_sha
+        terminal_path.write_text(json.dumps(terminal, sort_keys=True))
+        binding["raw_proof"]["sha256"] = native_sha
+        binding["process_terminal"]["sha256"] = hashlib.sha256(
+            terminal_path.read_bytes()).hexdigest()
+        bundle["binding"].write_text(json.dumps(binding, sort_keys=True))
+        bundle["binding_sha256"] = hashlib.sha256(
+            bundle["binding"].read_bytes()).hexdigest()
+
+        proof = self._load_native_proof(fixture, bundle)
+        self.assertEqual(proof.binding["source_proof"]["path"], "metadata/source.json")
+
+    def test_native_proof_path_normalization_rejects_traversal(self):
+        with self.assertRaisesRegex(ValueError, "unsafe path segments"):
+            david_recovery._relative_evidence_reference(
+                "ops-evidence/example/metadata/../source.json")
+
+    def test_native_proof_load_rejects_conflicting_or_missing_frozen_source(self):
+        for row_source, retained_source, conflicting in (
+                (True, True, True), (False, False, False)):
+            with self.subTest(row_source=row_source, retained_source=retained_source):
+                root = self.root / f"case-{row_source}-{retained_source}"
+                fixture = _fixture(root)
+                bundle = _native_binding(fixture, row_source=row_source,
+                                         retained_source=retained_source)
+                if conflicting:
+                    worklist_path = bundle["root"] / "worklist.json"
+                    worklist = json.loads(worklist_path.read_bytes())
+                    worklist["rows"][0]["full_retained_tar_proof"]["source"] += ".other"
+                    worklist_path.write_text(json.dumps(worklist, sort_keys=True))
+                    binding = json.loads(bundle["binding"].read_bytes())
+                    binding["frozen_semantic_worklist"]["sha256"] = hashlib.sha256(
+                        worklist_path.read_bytes()).hexdigest()
+                    bundle["binding"].write_text(json.dumps(binding, sort_keys=True))
+                    bundle["binding_sha256"] = hashlib.sha256(
+                        bundle["binding"].read_bytes()).hexdigest()
+                with self.assertRaisesRegex(ValueError, "frozen semantic worklist"):
+                    self._load_native_proof(fixture, bundle)
 
     def test_superset_resume_removes_only_matching_selected_source_and_writes_provenance(self):
         fixture = _fixture(self.root)
@@ -657,7 +781,7 @@ class DavidArchiveRecoveryTests(unittest.TestCase):
 
     def test_native_cleanup_rejects_destination_checksum_not_bound_to_source_part(self):
         fixture = _fixture(self.root, partial=False)
-        proof = _native_binding(fixture, source_part_md5="different-source-part")
+        proof = _native_binding(fixture, source_part_md5="different-source-part-1")
         calls = []
 
         def identity_reader(namespace, bucket, expected):
