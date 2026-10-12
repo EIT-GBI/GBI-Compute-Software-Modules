@@ -330,6 +330,48 @@ class DavidArchiveRecoveryTests(unittest.TestCase):
         self.assertEqual(proof.binding["source_fss"], str(fixture["source"]))
         self.assertEqual(proof.native["source_scan_acceptance_receipt"], "scan.json")
 
+    def test_native_proof_load_accepts_workspace_prefixed_scan_path(self):
+        fixture = _fixture(self.root)
+        bundle = _native_binding(fixture)
+        root = bundle["root"]
+        metadata = root / "metadata"
+        metadata.mkdir()
+        source_path = root / "source.json"
+        source_proof_path = metadata / source_path.name
+        source_proof_path.write_bytes(source_path.read_bytes())
+
+        binding = json.loads(bundle["binding"].read_bytes())
+        binding["source_proof"]["path"] = "metadata/source.json"
+        scan_path = root / "scan.json"
+        scan = json.loads(scan_path.read_bytes())
+        scan["raw_proof_path"] = "ops-evidence/example/cutover/metadata/source.json"
+        scan_path.write_text(json.dumps(scan, sort_keys=True))
+        scan_sha = hashlib.sha256(scan_path.read_bytes()).hexdigest()
+
+        native_path = root / "native.json"
+        native = json.loads(native_path.read_bytes())
+        native["source_scan_acceptance_receipt_sha256"] = scan_sha
+        native_path.write_text(json.dumps(native, sort_keys=True))
+        native_sha = hashlib.sha256(native_path.read_bytes()).hexdigest()
+        terminal_path = root / "terminal.json"
+        terminal = json.loads(terminal_path.read_bytes())
+        terminal["stdout_sha256"] = native_sha
+        terminal_path.write_text(json.dumps(terminal, sort_keys=True))
+        binding["raw_proof"]["sha256"] = native_sha
+        binding["process_terminal"]["sha256"] = hashlib.sha256(
+            terminal_path.read_bytes()).hexdigest()
+        bundle["binding"].write_text(json.dumps(binding, sort_keys=True))
+        bundle["binding_sha256"] = hashlib.sha256(
+            bundle["binding"].read_bytes()).hexdigest()
+
+        proof = self._load_native_proof(fixture, bundle)
+        self.assertEqual(proof.binding["source_proof"]["path"], "metadata/source.json")
+
+    def test_native_proof_path_normalization_rejects_traversal(self):
+        with self.assertRaisesRegex(ValueError, "unsafe path segments"):
+            david_recovery._relative_evidence_reference(
+                "ops-evidence/example/metadata/../source.json")
+
     def test_native_proof_load_rejects_conflicting_or_missing_frozen_source(self):
         for row_source, retained_source, conflicting in (
                 (True, True, True), (False, False, False)):

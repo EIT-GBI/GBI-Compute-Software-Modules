@@ -157,12 +157,16 @@ def _read_pinned_json(root, reference):
 
 def _relative_evidence_reference(path):
     value = Path(path)
-    if not value.is_absolute():
-        return str(value)
     parts = value.parts
+    if any(part in (".", "..") for part in parts):
+        raise ValueError("native cleanup evidence reference contains unsafe path segments")
     for marker in ("metadata", "jobs"):
         if marker in parts:
-            return str(Path(marker, *parts[parts.index(marker) + 1:]))
+            index = parts.index(marker)
+            if value.is_absolute() or (index > 0 and parts[0] == "ops-evidence"):
+                return str(Path(marker, *parts[index + 1:]))
+    if not value.is_absolute():
+        return str(value)
     raise ValueError("native cleanup evidence reference is outside its evidence tree")
 
 
@@ -346,7 +350,8 @@ class NativeArchiveProof:
         if (source_scan.get("full_source_scan_complete") is not True
                 or source_scan.get("source_or_object_mutation") is not False
                 or source_scan.get("raw_proof_sha256") != binding["source_proof"]["sha256"]
-                or source_scan.get("raw_proof_path") != binding["source_proof"]["path"]):
+                or _relative_evidence_reference(source_scan.get("raw_proof_path"))
+                != _relative_evidence_reference(binding["source_proof"]["path"])):
             raise ValueError("native source proof is not bound to a completed immutable scan")
         _validate_source_multipart_parts(source_proof, outer)
 
