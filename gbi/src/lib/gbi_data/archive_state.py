@@ -45,6 +45,9 @@ def prepared(spec, site, home):
         except BlockingIOError as error:
             raise ValueError("this archive destination already has an active transfer; inspect its status") from error
         saved = root / (key + ".json")
+        requested = spec.get("archive_units")
+        if requested and not saved.is_file():
+            raise ValueError("--archive-unit requires an existing saved archive plan")
         if saved.exists():
             record = json.loads(saved.read_text())
             if record.get("intent") != intent:
@@ -93,6 +96,23 @@ def prepared(spec, site, home):
                 if completed.get("deleted") or (planned["action"] != "pack" and not os.path.lexists(path)):
                     unit["archive_completed"] = completed
             units.append(unit)
+        if requested:
+            if (not isinstance(requested, list) or not requested
+                    or any(not isinstance(name, str) or not name or name.startswith("/")
+                           or "\\" in name or any(part in ("", ".", "..") for part in name.split("/"))
+                           for name in requested)):
+                raise ValueError("--archive-unit values must be exact relative paths from the saved plan")
+            if len(set(requested)) != len(requested):
+                raise ValueError("--archive-unit values must be unique")
+            by_name = {planned["source_relative"]: unit for planned, unit in zip(record["plan"]["units"], units)}
+            unknown = [name for name in requested if name not in by_name]
+            if unknown:
+                raise ValueError(f"--archive-unit is not present in the saved plan: {unknown[0]}")
+            selected = [by_name[name] for name in requested]
+            for name, unit in zip(requested, selected):
+                if unit.get("archive_completed") or not os.path.lexists(unit["source"]):
+                    raise ValueError(f"--archive-unit is already completed or its source is absent: {name}")
+            units = selected
         yield {**spec, "selection": units, "archive_plan": record["plan"]}
 
 

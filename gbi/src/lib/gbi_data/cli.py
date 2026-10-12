@@ -160,6 +160,8 @@ def parser(*, advanced=False):
                              help=expert("pack one directory: tar is uncompressed, gzip compresses; exact destination must end in .gbi.tar or .gbi.tar.gz (requires matching Prefect broker/flow)"))
         archive.add_argument("--pack-small", action="store_true",
                              help=expert("legacy selective packing: pack eligible small-file subdirectories, transfer the rest individually; prefer --archive for a saved whole-tree layout"))
+        command.add_argument("--archive-unit", action="append", default=[], metavar="SOURCE_RELATIVE",
+                             help=expert("run an exact unit from an existing saved --archive plan; repeat for multiple units"))
         command.add_argument("--chunk-size", type=byte_size, metavar="SIZE",
                              help=expert("override verified resumable part size, e.g. 64MiB; not combined with --archive; omit on restore"))
         command.add_argument("--delete-source", action="store_true",
@@ -250,6 +252,11 @@ def plan(options, site):
             "directory": directory, "delete": delete, "include": options.include, "exclude": options.exclude,
             "verb": options.verb, "uid": os.getuid(), "site": str(site.path),
             "requested_target": requested_target}
+    archive_units = getattr(options, "archive_unit", [])
+    if archive_units:
+        if not options.archive or options.verb != "move" or options.prefect or options.dry_run:
+            raise ValueError("--archive-unit requires an executing local/Slurm `data move --archive` request")
+        specification["archive_units"] = archive_units
     validate_source_retention(specification, site.storage_roots)
     policy = packing.PackingPolicy(
         small_file_bytes=int(site.values["pack_small_bytes"]),
@@ -645,6 +652,9 @@ def main():
             return jobs.watch(run_dir, options.job_id, options.watch, site.roots["alluxio"])
         if options.verb == "_run":
             return run(options.run_dir.resolve(), site, home)
+        if options.archive_unit and (not options.archive or options.verb != "move"
+                                     or options.prefect or options.dry_run):
+            raise ValueError("--archive-unit requires an executing local/Slurm `data move --archive` request")
         if options.prefect:
             return prefect.start(options, site, home)
         specification = execution_plan(plan(options, site), site, options)
