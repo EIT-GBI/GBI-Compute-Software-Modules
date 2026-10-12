@@ -261,11 +261,15 @@ class NativeArchiveProof:
         frozen = row.get("row", {})
         retained = row.get("full_retained_tar_proof", {})
         manifest_sha = binding.get("per_file_manifest_sha256")
-        if (frozen.get("source") != str(source)
+        frozen_source = frozen.get("source")
+        retained_source = retained.get("source")
+        if frozen_source is None:
+            frozen_source = retained_source
+        if (frozen_source != str(source)
+                or (retained_source is not None and retained_source != str(source))
                 or frozen.get("canonical_target") != str(target)
                 or frozen.get("root", "") + "/" != binding.get("prefix")
                 or frozen.get("manifest_sha256") != binding.get("outer_manifest_sha256")
-                or retained.get("source") != str(source)
                 or retained.get("payload") != binding.get("retained_staged_tar")
                 or retained.get("manifest_sha256") != manifest_sha
                 or retained.get("sha256") != binding.get("archive_sha256")

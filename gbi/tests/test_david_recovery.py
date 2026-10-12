@@ -116,7 +116,8 @@ def _fixture(root, *, changed_source=False, partial=True):
     }
 
 
-def _native_binding(fixture, *, source_part_md5="source-derived-test-md5-1"):
+def _native_binding(fixture, *, source_part_md5="source-derived-test-md5-1",
+                    row_source=True, retained_source=True):
     root = fixture["state"] / "native-evidence"
     root.mkdir()
     state_root = fixture["state"]
@@ -223,14 +224,18 @@ def _native_binding(fixture, *, source_part_md5="source-derived-test-md5-1"):
     base_path.write_text(json.dumps({"native_destination_content_accepted": True, **refs}, sort_keys=True))
     base_sha = hashlib.sha256(base_path.read_bytes()).hexdigest()
     worklist_path = root / "worklist.json"
-    worklist = {"rows": [{"row": {"source": str(fixture["source"]),
-                                     "canonical_target": str(target),
-                                     "root": prefix[:-1],
-                                     "manifest_sha256": fixture["outer_manifest_sha256"]},
-                          "full_retained_tar_proof": {
-                              "source": str(fixture["source"]), "payload": str(source_path),
-                              "manifest_sha256": fixture["archived_manifest_sha256"],
-                              "sha256": outer["sha256"], "bytes": outer["size"]}}]}
+    frozen_row = {"canonical_target": str(target),
+                  "root": prefix[:-1],
+                  "manifest_sha256": fixture["outer_manifest_sha256"]}
+    if row_source:
+        frozen_row["source"] = str(fixture["source"])
+    retained_proof = {"payload": str(source_path),
+                      "manifest_sha256": fixture["archived_manifest_sha256"],
+                      "sha256": outer["sha256"], "bytes": outer["size"]}
+    if retained_source:
+        retained_proof["source"] = str(fixture["source"])
+    worklist = {"rows": [{"row": frozen_row,
+                          "full_retained_tar_proof": retained_proof}]}
     worklist_path.write_text(json.dumps(worklist, sort_keys=True))
     worklist_sha = hashlib.sha256(worklist_path.read_bytes()).hexdigest()
     binding = {
@@ -269,6 +274,43 @@ class DavidArchiveRecoveryTests(unittest.TestCase):
         self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)
         self.root = Path(self.temporary.name).resolve()
+
+    def _load_native_proof(self, fixture, bundle):
+        current = archives.inspect_archive(lambda: chunks.open_chunks(fixture["target"]))
+        return david_recovery.NativeArchiveProof.load(
+            bundle["binding"], bundle["binding_sha256"], bundle["root"],
+            source=fixture["source"], target=fixture["target"],
+            source_relative="unit", current=current,
+            outer=chunks.read_manifest(fixture["target"]), target_dir=fixture["target"])
+
+    def test_native_proof_load_accepts_frozen_source_in_retained_tar_proof(self):
+        fixture = _fixture(self.root)
+        bundle = _native_binding(fixture, row_source=False)
+        proof = self._load_native_proof(fixture, bundle)
+        self.assertEqual(proof.binding["source_fss"], str(fixture["source"]))
+        self.assertEqual(proof.native["source_scan_acceptance_receipt"], "scan.json")
+
+    def test_native_proof_load_rejects_conflicting_or_missing_frozen_source(self):
+        for row_source, retained_source, conflicting in (
+                (True, True, True), (False, False, False)):
+            with self.subTest(row_source=row_source, retained_source=retained_source):
+                root = self.root / f"case-{row_source}-{retained_source}"
+                fixture = _fixture(root)
+                bundle = _native_binding(fixture, row_source=row_source,
+                                         retained_source=retained_source)
+                if conflicting:
+                    worklist_path = bundle["root"] / "worklist.json"
+                    worklist = json.loads(worklist_path.read_bytes())
+                    worklist["rows"][0]["full_retained_tar_proof"]["source"] += ".other"
+                    worklist_path.write_text(json.dumps(worklist, sort_keys=True))
+                    binding = json.loads(bundle["binding"].read_bytes())
+                    binding["frozen_semantic_worklist"]["sha256"] = hashlib.sha256(
+                        worklist_path.read_bytes()).hexdigest()
+                    bundle["binding"].write_text(json.dumps(binding, sort_keys=True))
+                    bundle["binding_sha256"] = hashlib.sha256(
+                        bundle["binding"].read_bytes()).hexdigest()
+                with self.assertRaisesRegex(ValueError, "frozen semantic worklist"):
+                    self._load_native_proof(fixture, bundle)
 
     def test_superset_resume_removes_only_matching_selected_source_and_writes_provenance(self):
         fixture = _fixture(self.root)
