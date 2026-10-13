@@ -179,7 +179,9 @@ def transfer(task):
     if (encode_link and task.get("target_base", task.get("directory", False))
             and not destination.name.endswith(".rclonelink")):
         destination = destination.with_name(destination.name + ".rclonelink")
-    elif decode_link and task["target_kind"] != "alluxio" and task.get("target_base", task.get("directory", False)):
+    elif (decode_link and task["target_kind"] != "alluxio"
+          and task.get("target_base", task.get("directory", False))
+          and destination.name.endswith(".rclonelink")):
         destination = destination.with_name(destination.name[:-len(".rclonelink")])
     target = destination
     state = Path(task["state"])

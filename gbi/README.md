@@ -54,6 +54,10 @@ instead of downloading an already verified archive. Ordinary CLI archive
 verification and saved-plan compatibility remain unchanged. Site installation
 and runtime acceptance are pending.
 
+**0.4.22** fixes direct single-file restores of `.rclonelink` symlink
+representations: GBI preserves the explicit destination filename, while
+directory restores continue to remove the representation suffix.
+
 ## Everyday commands
 
 ```bash

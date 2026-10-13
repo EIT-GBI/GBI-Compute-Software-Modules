@@ -345,6 +345,30 @@ class Transfers(unittest.TestCase):
         self.assertTrue(stored.exists())
         self.assertEqual(os.readlink(restored), "../original")
 
+    def test_direct_encoded_link_restore_preserves_explicit_destination_name(self):
+        stored = self.source_root / "debug-internal.log.rclonelink"
+        stored.write_text("run/logs/debug-internal.log")
+        destination = self.target_root / "debug-internal.log"
+        transfer({**self.task, "source": str(stored), "target": str(destination),
+                  "decode_link": True, "target_base": True, "delete": False})
+        self.assertTrue(destination.is_symlink())
+        self.assertEqual(os.readlink(destination), "run/logs/debug-internal.log")
+        self.assertFalse((self.target_root / "debug-i").exists())
+
+    def test_directory_encoded_link_restore_strips_representation_suffix(self):
+        source_dir = self.source_root / "wandb"
+        source_dir.mkdir()
+        stored = source_dir / "debug-internal.log.rclonelink"
+        stored.write_text("run/logs/debug-internal.log")
+        destination_dir = self.target_root / "restored"
+        destination_dir.mkdir()
+        destination = destination_dir / "debug-internal.log"
+        transfer({**self.task, "source": str(stored), "selection_root": str(source_dir),
+                  "target": str(destination_dir), "directory": True, "target_base": True,
+                  "decode_link": True, "delete": False})
+        self.assertTrue(destination.is_symlink())
+        self.assertEqual(os.readlink(destination), "run/logs/debug-internal.log")
+
     def test_alluxio_encoded_link_does_not_duplicate_suffix(self):
         stored = self.source.with_name("file.dat.rclonelink")
         stored.write_text("../original")
