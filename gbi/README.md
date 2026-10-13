@@ -108,6 +108,21 @@ expand into their original relative directories. Object Storage retains the
 complete originals. A partly populated destination is not a finished backup;
 check the terminal summary and receipts.
 
+For a recovery that must run only named units from an existing saved archive
+plan, use the expert `--archive-unit SOURCE_RELATIVE` option once per unit:
+
+```bash
+gbi data move /your/lustre/experiment /your/object/experiment --archive \
+  --archive-unit results/run-a \
+  --archive-unit results/run-b \
+  --detach --wait
+```
+
+Each value must exactly match a source-relative unit in the saved plan. The
+request keeps the original plan and destination lock, rejects completed units,
+and schedules only the named unfinished units. It cannot create a plan or
+change the original selection, destination, or archive layout.
+
 Routine archiving needs neither `--pack-small` nor `--chunk-size`.
 Expert overrides remain compatible with scripts and are exposed by
 `gbi data copy --help-all`. Normal `--help` shows everyday choices.

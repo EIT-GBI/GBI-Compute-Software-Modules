@@ -8,7 +8,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from gbi_data import archive_plan, archive_state, archives, formats, transfer
+from gbi_data import archive_plan, archive_state, archives, cli, formats, transfer
 from gbi_data.storage import Site
 
 
@@ -39,6 +39,83 @@ class ArchiveState(unittest.TestCase):
         with patch.object(archive_plan, "plan_archive", side_effect=AssertionError("must not replan")):
             with archive_state.prepared(self.spec, self.site, self.home) as replay:
                 self.assertEqual(replay["archive_plan"], original)
+
+    def saved_many_unit_plan(self):
+        units = []
+        for index in range(44):
+            relative = f"unit-{index:02d}"
+            source = self.source / relative
+            action = "file" if index >= 38 or 7 <= index < 12 else "pack"
+            if action == "pack":
+                source.mkdir()
+            else:
+                source.write_text("payload")
+            units.append({"source_relative": relative,
+                          "target_relative": relative + ".gbi.tar" if action == "pack" else relative,
+                          "action": action, "bytes": 0,
+                          **({"estimated_bytes": 4096, "chunk_size": None} if action == "pack" else {}),
+                          "expected_source": archive_plan._observation(source.lstat())})
+        plan = archive_plan.ArchivePlan(str(self.source), str(self.target), tuple(units))
+        with patch.object(archive_plan, "plan_archive", return_value=plan):
+            with archive_state.prepared(self.spec, self.site, self.home) as prepared:
+                self.assertEqual(len(prepared["selection"]), 44)
+        root = self.home / "archive-plans"
+        key = archive_state._key(str(self.target))
+        saved = root / f"{key}.json"
+        results = root / f"{key}.units"
+        for index in range(17):
+            relative = f"unit-{index:02d}"
+            result = results / f"{archive_state._key(relative)}.json"
+            result.write_text(json.dumps({"deleted": True, "manifest_sha256": f"sha-{index}"}))
+        return saved, saved.read_bytes(), units
+
+    def test_exact_saved_plan_units_select_without_touching_completed_payloads(self):
+        saved, original_bytes, plan_units = self.saved_many_unit_plan()
+        requested = [unit["source_relative"] for unit in plan_units[17:]]
+        with patch.object(archives, "inspect_archive", side_effect=AssertionError("accepted payload must not be read")):
+            with archive_state.prepared({**self.spec, "archive_units": requested}, self.site, self.home) as selected:
+                self.assertEqual(len(selected["archive_plan"]["units"]), 44)
+                self.assertEqual(sum(unit["action"] == "pack" for unit in selected["archive_plan"]["units"]), 33)
+                self.assertEqual(sum(unit["action"] == "file" for unit in selected["archive_plan"]["units"]), 11)
+                self.assertEqual(sum(unit.get("format_action") == "pack" for unit in selected["selection"]), 21)
+                self.assertEqual(sum("format_action" not in unit for unit in selected["selection"]), 6)
+                self.assertEqual([unit["source"] for unit in selected["selection"]],
+                                 [str(self.source / name) for name in requested])
+        self.assertEqual(saved.read_bytes(), original_bytes)
+
+    def test_exact_saved_plan_units_reject_unknown_changed_intent_and_completed(self):
+        self.saved_many_unit_plan()
+        with self.assertRaisesRegex(ValueError, "not present in the saved plan"):
+            with archive_state.prepared({**self.spec, "archive_units": ["missing"]}, self.site, self.home):
+                pass
+        with self.assertRaisesRegex(ValueError, "already completed"):
+            with archive_state.prepared({**self.spec, "archive_units": ["unit-00"]}, self.site, self.home):
+                pass
+        with self.assertRaisesRegex(ValueError, "different saved archive plan"):
+            with archive_state.prepared({**self.spec, "exclude": ["*.tmp"],
+                                         "archive_units": ["unit-17"]}, self.site, self.home):
+                pass
+
+    def test_exact_saved_plan_units_require_existing_plan_and_unique_names(self):
+        with self.assertRaisesRegex(ValueError, "requires an existing saved archive plan"):
+            with archive_state.prepared({**self.spec, "archive_units": ["unit-17"]}, self.site, self.home):
+                pass
+        self.saved_many_unit_plan()
+        with self.assertRaisesRegex(ValueError, "must be unique"):
+            with archive_state.prepared({**self.spec, "archive_units": ["unit-17", "unit-17"]},
+                                        self.site, self.home):
+                pass
+
+    def test_cli_archive_unit_requires_archive_move(self):
+        options = cli.parser().parse_args(["data", "move", str(self.source), str(self.target),
+                                           "--archive", "--archive-unit", "child"])
+        specification = cli.execution_plan(cli.plan(options, self.site), self.site, options)
+        self.assertEqual(specification["archive_units"], ["child"])
+        self.assertEqual(json.loads(json.dumps(specification))["archive_units"], ["child"])
+        options = cli.parser().parse_args(["data", "move", str(self.source), str(self.target),
+                                           "--archive-unit", "child"])
+        with self.assertRaisesRegex(ValueError, "requires an executing"):
+            cli.plan(options, self.site)
 
     def test_changed_selection_refuses_destination_reuse(self):
         with archive_state.prepared(self.spec, self.site, self.home):

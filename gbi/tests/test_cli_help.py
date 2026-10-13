@@ -65,7 +65,8 @@ class CLIHelp(unittest.TestCase):
             with contextlib.redirect_stdout(output), self.assertRaises(SystemExit) as raised:
                 cli.parser().parse_args([*arguments, "--help-all"])
             self.assertEqual(raised.exception.code, 0)
-            for flag in ("--archive", "--pack", "--pack-small", "--chunk-size", "--local", "--job-size"):
+            for flag in ("--archive", "--archive-unit", "--pack", "--pack-small", "--chunk-size",
+                         "--local", "--job-size"):
                 self.assertIn(flag, output.getvalue())
             self.assertNotIn("--delete-source", output.getvalue())
 
