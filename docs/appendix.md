@@ -113,7 +113,7 @@ make GBI_MODULE_PATH=$HOME/local MODE=build neovim
 
 `make all` walks every discovered target without an `sm-opt-in` marker
 (today: `bat cargo-zigbuild cc eza fish gbi go java lfs lustre-dlm make ncdu
-neovim nextflow nu parallel-tar rclone rust uv xz zig`) — `cmake`, `llvm` and
+neovim nextflow nu oci parallel-tar rclone rust uv xz zig`) — `cmake`, `llvm` and
 `zig-bootstrap` carry the marker, so ask for them by name. The walk is ordered
 by the `module load` lines of the default-mode recipes (`tsort` over those
 edges: `cc` after `zig`, `make` after `cc`, `cargo-zigbuild` after `uv` and
@@ -124,5 +124,5 @@ everything else needs them — and then builds every target whose `module load`
 dependencies those two cover (today: `bat eza ncdu nu parallel-tar uv`);
 targets that need anything else are skipped and reported (`fish` and `neovim`
 load the opt-in `cmake`; `cargo-zigbuild`, `cc`, `gbi`, `go`, `java`, `lfs`,
-`lustre-dlm`, `make`, `nextflow`, `rclone` and `xz` have no build recipes).
+`lustre-dlm`, `make`, `nextflow`, `oci`, `rclone` and `xz` have no build recipes).
 

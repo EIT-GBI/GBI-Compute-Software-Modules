@@ -1,0 +1,5 @@
+name = "oci"
+
+relocate = true
+destination = "{SM_ROOT}/oci"
+modules = "{SM_ROOT}/modules"
