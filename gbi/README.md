@@ -58,6 +58,10 @@ and runtime acceptance are pending.
 representations: GBI preserves the explicit destination filename, while
 directory restores continue to remove the representation suffix.
 
+Site operators can preserve nondefault installation settings with the optional
+`GBI_SITE_CONFIG_FILE` input; see the [maintainer reference](docs/maintainer.md)
+for its format and environment override behavior.
+
 ## Everyday commands
 
 ```bash

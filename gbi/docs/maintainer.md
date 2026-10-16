@@ -22,12 +22,22 @@ OCI credentials and does not walk FSS.
 
 ```bash
 make rclone
+GBI_SITE_CONFIG_FILE=/site/config/gbi/site.conf \
 GBI_SITE_LUSTRE_ROOT=/site/scratch/users \
 GBI_SITE_FSS_ROOT=/site/home/users \
 GBI_SITE_BUCKET_ROOT=/site/personal/users \
 GBI_SITE_PARTITION=site-partition \
 GBI_MODULE_PATH=/site/shared/software make gbi
 ```
+
+`GBI_SITE_CONFIG_FILE` is optional and points to a plain `key = value` file
+using the supported keys below. Keep that file in the site's maintained
+configuration source and publish it before installing a release. The installer
+validates a configured file with the same `Site` parser used at runtime; a
+missing or invalid configured file fails the install. Existing
+`GBI_SITE_<KEY>` environment variables override values from the file. When the
+file variable is unset, installs retain the existing environment-and-defaults
+behavior.
 
 For a shared cluster installation, run the recipe as a software maintainer from
 the reviewed release checkout. Software goes under `gbi/<version>` and the
@@ -46,9 +56,10 @@ gbi data roots
 ```
 
 The recipe reads the version from `gbi/VERSION`. Site roots and other settings
-are supplied through `GBI_SITE_*` variables at installation, never from public
-source code. The configured parent roots have the authenticated username
-appended by the module's site configuration.
+are supplied by the maintained site configuration file or `GBI_SITE_*`
+variables at installation, never embedded in this public generic source. The
+configured parent roots have the authenticated username appended by the
+module's site configuration.
 
 ## Site settings
 
