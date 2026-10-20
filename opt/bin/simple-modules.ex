@@ -4625,7 +4625,17 @@ end
 -------------------------------------------------------------------------------
 -- parse settings
 --------------------------------------------------------------------------------
-
+-- apply overlay table to base table.
+local function overlay_merge(base, over)
+    for k, v in pairs(over) do
+        if "table" == type(v) and "table" == type(base[k])
+           and nil == v[1] and nil == base[k][1] then
+            overlay_merge(base[k], v)
+        else
+            base[k] = v
+        end
+    end
+end
 -- set up CLI parser
 local parser = argparse(
     "simple-modules",
@@ -4638,6 +4648,16 @@ parser:option("--relocate", "Relocate the output of the install.sh script")
 parser:option("--destination", "Location where to install software to")
 parser:option("--modules", "Location of the environment modules folder")
 parser:option("--sm-root", "Optional variable to use in place of {SM_ROOT}")
+parser:option(
+    "--overlay",
+    "Additional TOML file layered over settings.toml (repeatable; maps merge "
+    .. "recursively, arrays and scalars are replaced)"
+):count("*")
+parser:option(
+    "--partials",
+    "Directory of mustache partials usable in module_template.lua as "
+    .. "'{{> name}}' (name = file name minus its extension)"
+):args(1)
 
 local args = parser:parse()
 local config_dir = gears.realdir(args.config_dir)
@@ -4680,6 +4700,21 @@ if nil ~= args.destination then log.info("destination = " .. args.destination) e
 if nil ~= args.modules then log.info("modules = " .. args.modules) end
 -- these settings will be used later
 local settings = toml.parse(settings_file)
+-- apply --overlay settings files (in order) on top of the parsed settings.
+-- Maps are merged recursively; arrays and scalars are replaced wholesale.
+if nil ~= args.overlay then
+    for _, overlay_path in ipairs(args.overlay) do
+        log.info(f"Applying settings overlay: {overlay_path}")
+        local overlay_handle = io.open(overlay_path, "r")
+        if nil == overlay_handle then
+            log.fatal(f"Cannot read overlay file: {overlay_path}")
+            error("Missing overlay file")
+        end
+        local overlay = toml.parse(overlay_handle:read("*all"))
+        overlay_handle:close()
+        overlay_merge(settings, overlay)
+    end
+end
 -- ensure that arg[2] is present if the local_settings_file depends on it
 if (nil ~= string.find(local_settings_file, "{SM_ROOT}")) and (nil == sm_root) then
     log.fatal("Cannot proceed: SM_ROOT required but not set")
@@ -4695,6 +4730,9 @@ end
 for k, v in pairs(args) do
     if k == "config_dir" then goto continue end
     if k == "sm_root" then goto continue end
+    -- flag: --overlay/--partials is not a site setting
+    if k == "overlay" then goto continue end
+    if k == "partials" then goto continue end
     -- SM_ROOT also applis to the CLI
     local sub_v = v
     if nil ~= sm_root then
@@ -5011,6 +5049,25 @@ end
 local template = template_file:read("*all")
 template_file:close()
 
+-- load mustache partials from --partials <dir>
+local module_partials = {}
+if nil ~= args.partials then
+    log.info(f"Loading module template partials from: {args.partials}")
+    for _, entry in ipairs(gears.read_dir(args.partials)) do
+        if not entry.is_dir then
+            local partial_name = entry.name:match("^(.+)%.[^%.]+$") or entry.name
+            local partial_file = io.open(args.partials .. "/" .. entry.name, "r")
+            if nil == partial_file then
+                log.fatal(f"Cannot read partial: {args.partials}/{entry.name}")
+                error("Missing partial file")
+            end
+            module_partials[partial_name] = partial_file:read("*all")
+            partial_file:close()
+            log.debug(f"Loaded partial: {partial_name}")
+        end
+    end
+end
+
 -- iterate over versions and generate module based on template file
 log.info("Generating modules ...")
 
@@ -5036,7 +5093,7 @@ for version, _ in pairs(installed_versions) do
         log.info(k, v)
     end
     -- generate module file
-    local mod = lustache:render(template, module_params)
+    local mod = lustache:render(template, module_params, module_partials)
 
     local module_path = module_dir .. f"/{version}.lua"
     if nil ~= settings.site.variant then
@@ -5063,13 +5120,30 @@ end
 local function check_find_is_gnu()
     log.trace("Checking if GNU find...")
 
-    local find_loc = tostring(sh.which("find"))
-    local find_strings = sh.strings(find_loc)
-    for s in string.gmatch(tostring(find_strings), "[^\n]+") do
-        if s == "GNU findutils" then
-            log.trace("GNU find detected")
-            return true
-        end
+    -- local find_loc = tostring(sh.which("find"))
+    -- local find_strings = sh.strings(find_loc)
+    -- for s in string.gmatch(tostring(find_strings), "[^\n]+") do
+    --     if s == "GNU findutils" then
+    --         log.trace("GNU find detected")
+    --         return true
+    --     end
+    -- end
+
+    -- Ask find itself: GNU find answers `--version` with "find (GNU
+    -- findutils) <version number>"; BSD rejects the flag (at the time of
+    -- writing), and defeinitely won't print "GNU" if it ever decided to start
+    -- answering. Choosing not to interrogate the find executable with
+    -- `strings` as that is not guaranteed to be included in some OS'es. 
+    local raise_errors = sh.__raise_errors
+    sh.__raise_errors = false -- stop error raising in case no `--version` flag
+    local find_version = sh.find("--version")
+    sh.__raise_errors = raise_errors
+
+    if 0 == find_version.__exitcode
+        and string.find(find_version.__stdout, "GNU findutils", 1, true)
+    then
+        log.trace("GNU find detected")
+        return true
     end
 
     log.trace("GNU find not detected")

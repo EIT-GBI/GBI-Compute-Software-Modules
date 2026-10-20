@@ -5454,6 +5454,14 @@ Key-value formatted overwrite list. Repeat the vars keyword to populate muliple
 key-value pairs. Eg: '--var "X=1" --var "Y=2"'.
 ]]):count("*")
 parser:option(
+    "--overlay", [[
+Path to an additional TOML settings file that is layered over <settings>
+(repeat the flag for multiple overlays, applied in order). Tables are merged
+recursively; arrays and scalar values are replaced. Use the [overwrite]
+section to override values regardless of which section ([constant],
+[product], or [zip]) defines them.
+]]):count("*")
+parser:option(
     "--chmod-overwrite", [[
 JSON-formatted overwrite table for chmod, eg: '{\"criterion\": \"new chmod
 string\"}'. The <criterion> string is a Lua regex that will be tested against
@@ -5516,6 +5524,17 @@ end
 -------------------------------------------------------------------------------
 -- process settings
 --------------------------------------------------------------------------------
+-- function to merge overlay table onto base table
+local function overlay_merge(base, over)
+    for k, v in pairs(over) do
+        if "table" == type(v) and "table" == type(base[k])
+           and nil == v[1] and nil == base[k][1] then
+            overlay_merge(base[k], v)
+        else
+            base[k] = v
+        end
+    end
+end
 
 -- load settings from file
 local settings  = toml.parse(RUN_DATA.settings_file)
@@ -5527,6 +5546,21 @@ ensure_table(settings, "product")
 ensure_table(settings, "zip")
 ensure_table(settings, "overwrite")
 ensure_table(settings, "chmod_overwrite")
+-- apply --overlay settings files (in order) on top of the parsed settings.
+-- Maps are merged recursively; arrays and scalars are replaced wholesale.
+if nil ~= args.overlay then
+    for _, overlay_path in ipairs(args.overlay) do
+        log.info(f"Applying settings overlay: {overlay_path}")
+        local overlay_handle = io.open(overlay_path, "r")
+        if nil == overlay_handle then
+            log.fatal(f"Cannot read overlay file: {overlay_path}")
+            error("Missing overlay file")
+        end
+        local overlay = toml.parse(overlay_handle:read("*all"))
+        overlay_handle:close()
+        overlay_merge(settings, overlay)
+    end
+end
 -- decode overwrite table (if given), these will be applied to constaints later
 if nil ~= args.overwrite then
     settings.overwrite = json.decode(args.overwrite)
