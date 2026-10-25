@@ -5119,21 +5119,11 @@ end
 
 local function check_find_is_gnu()
     log.trace("Checking if GNU find...")
-
-    -- local find_loc = tostring(sh.which("find"))
-    -- local find_strings = sh.strings(find_loc)
-    -- for s in string.gmatch(tostring(find_strings), "[^\n]+") do
-    --     if s == "GNU findutils" then
-    --         log.trace("GNU find detected")
-    --         return true
-    --     end
-    -- end
-
     -- Ask find itself: GNU find answers `--version` with "find (GNU
     -- findutils) <version number>"; BSD rejects the flag (at the time of
     -- writing), and defeinitely won't print "GNU" if it ever decided to start
     -- answering. Choosing not to interrogate the find executable with
-    -- `strings` as that is not guaranteed to be included in some OS'es. 
+    -- `strings` as that is not guaranteed to be included in some OS'es.
     local raise_errors = sh.__raise_errors
     sh.__raise_errors = false -- stop error raising in case no `--version` flag
     local find_version = sh.find("--version")
@@ -5161,15 +5151,14 @@ else
 end
 
 sh.__verbose = true
-
 for _, install_dir in pairs(installed_versions) do
     sh.pushd(install_dir)
     sh.chmod("-R", "o+rX", ".")
-    -- make all files that are executable by the user executable by everyone
+    -- make all files that are executable by the user also executable by
+    -- everyone else
     sh.bash("-c", find_cmd)
     sh.popd()
 end
-
 sh.__verbose = false
 
 --------------------------------------------------------------------------------
