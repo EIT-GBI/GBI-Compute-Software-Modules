@@ -4,7 +4,7 @@ ARCH=$(to_lower "$RUNTIME_ARCH")
 [[ $ARCH == "arm64" ]] && ARCH="aarch64"
 [[ $ARCH == "amd64" ]] && ARCH="x64"
 [[ $ARCH == "x86_64" ]] && ARCH="x64"
-[[ $OS   == "darwin" ]] && OS="mac"
+[[ $OS == "darwin" ]] && OS="mac"
 
 # Note: Temurin's releases are glibc builds on linux (musl ones exist under
 # os=alpine-linux, but GBI's nodes are glibc) -- hence no
@@ -20,8 +20,7 @@ tar xf downloaded.tar.gz -C downloaded --strip-components=1
 
 # the macOS tarball is a .jdk bundle: the actual JAVA_HOME lives in
 # Contents/Home -- hoist it so JAVA_HOME is the tree root on every platform
-if [[ -d downloaded/Contents/Home ]]
-then
+if [[ -d downloaded/Contents/Home ]]; then
     mv downloaded/Contents/Home downloaded.home
     rm -rf downloaded
     mv downloaded.home downloaded

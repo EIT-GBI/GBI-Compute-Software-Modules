@@ -19,34 +19,52 @@ class ArchivePackageTest(unittest.TestCase):
             self.skipTest("wheel integration needs setuptools>=61")
         with tempfile.TemporaryDirectory() as directory:
             tmp_path = Path(directory).resolve()
-            project = tmp_path / "project"
-            wheelhouse, install = tmp_path / "wheelhouse", tmp_path / "installed"
+            project  = tmp_path / "project"
+            wheelhouse, install = (
+                tmp_path / "wheelhouse", tmp_path / "installed",
+            )
             project.mkdir()
             shutil.copy2(Path(__file__).parents[1] / "pyproject.toml", project)
-            shutil.copytree(Path(__file__).parents[1] / "src/lib/gbi_data", project / "src/lib/gbi_data")
+            shutil.copytree(
+                Path(__file__).parents[1] / "src/lib/gbi_data",
+                project / "src/lib/gbi_data",
+            )
             wheelhouse.mkdir()
             try:
                 subprocess.run(
-                    [sys.executable, "-m", "pip", "wheel", ".", "--no-index", "--no-deps",
-                     "--no-build-isolation", "-w", str(wheelhouse)],
-                    cwd=project, check=True, capture_output=True, text=True,
+                    [
+                        sys.executable, "-m", "pip", "wheel", ".", "--no-index",
+                        "--no-deps", "--no-build-isolation", "-w",
+                        str(wheelhouse),
+                    ], cwd = project, check = True, capture_output = True,
+                    text = True,
                 )
             except subprocess.CalledProcessError as error:
-                if "BackendUnavailable" in error.stderr or "No module named 'setuptools'" in error.stderr:
-                    self.skipTest("local Python has no usable offline wheel build backend")
+                if (
+                    "BackendUnavailable" in error.stderr
+                    or "No module named 'setuptools'" in error.stderr
+                ):
+                    self.skipTest(
+                        "local Python has no usable offline wheel build backend"
+                    )
                 raise
             wheels = tuple(wheelhouse.glob("*.whl"))
             self.assertEqual(len(wheels), 1)
             with zipfile.ZipFile(wheels[0]) as wheel:
-                for name in ("__init__.py", "archives.py", "chunks.py", "packing.py",
-                             "selection.py", "storage.py", "formats.py", "transfer.py",
-                             "archive_plan.py", "archive_state.py"):
-                    self.assertEqual(wheel.read("gbi_data/" + name),
-                                     (project / "src/lib/gbi_data" / name).read_bytes())
+                for name in (
+                    "__init__.py", "archives.py", "chunks.py", "packing.py",
+                    "selection.py", "storage.py", "formats.py", "transfer.py",
+                    "archive_plan.py", "archive_state.py",
+                ):
+                    self.assertEqual(
+                        wheel.read("gbi_data/" + name),
+                        (project / "src/lib/gbi_data" / name).read_bytes(),
+                    )
             subprocess.run(
-                [sys.executable, "-m", "pip", "install", "--no-index", "--no-deps",
-                 "--target", str(install), str(wheels[0])],
-                check=True, capture_output=True, text=True,
+                [
+                    sys.executable, "-m", "pip", "install", "--no-index",
+                    "--no-deps", "--target", str(install), str(wheels[0]),
+                ], check = True, capture_output = True, text = True,
             )
             source = tmp_path / "source"
             source.mkdir()
@@ -70,9 +88,12 @@ assert not (restored / "skip.txt").exists()
 '''
             for suffix, compression in (("tar", ""), ("tar.gz", "gzip")):
                 result = subprocess.run(
-                    [sys.executable, "-c", script, str(source), str(tmp_path / f"archive.{suffix}"),
-                     str(tmp_path / f"restored-{suffix}"), compression],
-                    env={"PATH": "", "PYTHONPATH": str(install)},
-                    capture_output=True, text=True,
+                    [
+                        sys.executable, "-c", script, str(source),
+                        str(tmp_path / f"archive.{suffix}"),
+                        str(tmp_path / f"restored-{suffix}"), compression,
+                    ],
+                    env = {"PATH": "", "PYTHONPATH": str(install)},
+                    capture_output = True, text = True,
                 )
                 self.assertEqual(result.returncode, 0, result.stderr)

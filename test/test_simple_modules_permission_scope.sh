@@ -17,7 +17,7 @@ active="${software}/fixture-1.0"
 older="${software}/fixture-0.4.16"
 mkdir -p "${config}" "${active}/bin" "${older}" "${software}/unrelated"
 
-cat > "${config}/settings.toml" <<'EOF'
+cat > "${config}/settings.toml" << 'EOF'
 [install]
 versions = ["1.0"]
 prefix = "{SITE_DESTINATION}"
@@ -33,14 +33,14 @@ clean = false
 safe = true
 EOF
 
-cat > "${config}/local_settings.toml" <<'EOF'
+cat > "${config}/local_settings.toml" << 'EOF'
 name = "fixture"
 relocate = false
 destination = "{SM_ROOT}/shared/software"
 modules = "{SM_ROOT}/modules"
 EOF
 
-cat > "${config}/module_template.lua" <<'EOF'
+cat > "${config}/module_template.lua" << 'EOF'
 -- permission-scope integration fixture
 EOF
 
@@ -49,7 +49,8 @@ printf '#!/bin/sh\nexit 0\n' > "${active}/bin/tool"
 printf 'older private file\n' > "${older}/private.txt"
 printf 'unrelated private file\n' > "${software}/unrelated/private.txt"
 chmod 0700 "${active}" "${active}/bin" "${older}" "${software}/unrelated"
-chmod 0600 "${active}/plain.txt" "${older}/private.txt" "${software}/unrelated/private.txt"
+chmod 0600 "${active}/plain.txt" "${older}/private.txt" \
+    "${software}/unrelated/private.txt"
 chmod 0700 "${active}/bin/tool"
 
 "${__PREFIX}/opt/bin/simple-modules.ex" "${config}" --sm-root="${tmp}"

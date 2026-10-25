@@ -30,33 +30,53 @@ def prepared(spec, site, home):
     for name in ("source", "target"):
         if name + "_kind" in spec:
             path, kind, storage_root = site.classify(spec[name])
-            if (str(path), kind, str(storage_root)) != (spec[name], spec[name + "_kind"], spec[name + "_root"]):
-                raise ValueError("storage route changed since submission; source retained")
+            if (str(path), kind, str(storage_root)) != (
+                spec[name], spec[name + "_kind"], spec[name + "_root"],
+            ):
+                raise ValueError(
+                    "storage route changed since submission; source retained"
+                )
     root = home / "archive-plans"
     check_parent(root, site.roots["lustre"])
-    root.mkdir(parents=True, exist_ok=True, mode=0o700)
+    root.mkdir(parents = True, exist_ok = True, mode = 0o700)
     check_parent(root / "placeholder", site.roots["lustre"])
     key = _key(spec["target"])
-    intent = {name: spec.get(name) for name in
-              ("source", "target", "include", "exclude", "archive_chunk_threshold")}
+    intent = {
+        name: spec.get(name)
+        for name in (
+            "source", "target", "include", "exclude", "archive_chunk_threshold",
+        )
+    }
     with (root / (key + ".lock")).open("a+") as lock:
         try:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError as error:
-            raise ValueError("this archive destination already has an active transfer; inspect its status") from error
-        saved = root / (key + ".json")
+            raise ValueError(
+                "this archive destination already has an active transfer; inspect its status"
+            ) from error
+        saved     = root / (key + ".json")
         requested = spec.get("archive_units")
         if requested and not saved.is_file():
-            raise ValueError("--archive-unit requires an existing saved archive plan")
+            raise ValueError(
+                "--archive-unit requires an existing saved archive plan"
+            )
         if saved.exists():
             record = json.loads(saved.read_text())
             if record.get("intent") != intent:
-                raise ValueError("destination already has a different saved archive plan; do not mix layouts")
+                raise ValueError(
+                    "destination already has a different saved archive plan; do not mix layouts"
+                )
         else:
             destination = Path(spec["target"])
             if destination.exists():
-                if not destination.is_dir() or next(destination.iterdir(), None) is not None:
-                    raise ValueError("archive destination is not empty and has no matching saved plan; inspect existing data before recovery")
+                if (
+                    not destination.is_dir()
+                    or next(destination.iterdir(), None) is not None
+                ):
+                    raise ValueError(
+                        "archive destination is not empty and has no matching "
+                        "saved plan; inspect existing data before recovery"
+                    )
             last_report = 0.0
 
             def progress():
@@ -69,49 +89,82 @@ def prepared(spec, site, home):
             # the operation timeout and the maintained mount-I/O supervisor.
             # Do not reuse the five-second login-node probe budget here.
             plan = archive_plan.plan_archive(
-                spec["source"], spec["target"], includes=spec.get("include", ()),
-                exclusions=spec.get("exclude", ()), reserved_names=site.reserved,
-                chunk_threshold_bytes=spec["archive_chunk_threshold"], max_entries=None,
-                max_seconds=float(site.values["file_timeout"]), visit=progress)
+                spec["source"], spec["target"],
+                includes = spec.get("include", ()),
+                exclusions = spec.get("exclude", ()),
+                reserved_names = site.reserved,
+                chunk_threshold_bytes = spec["archive_chunk_threshold"],
+                max_entries = None,
+                max_seconds = float(site.values["file_timeout"]),
+                visit = progress,
+            )
             record = {"intent": intent, "plan": plan.as_dict()}
             write_json(saved, record)
         results = root / (key + ".units")
-        results.mkdir(exist_ok=True, mode=0o700)
+        results.mkdir(exist_ok = True, mode = 0o700)
         units = []
         for planned in record["plan"]["units"]:
-            path = Path(spec["source"]) / planned["source_relative"]
+            path        = Path(spec["source"]) / planned["source_relative"]
             destination = Path(spec["target"]) / planned["target_relative"]
             result_path = results / (_key(planned["source_relative"]) + ".json")
-            observed = planned["expected_source"]
-            unit = {"source": str(path), "path": str(path),
-                    "expected_source": [observed[0], observed[1], stat.S_IFMT(observed[2]), *observed[3:5]],
-                    "empty": planned["action"] == "directory",
-                    "format_source_size": planned["bytes"],
-                    "archive_result": str(result_path), "archive_destination": str(destination)}
+            observed    = planned["expected_source"]
+            unit = {
+                "source": str(path), "path": str(path),
+                "expected_source": [
+                    observed[0], observed[1], stat.S_IFMT(observed[2]),
+                    *observed[3:5],
+                ], "empty": planned["action"] == "directory",
+                "format_source_size": planned["bytes"],
+                "archive_result": str(result_path),
+                "archive_destination": str(destination),
+            }
             if planned["action"] == "pack":
-                unit.update(format_action="pack", format_target=str(destination),
-                            pack="tar", chunk_size=planned["chunk_size"])
+                unit.update(
+                    format_action = "pack", format_target = str(destination),
+                    pack = "tar", chunk_size = planned["chunk_size"],
+                )
             if result_path.is_file():
                 completed = json.loads(result_path.read_text())
-                if completed.get("deleted") or (planned["action"] != "pack" and not os.path.lexists(path)):
+                if completed.get("deleted") or (
+                    planned["action"] != "pack" and not os.path.lexists(path)
+                ):
                     unit["archive_completed"] = completed
             units.append(unit)
         if requested:
-            if (not isinstance(requested, list) or not requested
-                    or any(not isinstance(name, str) or not name or name.startswith("/")
-                           or "\\" in name or any(part in ("", ".", "..") for part in name.split("/"))
-                           for name in requested)):
-                raise ValueError("--archive-unit values must be exact relative paths from the saved plan")
+            if (
+                not isinstance(requested, list)
+                or not requested
+                or any(
+                    not isinstance(name, str)
+                    or not name
+                    or name.startswith("/")
+                    or "\\" in name
+                    or any(part in ("", ".", "..") for part in name.split("/"))
+                    for name in requested
+                )
+            ):
+                raise ValueError(
+                    "--archive-unit values must be exact relative paths from the saved plan"
+                )
             if len(set(requested)) != len(requested):
                 raise ValueError("--archive-unit values must be unique")
-            by_name = {planned["source_relative"]: unit for planned, unit in zip(record["plan"]["units"], units)}
+            by_name = {
+                planned["source_relative"]: unit
+                for planned, unit in zip(record["plan"]["units"], units)
+            }
             unknown = [name for name in requested if name not in by_name]
             if unknown:
-                raise ValueError(f"--archive-unit is not present in the saved plan: {unknown[0]}")
+                raise ValueError(
+                    f"--archive-unit is not present in the saved plan: {unknown[0]}"
+                )
             selected = [by_name[name] for name in requested]
             for name, unit in zip(requested, selected):
-                if unit.get("archive_completed") or not os.path.lexists(unit["source"]):
-                    raise ValueError(f"--archive-unit is already completed or its source is absent: {name}")
+                if unit.get("archive_completed") or not os.path.lexists(
+                    unit["source"]
+                ):
+                    raise ValueError(
+                        f"--archive-unit is already completed or its source is absent: {name}"
+                    )
             units = selected
         yield {**spec, "selection": units, "archive_plan": record["plan"]}
 
@@ -123,24 +176,51 @@ def resume_completed(task):
     check_parent(target, Path(task["target_root"]))
     if os.path.lexists(source):
         if source.is_symlink() or not source.is_dir():
-            raise ValueError("a completed archive source has reappeared; source retained")
+            raise ValueError(
+                "a completed archive source has reappeared; source retained"
+            )
         # Packed roots remain as empty directories; excluded members may remain.
-        for name, _, kind in archives._walk(source, task.get("reserved_names", ())):
-            if kind != "directory" and matches(Path(name).name, task.get("include", ()), task.get("exclude", ())):
-                raise ValueError("a completed archive source has new selected files; source retained")
+        for name, _, kind in archives._walk(
+            source, task.get("reserved_names", ())
+        ):
+            if kind != "directory" and matches(
+                Path(name).name, task.get("include", ()),
+                task.get("exclude", ()),
+            ):
+                raise ValueError(
+                    "a completed archive source has new selected files; source retained"
+                )
     if task.get("format_action") == "pack":
-        stored = (lambda: chunks.open_chunks(target)) if task.get("chunk_size") else target
+        stored = (
+            (lambda: chunks.open_chunks(target))
+            if task.get("chunk_size")
+            else target
+        )
         manifest = archives.inspect_archive(stored)
-        if manifest is None or formats._manifest_digest(manifest) != completed["manifest_sha256"]:
-            raise ValueError("completed archive destination no longer matches its receipt")
+        if (
+            manifest is None
+            or formats._manifest_digest(manifest)
+            != completed["manifest_sha256"]
+        ):
+            raise ValueError(
+                "completed archive destination no longer matches its receipt"
+            )
     elif not task["empty"]:
-        if completed.get("kind") == "symlink" and task["target_kind"] == "alluxio":
+        if (
+            completed.get("kind") == "symlink"
+            and task["target_kind"] == "alluxio"
+        ):
             target = target.with_name(target.name + ".rclonelink")
         before = fingerprint(target)
-        actual = (hashlib.sha256(os.fsencode(os.readlink(target))).hexdigest()
-                  if target.is_symlink() else digest(target))
+        actual = (
+            hashlib.sha256(os.fsencode(os.readlink(target))).hexdigest()
+            if target.is_symlink()
+            else digest(target)
+        )
         if actual != completed["sha256"] or fingerprint(target) != before:
-            raise ValueError("completed archive file no longer matches its receipt")
+            raise ValueError(
+                "completed archive file no longer matches its receipt"
+            )
     elif not target.is_dir():
         raise ValueError("completed archive directory is missing")
     return {**completed, "reused": True, "deleted": False, "freed_bytes": 0}

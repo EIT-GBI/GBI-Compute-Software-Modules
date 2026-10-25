@@ -1,5 +1,5 @@
 name = "cmake"
 
-relocate = true
+relocate    = true
 destination = "{SM_ROOT}/cmake"
-modules = "{SM_ROOT}/modules"
+modules     = "{SM_ROOT}/modules"

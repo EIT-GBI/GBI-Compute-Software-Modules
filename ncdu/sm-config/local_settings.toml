@@ -1,5 +1,5 @@
 name = "ncdu"
 
-relocate = true
+relocate    = true
 destination = "{SM_ROOT}/ncdu"
-modules = "{SM_ROOT}/modules"
+modules     = "{SM_ROOT}/modules"

@@ -8,15 +8,15 @@ VERSION       = "{INSTALL_VERSION}"
 [install]
 # NOTE: zig pins itself to a specific LLVM major -- 0.16.0 wants 21.x
 versions = ["21.1.8"]
-prefix = "{SITE_DESTINATION}/{STAGE_DIR}"
+prefix   = "{SITE_DESTINATION}/{STAGE_DIR}"
 # note: this is Lua regex: you will need to escape - and + (using %)
 format = "^downloaded$"
 # (optional) relocate after install
 destination = "{SITE_DESTINATION}/{INSTALL_VERSION_VARIANT}"
-stage = true
+stage       = true
 
 [module]
-LLVM_PATH = "{INSTALL_DIR}"
+LLVM_PATH       = "{INSTALL_DIR}"
 INSTALL_VERSION = "{INSTALL_VERSION}"
 
 [post]

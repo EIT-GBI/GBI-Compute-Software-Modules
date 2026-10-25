@@ -6,31 +6,32 @@ from pathlib import Path
 import pwd
 import re
 
-
 DEFAULTS = {
-    "lustre_root": "", "fss_root": "", "bucket_root": "",
-    "partition": "", "time_limit": "1-00:00:00", "cpus": "2", "mem": "4G",
-    "jobs": "4", "file_timeout": "86400", "verify_settle_seconds": "1200",
-    "rclone_bin": "rclone", "reserved_names": "",
-    "lfs_bin": "lfs", "usage_db": "",
-    "inline_bytes": "8589934592",
-    "native_bytes": "8388608", "native_files": "32",
-    "inline_scan_entries": "100000", "inline_probe_seconds": "5",
-    "mount_timeout": "120", "discovery_timeout": "120", "history_timeout": "1800",
+    "lustre_root": "", "fss_root": "", "bucket_root": "", "partition": "",
+    "time_limit": "1-00:00:00", "cpus": "2", "mem": "4G", "jobs": "4",
+    "file_timeout": "86400", "verify_settle_seconds": "1200",
+    "rclone_bin": "rclone", "reserved_names": "", "lfs_bin": "lfs",
+    "usage_db": "", "inline_bytes": "8589934592", "native_bytes": "8388608",
+    "native_files": "32", "inline_scan_entries": "100000",
+    "inline_probe_seconds": "5", "mount_timeout": "120",
+    "discovery_timeout": "120", "history_timeout": "1800",
     "prefect_socket": "/run/gbi-data/prefect.sock",
-    "prefect_url": "",
-    "pack_small_bytes": "65536", "pack_min_files": "40", "pack_max_bytes": "1073741824",
+    "prefect_url": "", "pack_small_bytes": "65536", "pack_min_files": "40",
+    "pack_max_bytes": "1073741824",
 }
 
 
-def mounted_roots(path=Path("/proc/self/mountinfo")):
+def mounted_roots(path = Path("/proc/self/mountinfo")):
     """Identify storage behavior from mounts, not an access allowlist."""
     if not path.exists():
         return []
     roots = []
     for line in path.read_text().splitlines():
         fields, filesystem = line.split(" - ", 1)
-        mount = re.sub(r"\\([0-7]{3})", lambda match: chr(int(match[1], 8)), fields.split()[4])
+        mount = re.sub(
+            r"\\([0-7]{3})", lambda match: chr(int(match[1], 8)),
+            fields.split()[4],
+        )
         kind, source, *_ = filesystem.split()
         if "alluxio" in kind.lower() or "alluxio" in source.lower():
             kind = "alluxio"
@@ -43,8 +44,8 @@ def mounted_roots(path=Path("/proc/self/mountinfo")):
 
 
 class Site:
-    def __init__(self, path, configured=None):
-        self.path = Path(path).resolve()
+    def __init__(self, path, configured = None):
+        self.path   = Path(path).resolve()
         self.values = DEFAULTS.copy()
         for number, line in enumerate(self.path.read_text().splitlines(), 1):
             line = line.strip()
@@ -53,14 +54,22 @@ class Site:
             key, separator, value = line.partition("=")
             key, value = key.strip(), value.strip()
             if not separator or key not in DEFAULTS:
-                raise ValueError(f"{self.path}:{number}: unknown setting {key!r}")
+                raise ValueError(
+                    f"{self.path}:{number}: unknown setting {key!r}"
+                )
             self.values[key] = value
-        for key in ("jobs", "cpus", "file_timeout", "verify_settle_seconds", "inline_bytes",
-                    "native_bytes", "native_files", "inline_scan_entries", "pack_small_bytes",
-                    "pack_min_files", "pack_max_bytes"):
+        for key in (
+            "jobs", "cpus", "file_timeout", "verify_settle_seconds",
+            "inline_bytes", "native_bytes", "native_files",
+            "inline_scan_entries", "pack_small_bytes", "pack_min_files",
+            "pack_max_bytes",
+        ):
             if int(self.values[key]) < 1:
                 raise ValueError(f"{key} must be positive")
-        for key in ("inline_probe_seconds", "mount_timeout", "discovery_timeout", "history_timeout"):
+        for key in (
+            "inline_probe_seconds", "mount_timeout", "discovery_timeout",
+            "history_timeout",
+        ):
             if float(self.values[key]) <= 0:
                 raise ValueError(f"{key} must be positive")
         if configured is not None:
@@ -68,13 +77,22 @@ class Site:
         self.user = pwd.getpwuid(os.getuid()).pw_name
         self.root_aliases = {
             name: Path(self.values[key]).expanduser().absolute() / self.user
-            for name, key in (("lustre", "lustre_root"), ("fss", "fss_root"),
-                              ("alluxio", "bucket_root")) if self.values[key]
+            for name, key in (
+                ("lustre", "lustre_root"), ("fss", "fss_root"),
+                ("alluxio", "bucket_root"),
+            )
+            if self.values[key]
         }
-        self.roots = {name: path.resolve() for name, path in self.root_aliases.items()}
-        self.storage_roots = sorted([*self.roots.items(), *mounted_roots()],
-                                    key=lambda item: len(item[1].parts), reverse=True)
-        self.reserved = [".gbi", ".prefect-*", *self.values["reserved_names"].split()]
+        self.roots = {
+            name: path.resolve() for name, path in self.root_aliases.items()
+        }
+        self.storage_roots = sorted(
+            [*self.roots.items(), *mounted_roots()],
+            key = lambda item: len(item[1].parts), reverse = True,
+        )
+        self.reserved = [
+            ".gbi", ".prefect-*", *self.values["reserved_names"].split(),
+        ]
 
     def classify(self, path):
         # Resolve the parent, but keep a final symlink as data, not a traversal.
@@ -93,13 +111,16 @@ class Site:
         parts = path.relative_to(root).parts
         return (bool(parts) and parts[0] == "transfer-locks") or any(
             fnmatch.fnmatchcase(part, pattern)
-            for part in parts for pattern in self.reserved
+            for part in parts
+            for pattern in self.reserved
         )
 
     @staticmethod
     def check_root(root):
         if not root.is_dir():
-            raise ValueError(f"storage root is unavailable on this node: {root}")
+            raise ValueError(
+                f"storage root is unavailable on this node: {root}"
+            )
         if root.resolve() != root:
             raise ValueError(f"storage root changed: {root}")
 
@@ -124,5 +145,7 @@ def fingerprint(path):
     info = path.lstat()
     # Permission repairs change ctime without changing the data. The source's
     # inode, type, size and nanosecond mtime must remain unchanged instead.
-    return [info.st_dev, info.st_ino, info.st_mode & 0o170000,
-            info.st_size, info.st_mtime_ns]
+    return [
+        info.st_dev, info.st_ino, info.st_mode & 0o170000, info.st_size,
+        info.st_mtime_ns,
+    ]

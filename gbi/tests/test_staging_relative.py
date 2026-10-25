@@ -14,31 +14,51 @@ def inputs(tmp_path):
     (source / "a.txt").write_bytes(b"selected")
     (source / "b.txt").write_bytes(b"excluded")
     scratch = tmp_path / "lustre"
-    state = scratch / ".gbi/state"
-    state.mkdir(parents=True)
-    task = {"scratch_root": str(scratch), "pack": "tar", "include": ["outer/*.txt"],
-            "exclude": ["outer/b.txt"], "selection_mode": "relative", "selection_prefix": "outer"}
+    state   = scratch / ".gbi/state"
+    state.mkdir(parents = True)
+    task = {
+        "scratch_root": str(scratch), "pack": "tar", "include": ["outer/*.txt"],
+        "exclude": ["outer/b.txt"], "selection_mode": "relative",
+        "selection_prefix": "outer",
+    }
     return source, state, task
 
 
 def test_relative_stage_and_retained_resume_preserve_member_paths(inputs):
     source, state, task = inputs
-    first = formats._stage_archive(task, source, Path("bundle.gbi.tar.gbi-chunks"), state, "key", lambda *args: None)
+    first = formats._stage_archive(
+        task, source, Path("bundle.gbi.tar.gbi-chunks"), state, "key",
+        lambda *args: None,
+    )
     payload, manifest, saved, _ = first
     assert [entry["path"] for entry in manifest["entries"]] == ["a.txt"]
-    assert archives.inspect_archive(payload)["entries"] == formats._public_manifest(manifest)["entries"]
-    second = formats._stage_archive(task, source, Path("bundle.gbi.tar.gbi-chunks"), state, "key", lambda *args: None)
+    assert (
+        archives.inspect_archive(payload)["entries"]
+        == formats._public_manifest(manifest)["entries"]
+    )
+    second = formats._stage_archive(
+        task, source, Path("bundle.gbi.tar.gbi-chunks"), state, "key",
+        lambda *args: None,
+    )
     assert second[2]["owned"] == saved["owned"]
     assert second[0].stat().st_ino == payload.stat().st_ino
 
 
-def test_relative_capacity_estimate_counts_selected_payload_before_stage_write(inputs, monkeypatch):
+def test_relative_capacity_estimate_counts_selected_payload_before_stage_write(
+            inputs, monkeypatch,
+        ):
     source, state, task = inputs
     (source / "large.bin").write_bytes(b"x" * (2 << 20))
-    task.update(include=["outer/large.bin"], exclude=[])
-    monkeypatch.setattr(formats.shutil, "disk_usage", lambda _path: SimpleNamespace(free=68 << 20))
-    with pytest.raises(ValueError, match="not enough Lustre scratch"):
-        formats._stage_archive(task, source, Path("bundle.gbi.tar.gbi-chunks"), state, "key", lambda *args: None)
+    task.update(include = ["outer/large.bin"], exclude = [])
+    monkeypatch.setattr(
+        formats.shutil, "disk_usage",
+        lambda _path: SimpleNamespace(free = 68 << 20),
+    )
+    with pytest.raises(ValueError, match = "not enough Lustre scratch"):
+        formats._stage_archive(
+            task, source, Path("bundle.gbi.tar.gbi-chunks"), state, "key",
+            lambda *args: None,
+        )
     assert not (state / "format-staging/key/bundle.gbi.tar").exists()
     assert (source / "large.bin").exists()
 

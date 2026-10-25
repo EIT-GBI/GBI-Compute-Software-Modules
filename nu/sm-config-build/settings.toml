@@ -5,15 +5,15 @@ NPROCS     = 16
 
 [install]
 versions = ["stable", "0.114.1"]
-prefix = "{SITE_DESTINATION}/{STAGE_DIR}/cargo"
+prefix   = "{SITE_DESTINATION}/{STAGE_DIR}/cargo"
 # note: this is Lua regex: you will need to escape - and + (using %)
 format = "^bin$"
 # (optional) relocate after install
 destination = "{SITE_DESTINATION}/{INSTALL_VERSION_VARIANT}"
-stage = true
+stage       = true
 
 [module]
-PATH = "{INSTALL_DIR}"
+PATH            = "{INSTALL_DIR}"
 LD_LIBRARY_PATH = "{INSTALL_DIR}"
 
 [post]

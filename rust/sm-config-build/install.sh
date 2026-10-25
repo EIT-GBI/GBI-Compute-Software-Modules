@@ -29,8 +29,7 @@ module load llvm/${LLVM_VERSION}
 # wrapper would also accept `uv run`, but `./configure` does not, so insist on
 # a real python3.
 PYTHON=$(command -v python3 || true)
-if [[ -z ${PYTHON} ]]
-then
+if [[ -z ${PYTHON} ]]; then
     echo "ERROR: building rust needs a python3 on PATH (used by ./configure"
     echo "       and x.py). Any python3 will do -- a system one, or one you"
     echo "       put on PATH yourself."
@@ -42,23 +41,22 @@ fi
 # alone, bootstrap builds a "dev" compiler, which reports itself as
 # <version>-dev and gates features like a nightly.
 case ${INSTALL_VERSION} in
-    beta|nightly) CHANNEL=${INSTALL_VERSION} ;;
-    *)            CHANNEL="stable"           ;;
+    beta | nightly) CHANNEL=${INSTALL_VERSION} ;;
+    *) CHANNEL="stable" ;;
 esac
 
 ARCHIVE="${SOURCE_NAME}-${INSTALL_VERSION}-src.tar.xz"
 
 echo "Downloading ${SOURCE_PREFIX}/${ARCHIVE}"
 
-curl --fail --output ${ARCHIVE}        -L ${SOURCE_PREFIX}/${ARCHIVE}
+curl --fail --output ${ARCHIVE} -L ${SOURCE_PREFIX}/${ARCHIVE}
 curl --fail --output ${ARCHIVE}.sha256 -L ${SOURCE_PREFIX}/${ARCHIVE}.sha256
 
 # This catches a truncated or tampered-in-transit download; it is not a
 # provenance check -- the checksum comes from the same host as the tarball. The
 # real check would be the detached ${ARCHIVE}.asc against the rust signing key,
 # which needs a gpg we cannot assume is here.
-if command -v sha256sum > /dev/null 2>&1
-then
+if command -v sha256sum > /dev/null 2>&1; then
     sha256sum -c ${ARCHIVE}.sha256
 else
     shasum -a 256 -c ${ARCHIVE}.sha256
@@ -99,10 +97,9 @@ CONFIGURE_ARGS=(
     --set change-id=ignore
 )
 
-if [[ -n ${STAGE0_ROOT} ]]
-then
+if [[ -n ${STAGE0_ROOT} ]]; then
     echo "Bootstrapping from the local rust in ${STAGE0_ROOT}"
-    CONFIGURE_ARGS+=( --enable-local-rust --local-rust-root="${STAGE0_ROOT}" )
+    CONFIGURE_ARGS+=(--enable-local-rust --local-rust-root="${STAGE0_ROOT}")
 fi
 
 ./configure "${CONFIGURE_ARGS[@]}"

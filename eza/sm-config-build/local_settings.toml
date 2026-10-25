@@ -1,6 +1,6 @@
-name = "eza"
+name    = "eza"
 variant = "compiled"
 
-relocate = true
+relocate    = true
 destination = "{SM_ROOT}/eza"
-modules = "{SM_ROOT}/modules"
+modules     = "{SM_ROOT}/modules"

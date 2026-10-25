@@ -18,7 +18,6 @@ VARIANT=${VARIANT:-gnu}
 MODE=${MODE:-}
 GBI_MODULE_PATH=${GBI_MODULE_PATH:-${ROOT}/usr}
 
-
 # --- per-recipe metadata readers -----------------------------------------
 
 # first line of <target>/sm-help => one-line summary
@@ -48,7 +47,6 @@ sm_deps() {
         | tr ' \t' '\n\n' | sed -e '/^$/d' -e 's,/.*,,' | sort -u \
         | tr '\n' ' ' | sed 's/ $//'
 }
-
 
 # --- tree rendering -------------------------------------------------------
 
@@ -102,9 +100,9 @@ print_target() {
     fi
 
     local n=${#bullets[@]} i sub
-    for (( i = 0; i < n; i++ )); do
+    for ((i = 0; i < n; i++)); do
         sub="├──"
-        [ $(( i + 1 )) -eq "$n" ] && sub="└──"
+        [ $((i + 1)) -eq "$n" ] && sub="└──"
         echo "${cont}  ${sub} ${bullets[$i]}"
     done
 }
@@ -115,17 +113,16 @@ print_tree() {
     set -- $1
     local i=0 n=$#
     for t in "$@"; do
-        i=$(( i + 1 ))
+        i=$((i + 1))
         local last=0
         [ "$i" -eq "$n" ] && last=1
         print_target "$t" "$last"
     done
 }
 
-
 # --- the help text --------------------------------------------------------
 
-cat <<EOF
+cat << EOF
  ----------------- install local modules ---------------------
 Sometimes Spack is just too much of a headache -- also how do you
 use spack without a local python? -- anyway, this is a collection
@@ -148,14 +145,14 @@ EOF
 
 print_tree "$TARGETS"
 
-cat <<EOF
+cat << EOF
 
 Opt-in targets [NOT built by 'all', ask for them by name]:
 EOF
 
 print_tree "$AUX_TARGETS"
 
-cat <<EOF
+cat << EOF
 
 Targets are discovered: any directory in the project root holding an
 sm-config/ (default) or sm-config-build/ (MODE=build) recipe is a target.

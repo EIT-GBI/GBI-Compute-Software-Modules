@@ -1,6 +1,6 @@
-name = "parallel-tar"
+name    = "parallel-tar"
 variant = "compiled"
 
-relocate = true
+relocate    = true
 destination = "{SM_ROOT}/parallel-tar"
-modules = "{SM_ROOT}/modules"
+modules     = "{SM_ROOT}/modules"

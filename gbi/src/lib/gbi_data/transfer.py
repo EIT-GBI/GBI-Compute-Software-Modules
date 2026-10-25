@@ -17,14 +17,22 @@ import time
 from .storage import fingerprint, overlap, lock_stripe
 
 
-def validate_source_retention(task, storage_roots=()):
+def validate_source_retention(task, storage_roots = ()):
     """Reject obsolete destructive Object Storage requests before any writes."""
-    if task.get("delete_source") or (task.get("delete") and task.get("source_kind") == "alluxio"):
-        raise ValueError("Object Storage originals are durable and cannot be deleted by GBI")
+    if task.get("delete_source") or (
+        task.get("delete") and task.get("source_kind") == "alluxio"
+    ):
+        raise ValueError(
+            "Object Storage originals are durable and cannot be deleted by GBI"
+        )
     if task.get("delete") and any(
-            kind == "alluxio" and overlap(Path(task["source"]), root)
-            for kind, root in storage_roots):
-        raise ValueError("source overlaps an Object Storage root; use copy or move an exact filesystem subtree")
+        kind == "alluxio" and overlap(Path(task["source"]), root)
+        for kind, root in storage_roots
+    ):
+        raise ValueError(
+            "source overlaps an Object Storage root; use copy or move an exact "
+            "filesystem subtree"
+        )
 
 
 def write_json(path, value):
@@ -39,7 +47,7 @@ def write_json(path, value):
 def receipt(path, record):
     with path.open("a") as stream:
         fcntl.flock(stream, fcntl.LOCK_EX)
-        stream.write(json.dumps(record, ensure_ascii=True) + "\n")
+        stream.write(json.dumps(record, ensure_ascii = True) + "\n")
         stream.flush()
         os.fsync(stream.fileno())
 
@@ -61,22 +69,30 @@ def digest(path):
 
 
 def check_parent(path, root):
-    if path.parent.resolve() != path.parent or not (path.parent == root or root in path.parent.parents):
+    if path.parent.resolve() != path.parent or not (
+        path.parent == root or root in path.parent.parents
+    ):
         raise ValueError(f"parent path changed or contains a symlink: {path}")
 
 
 def ensure_parent(path, root):
     # Check BEFORE mkdir: do not create directories through an existing link.
     check_parent(path, root)
-    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    path.parent.mkdir(parents = True, exist_ok = True, mode = 0o700)
     check_parent(path, root)
 
 
-def copy_stream(source, target, fd, rclone, lock, progress, target_kind, timings, max_bytes, source_size, source_fd):
+def copy_stream(
+            source, target, fd, rclone, lock, progress, target_kind, timings,
+            max_bytes, source_size, source_fd,
+        ):
     timings = timings if timings is not None else {}
     started = time.monotonic()
-    environment = {key: value for key, value in os.environ.items()
-                   if not key.startswith("RCLONE_")}
+    environment = {
+        key: value
+        for key, value in os.environ.items()
+        if not key.startswith("RCLONE_")
+    }
     result = hashlib.sha256()
     # Pin the regular source inode and pass its descriptor. Rclone's path
     # namespace encodes control characters; passing an ordinary pathname can
@@ -84,12 +100,19 @@ def copy_stream(source, target, fd, rclone, lock, progress, target_kind, timings
     # source path. The caller owns this descriptor and closes it after this
     # function returns. --copy-links follows only our /dev/fd handle, not user links.
     try:
-        child = subprocess.Popen(
-            [rclone, "cat", "/dev/fd", "--files-from-raw", "-", "--no-traverse",
-             "--copy-links", "--config", "/dev/null",
-             "--retries", "1", "--low-level-retries", "1", "--multi-thread-streams", "0"],
-            stdin=subprocess.PIPE, stdout=subprocess.PIPE, env=environment, pass_fds=(lock.fileno(), source_fd),
-        ) if rclone else None
+        child = (
+            subprocess.Popen(
+                [
+                    rclone, "cat", "/dev/fd", "--files-from-raw", "-",
+                    "--no-traverse", "--copy-links", "--config", "/dev/null",
+                    "--retries", "1", "--low-level-retries", "1",
+                    "--multi-thread-streams", "0",
+                ], stdin = subprocess.PIPE, stdout = subprocess.PIPE,
+                env = environment, pass_fds = (lock.fileno(), source_fd),
+            )
+            if rclone
+            else None
+        )
         if child:
             # Select the pinned handle directly, without listing transient Go
             # runtime descriptors in /dev/fd (which can disappear mid-listing).
@@ -106,12 +129,16 @@ def copy_stream(source, target, fd, rclone, lock, progress, target_kind, timings
         with os.fdopen(fd, "wb") as output:
             for block in iter(lambda: reader.read(1024 * 1024), b""):
                 if max_bytes is not None and total + len(block) > max_bytes:
-                    raise ValueError("source grew beyond the foreground byte budget; source kept")
+                    raise ValueError(
+                        "source grew beyond the foreground byte budget; source kept"
+                    )
                 output.write(block)
                 result.update(block)
                 total += len(block)
                 if time.monotonic() - last >= 2:
-                    detail = {"bytes": total, "phase": "copying", "path": str(source)}
+                    detail = {
+                        "bytes": total, "phase": "copying", "path": str(source),
+                    }
                     if source_size is not None:
                         detail["source_size"] = source_size
                     write_json(progress, detail)
@@ -144,48 +171,78 @@ def transfer(task):
     validate_source_retention(task)
     if task.get("archive_completed"):
         from .archive_state import resume_completed
+
         return resume_completed(task)
     if task.get("format_action"):
         from .formats import transfer as transfer_format
+
         return transfer_format(task)
-    timings = {}
-    source = Path(task["source"])
+    timings        = {}
+    source         = Path(task["source"])
     selection_root = Path(task["selection_root"])
-    target = Path(task["target"])
-    source_root, target_root = Path(task["source_root"]), Path(task["target_root"])
-    destination = target / source.relative_to(selection_root) if task.get("directory", False) else target
+    target         = Path(task["target"])
+    source_root, target_root = Path(task["source_root"]), Path(
+        task["target_root"]
+    )
+    destination = (
+        target / source.relative_to(selection_root)
+        if task.get("directory", False)
+        else target
+    )
     if task.get("empty", False):
         source_before = fingerprint(source)
         ensure_parent(destination / ".placeholder", target_root)
         destination_before = fingerprint(destination)[:3]
-        result = {"empty": True, "bytes": 0, "source_size": 0, "deleted": False, "reused": False}
+        result = {
+            "empty": True, "bytes": 0, "source_size": 0, "deleted": False,
+            "reused": False,
+        }
         archive_result(task, result)
         if task["delete"] and source != selection_root:
             check_parent(source, source_root)
             check_parent(destination, target_root)
-            if fingerprint(source) != source_before or fingerprint(destination)[:3] != destination_before:
-                raise ValueError("empty directory source or destination changed; source kept")
+            if (
+                fingerprint(source) != source_before
+                or fingerprint(destination)[:3] != destination_before
+            ):
+                raise ValueError(
+                    "empty directory source or destination changed; source kept"
+                )
             source.rmdir()
         result["deleted"] = task["delete"] and source != selection_root
         archive_result(task, result)
         return result
     initial = fingerprint(source)
-    decode_link = task.get("decode_link", task.get("source_kind") == "alluxio"
-                         and source.name.endswith(".rclonelink"))
+    decode_link = task.get(
+        "decode_link",
+        task.get("source_kind") == "alluxio"
+        and source.name.endswith(".rclonelink"),
+    )
     if source.name.endswith(".rclonelink") and not decode_link:
         raise ValueError(f"reserved symlink representation suffix: {source}")
-    encode_link = task.get("encode_link", (stat.S_ISLNK(initial[2]) or decode_link)
-                         and task["target_kind"] == "alluxio")
-    if (encode_link and task.get("target_base", task.get("directory", False))
-            and not destination.name.endswith(".rclonelink")):
+    encode_link = task.get(
+        "encode_link",
+        (stat.S_ISLNK(initial[2]) or decode_link)
+        and task["target_kind"] == "alluxio",
+    )
+    if (
+        encode_link
+        and task.get("target_base", task.get("directory", False))
+        and not destination.name.endswith(".rclonelink")
+    ):
         destination = destination.with_name(destination.name + ".rclonelink")
-    elif (decode_link and task["target_kind"] != "alluxio"
-          and task.get("target_base", task.get("directory", False))
-          and destination.name.endswith(".rclonelink")):
-        destination = destination.with_name(destination.name[:-len(".rclonelink")])
-    target = destination
-    state = Path(task["state"])
-    key = hashlib.sha256(os.fsencode(target)).hexdigest()
+    elif (
+        decode_link
+        and task["target_kind"] != "alluxio"
+        and task.get("target_base", task.get("directory", False))
+        and destination.name.endswith(".rclonelink")
+    ):
+        destination = destination.with_name(
+            destination.name[: -len(".rclonelink")]
+        )
+    target  = destination
+    state   = Path(task["state"])
+    key     = hashlib.sha256(os.fsencode(target)).hexdigest()
     journal = state / "pending" / (key + ".json")
     # Fixed lock stripes avoid leaving millions of lock files after a move.
     # Unfinished state is separate and removed only while the stripe is held.
@@ -196,23 +253,50 @@ def transfer(task):
         before = fingerprint(source)
         if before != initial:
             raise ValueError("source changed during preparation; source kept")
-        write_json(Path(task["progress"]), {"bytes": 0, "source_size": before[3],
-                                              "phase": "preparing", "path": str(source)})
-        if task.get("expected_source") is not None and before != task["expected_source"]:
-            raise ValueError("source changed since the foreground probe; source kept; retry the command")
+        write_json(
+            Path(task["progress"]),
+            {
+                "bytes": 0, "source_size": before[3], "phase": "preparing",
+                "path": str(source),
+            },
+        )
+        if (
+            task.get("expected_source") is not None
+            and before != task["expected_source"]
+        ):
+            raise ValueError(
+                "source changed since the foreground probe; source kept; retry the command"
+            )
         if task.get("max_bytes") is not None and before[3] > task["max_bytes"]:
-            raise ValueError("source exceeds the foreground byte budget; source kept")
+            raise ValueError(
+                "source exceeds the foreground byte budget; source kept"
+            )
         link = stat.S_ISLNK(before[2]) or decode_link
         if not link and not stat.S_ISREG(before[2]):
-            raise ValueError("only regular files and symlinks can be transferred")
+            raise ValueError(
+                "only regular files and symlinks can be transferred"
+            )
         # Rclone intermittently fails to stat /dev/fd handles on macOS.
         # Regular files therefore use the existing pinned
         # native reader on Darwin. Other platforms retain the configured
         # threshold so bulk transfers continue to use rclone.
-        native = not link and (sys.platform == "darwin" or before[3] <= task.get("native_bytes", -1))
+        native = not link and (
+            sys.platform == "darwin"
+            or before[3] <= task.get("native_bytes", -1)
+        )
         rclone = None if native else task["rclone"]
-        link_text = (os.fsdecode(source.read_bytes()) if decode_link else os.readlink(source)) if link else None
-        expected = hashlib.sha256(os.fsencode(link_text)).hexdigest() if link else None
+        link_text = (
+            (
+                os.fsdecode(source.read_bytes())
+                if decode_link
+                else os.readlink(source)
+            )
+            if link
+            else None
+        )
+        expected = (
+            hashlib.sha256(os.fsencode(link_text)).hexdigest() if link else None
+        )
         target_digest = None
         target_digest_fingerprint = None
         saved = json.loads(journal.read_text()) if journal.exists() else {}
@@ -221,24 +305,39 @@ def transfer(task):
         if exists:
             target_before = fingerprint(target)
             if link and not encode_link:
-                reused = target.is_symlink() and os.readlink(target) == link_text
-            elif stat.S_ISREG(target_before[2]) and target_before[3] == before[3]:
+                reused = (
+                    target.is_symlink() and os.readlink(target) == link_text
+                )
+            elif (
+                stat.S_ISREG(target_before[2]) and target_before[3] == before[3]
+            ):
                 expected = expected or digest(source)
                 candidate_digest = digest(target)
                 candidate_fingerprint = fingerprint(target)
-                reused = candidate_digest == expected and candidate_fingerprint == target_before
+                reused = (
+                    candidate_digest == expected
+                    and candidate_fingerprint == target_before
+                )
                 if reused:
-                    target_digest = candidate_digest
+                    target_digest             = candidate_digest
                     target_digest_fingerprint = candidate_fingerprint
             if not reused:
-                ours = (saved.get("source") == str(source) and saved.get("fingerprint") == before
-                        and saved.get("target_identity") == target_before[:3]
-                        and saved.get("phase") == "writing")
+                ours = (
+                    saved.get("source") == str(source)
+                    and saved.get("fingerprint") == before
+                    and saved.get("target_identity") == target_before[:3]
+                    and saved.get("phase") == "writing"
+                )
                 if not ours:
-                    raise ValueError(f"destination differs; both copies kept: {target}")
+                    raise ValueError(
+                        f"destination differs; both copies kept: {target}"
+                    )
                 target.unlink()  # Never truncate an incomplete Alluxio inode.
         if not reused:
-            saved = {"source": str(source), "fingerprint": before, "phase": "writing"}
+            saved = {
+                "source": str(source), "fingerprint": before,
+                "phase": "writing",
+            }
             if link and not encode_link:
                 os.symlink(link_text, target)
                 saved["target_identity"] = fingerprint(target)[:3]
@@ -247,21 +346,29 @@ def transfer(task):
                 source_fd = None
                 try:
                     if not link:
-                        source_fd = os.open(source, os.O_RDONLY | os.O_NOFOLLOW)
+                        source_fd   = os.open(source, os.O_RDONLY | os.O_NOFOLLOW)
                         source_info = os.fstat(source_fd)
-                        source_fingerprint = [source_info.st_dev, source_info.st_ino,
-                                              source_info.st_mode & 0o170000,
-                                              source_info.st_size, source_info.st_mtime_ns]
+                        source_fingerprint = [
+                            source_info.st_dev, source_info.st_ino,
+                            source_info.st_mode & 0o170000, source_info.st_size,
+                            source_info.st_mtime_ns,
+                        ]
                         if source_fingerprint != before:
-                            raise ValueError("source changed during preparation; source kept")
-                    fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+                            raise ValueError(
+                                "source changed during preparation; source kept"
+                            )
+                    fd = os.open(
+                        target, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600
+                    )
                 except BaseException:
                     if source_fd is not None:
                         os.close(source_fd)
                     raise
                 try:
                     info = os.fstat(fd)
-                    saved["target_identity"] = [info.st_dev, info.st_ino, stat.S_IFMT(info.st_mode)]
+                    saved["target_identity"] = [
+                        info.st_dev, info.st_ino, stat.S_IFMT(info.st_mode),
+                    ]
                     write_json(journal, saved)
                 except BaseException:
                     os.close(fd)
@@ -273,35 +380,54 @@ def transfer(task):
                         stream.write(os.fsencode(link_text))
                 else:
                     try:
-                        expected, copied_bytes = copy_stream(source, target, fd, rclone, lock,
-                                                            Path(task["progress"]), task["target_kind"], timings,
-                                                            task.get("max_bytes"), before[3], source_fd)
+                        expected, copied_bytes = copy_stream(
+                            source, target, fd, rclone, lock,
+                            Path(task["progress"]), task["target_kind"],
+                            timings, task.get("max_bytes"), before[3],
+                            source_fd,
+                        )
                         if copied_bytes != before[3]:
-                            raise ValueError("source stream was short or grew; source kept")
+                            raise ValueError(
+                                "source stream was short or grew; source kept"
+                            )
                     finally:
                         os.close(source_fd)
         # Alluxio closes asynchronously. Only our own fresh write gets a retry
         # window; conflicting pre-existing entries are never overwritten.
-        deadline = time.monotonic() + task["settle_seconds"]
+        deadline  = time.monotonic() + task["settle_seconds"]
         verifying = time.monotonic()
         while True:
             try:
                 target_before = fingerprint(target)
                 if link and not encode_link:
-                    matches = target.is_symlink() and os.readlink(target) == link_text
+                    matches = (
+                        target.is_symlink() and os.readlink(target) == link_text
+                    )
                 elif target_digest is not None:
                     # Reuse the first full destination digest, but require the
                     # destination identity to remain unchanged both after that
                     # digest and across this final receipt boundary.
-                    matches = target_digest == expected and target_before == target_digest_fingerprint
+                    matches = (
+                        target_digest == expected
+                        and target_before == target_digest_fingerprint
+                    )
                 else:
-                    matches = stat.S_ISREG(target_before[2]) and digest(target) == expected
+                    matches = (
+                        stat.S_ISREG(target_before[2])
+                        and digest(target) == expected
+                    )
                 if matches and fingerprint(target) == target_before:
                     break
             except OSError:
                 pass
-            if reused or task["target_kind"] != "alluxio" or time.monotonic() >= deadline:
-                raise ValueError("destination checksum did not match; source kept")
+            if (
+                reused
+                or task["target_kind"] != "alluxio"
+                or time.monotonic() >= deadline
+            ):
+                raise ValueError(
+                    "destination checksum did not match; source kept"
+                )
             time.sleep(1)
         timings["destination_readback"] = time.monotonic() - verifying
         check_parent(source, source_root)
@@ -310,48 +436,78 @@ def transfer(task):
             raise ValueError("source changed during transfer; source kept")
         if not link and task["target_kind"] != "alluxio" and not reused:
             if fingerprint(target) != target_before:
-                raise ValueError("destination changed after verification; source kept")
+                raise ValueError(
+                    "destination changed after verification; source kept"
+                )
             metadata = source.stat()
             os.chmod(target, stat.S_IMODE(metadata.st_mode) & 0o777)
-            os.utime(target, ns=(metadata.st_atime_ns, metadata.st_mtime_ns))
+            os.utime(target, ns = (metadata.st_atime_ns, metadata.st_mtime_ns))
             after_metadata = fingerprint(target)
             # Some Lustre mounts store whole-second mtimes even when FSS
             # supplies nanoseconds. Preserve the representable timestamp.
-            if (after_metadata[:4] != target_before[:4]
-                    or not 0 <= metadata.st_mtime_ns - after_metadata[4] < 1_000_000_000):
-                raise ValueError("destination changed while preserving metadata; source kept")
+            if (
+                after_metadata[:4] != target_before[:4]
+                or not 0
+                <= metadata.st_mtime_ns - after_metadata[4]
+                < 1_000_000_000
+            ):
+                raise ValueError(
+                    "destination changed while preserving metadata; source kept"
+                )
             target_before = after_metadata
         # Coarse filesystem timestamps can hide a same-size, same-second edit.
         # A move therefore rechecks source content before writing its receipt.
         if task["delete"] and not link:
-            write_json(Path(task["progress"]), {"bytes": before[3], "source_size": before[3],
-                                                  "phase": "source recheck", "path": str(source)})
+            write_json(
+                Path(task["progress"]),
+                {
+                    "bytes": before[3], "source_size": before[3],
+                    "phase": "source recheck", "path": str(source),
+                },
+            )
             rechecking = time.monotonic()
             if digest(source) != expected:
-                raise ValueError("source content changed during transfer; source kept")
+                raise ValueError(
+                    "source content changed during transfer; source kept"
+                )
             timings["source_recheck"] = time.monotonic() - rechecking
-        record = {"source": str(source), "destination": str(target), "bytes": before[3],
-                  "sha256": expected, "fingerprint": before, "kind": "symlink" if link else "file",
-                  "reused": reused, "event": "verified", "time": time.time(), "timings_seconds": timings,
-                  "reader": "rclone" if rclone else "native"}
+        record = {
+            "source": str(source), "destination": str(target),
+            "bytes": before[3], "sha256": expected, "fingerprint": before,
+            "kind": "symlink" if link else "file", "reused": reused,
+            "event": "verified", "time": time.time(),
+            "timings_seconds": timings,
+            "reader": "rclone" if rclone else "native",
+        }
         # An append-only, fsynced verification receipt is required before unlink.
         saved["phase"] = "verified"
         write_json(journal, saved)
         receipt(Path(task["receipt"]), record)
-        result = {"bytes": before[3], "source_size": before[3], "deleted": False, "reused": reused,
-                  "sha256": expected, "kind": record["kind"]}
+        result = {
+            "bytes": before[3], "source_size": before[3], "deleted": False,
+            "reused": reused, "sha256": expected, "kind": record["kind"],
+        }
         archive_result(task, result)
         if task["delete"]:
-            if fingerprint(source) != before or fingerprint(target) != target_before:
+            if (
+                fingerprint(source) != before
+                or fingerprint(target) != target_before
+            ):
                 raise ValueError("file changed after verification; source kept")
             source.unlink()
-            receipt(Path(task["receipt"]), {**record, "event": "deleted", "time": time.time()})
-            parent = source.parent
+            receipt(
+                Path(task["receipt"]),
+                {**record, "event": "deleted", "time": time.time()},
+            )
+            parent   = source.parent
             boundary = Path(task["selection_root"])
             while parent != boundary and boundary in parent.parents:
                 check_parent(target, target_root)
                 if fingerprint(target) != target_before:
-                    raise ValueError("destination changed during directory cleanup; remaining source directories kept")
+                    raise ValueError(
+                        "destination changed during directory cleanup; "
+                        "remaining source directories kept"
+                    )
                 try:
                     parent.rmdir()
                 except OSError:
@@ -370,7 +526,7 @@ def main():
         result = transfer(task)
     except (OSError, ValueError, subprocess.SubprocessError) as error:
         result = {"error": str(error), "source": task["source"]}
-    print(json.dumps(result), flush=True)
+    print(json.dumps(result), flush = True)
 
 
 if __name__ == "__main__":

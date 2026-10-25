@@ -8,7 +8,9 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from gbi_data import archive_plan, archive_state, archives, cli, formats, transfer
+from gbi_data import (
+    archive_plan, archive_state, archives, cli, formats, transfer,
+)
 from gbi_data.storage import Site
 
 
@@ -17,103 +19,193 @@ class ArchiveState(unittest.TestCase):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
         self.base = Path(temporary.name).resolve()
-        user = pwd.getpwuid(os.getuid()).pw_name
+        user      = pwd.getpwuid(os.getuid()).pw_name
         for kind in ("lustre", "bucket"):
-            (self.base / kind / user).mkdir(parents=True)
+            (self.base / kind / user).mkdir(parents = True)
         config = self.base / "site.conf"
-        config.write_text(f"lustre_root={self.base / 'lustre'}\nbucket_root={self.base / 'bucket'}\n")
-        self.site = Site(config)
+        config.write_text(
+            f"lustre_root={self.base / 'lustre'}\nbucket_root={self.base / 'bucket'}\n"
+        )
+        self.site   = Site(config)
         self.source = self.site.roots["lustre"] / "source"
         self.source.mkdir()
         (self.source / "child").mkdir()
         (self.source / "child/a").write_text("payload")
         self.target = self.site.roots["alluxio"] / "destination"
-        self.home = self.site.roots["lustre"] / ".gbi"
-        self.spec = {"source": str(self.source), "target": str(self.target),
-                     "include": [], "exclude": [], "archive_chunk_threshold": 1024**3}
+        self.home   = self.site.roots["lustre"] / ".gbi"
+        self.spec = {
+            "source": str(self.source), "target": str(self.target),
+            "include": [], "exclude": [], "archive_chunk_threshold": 1024**3,
+        }
 
     def test_same_destination_replays_plan_after_source_cleanup(self):
         with archive_state.prepared(self.spec, self.site, self.home) as first:
             original = first["archive_plan"]
         (self.source / "child/a").unlink()
-        with patch.object(archive_plan, "plan_archive", side_effect=AssertionError("must not replan")):
-            with archive_state.prepared(self.spec, self.site, self.home) as replay:
+        with patch.object(
+            archive_plan, "plan_archive",
+            side_effect = AssertionError("must not replan"),
+        ):
+            with archive_state.prepared(
+                self.spec, self.site, self.home
+            ) as replay:
                 self.assertEqual(replay["archive_plan"], original)
 
     def saved_many_unit_plan(self):
         units = []
         for index in range(44):
             relative = f"unit-{index:02d}"
-            source = self.source / relative
-            action = "file" if index >= 38 or 7 <= index < 12 else "pack"
+            source   = self.source / relative
+            action   = "file" if index >= 38 or 7 <= index < 12 else "pack"
             if action == "pack":
                 source.mkdir()
             else:
                 source.write_text("payload")
-            units.append({"source_relative": relative,
-                          "target_relative": relative + ".gbi.tar" if action == "pack" else relative,
-                          "action": action, "bytes": 0,
-                          **({"estimated_bytes": 4096, "chunk_size": None} if action == "pack" else {}),
-                          "expected_source": archive_plan._observation(source.lstat())})
-        plan = archive_plan.ArchivePlan(str(self.source), str(self.target), tuple(units))
-        with patch.object(archive_plan, "plan_archive", return_value=plan):
-            with archive_state.prepared(self.spec, self.site, self.home) as prepared:
+            units.append(
+                {
+                    "source_relative": relative,
+                    "target_relative": (
+                        relative + ".gbi.tar" if action == "pack" else relative
+                    ), "action": action, "bytes": 0,
+                    **(
+                        {"estimated_bytes": 4096, "chunk_size": None}
+                        if action == "pack"
+                        else {}
+                    ),
+                    "expected_source": archive_plan._observation(
+                        source.lstat()
+                    ),
+                }
+            )
+        plan = archive_plan.ArchivePlan(
+            str(self.source), str(self.target), tuple(units)
+        )
+        with patch.object(archive_plan, "plan_archive", return_value = plan):
+            with archive_state.prepared(
+                self.spec, self.site, self.home
+            ) as prepared:
                 self.assertEqual(len(prepared["selection"]), 44)
-        root = self.home / "archive-plans"
-        key = archive_state._key(str(self.target))
-        saved = root / f"{key}.json"
+        root    = self.home / "archive-plans"
+        key     = archive_state._key(str(self.target))
+        saved   = root / f"{key}.json"
         results = root / f"{key}.units"
         for index in range(17):
             relative = f"unit-{index:02d}"
-            result = results / f"{archive_state._key(relative)}.json"
-            result.write_text(json.dumps({"deleted": True, "manifest_sha256": f"sha-{index}"}))
+            result   = results / f"{archive_state._key(relative)}.json"
+            result.write_text(
+                json.dumps({"deleted": True, "manifest_sha256": f"sha-{index}"})
+            )
         return saved, saved.read_bytes(), units
 
-    def test_exact_saved_plan_units_select_without_touching_completed_payloads(self):
+    def test_exact_saved_plan_units_select_without_touching_completed_payloads(
+                self,
+            ):
         saved, original_bytes, plan_units = self.saved_many_unit_plan()
         requested = [unit["source_relative"] for unit in plan_units[17:]]
-        with patch.object(archives, "inspect_archive", side_effect=AssertionError("accepted payload must not be read")):
-            with archive_state.prepared({**self.spec, "archive_units": requested}, self.site, self.home) as selected:
+        with patch.object(
+            archives, "inspect_archive",
+            side_effect = AssertionError("accepted payload must not be read"),
+        ):
+            with archive_state.prepared(
+                {**self.spec, "archive_units": requested}, self.site, self.home
+            ) as selected:
                 self.assertEqual(len(selected["archive_plan"]["units"]), 44)
-                self.assertEqual(sum(unit["action"] == "pack" for unit in selected["archive_plan"]["units"]), 33)
-                self.assertEqual(sum(unit["action"] == "file" for unit in selected["archive_plan"]["units"]), 11)
-                self.assertEqual(sum(unit.get("format_action") == "pack" for unit in selected["selection"]), 21)
-                self.assertEqual(sum("format_action" not in unit for unit in selected["selection"]), 6)
-                self.assertEqual([unit["source"] for unit in selected["selection"]],
-                                 [str(self.source / name) for name in requested])
+                self.assertEqual(
+                    sum(
+                        unit["action"] == "pack"
+                        for unit in selected["archive_plan"]["units"]
+                    ), 33,
+                )
+                self.assertEqual(
+                    sum(
+                        unit["action"] == "file"
+                        for unit in selected["archive_plan"]["units"]
+                    ), 11,
+                )
+                self.assertEqual(
+                    sum(
+                        unit.get("format_action") == "pack"
+                        for unit in selected["selection"]
+                    ), 21,
+                )
+                self.assertEqual(
+                    sum(
+                        "format_action" not in unit
+                        for unit in selected["selection"]
+                    ), 6,
+                )
+                self.assertEqual(
+                    [unit["source"] for unit in selected["selection"]],
+                    [str(self.source / name) for name in requested],
+                )
         self.assertEqual(saved.read_bytes(), original_bytes)
 
-    def test_exact_saved_plan_units_reject_unknown_changed_intent_and_completed(self):
+    def test_exact_saved_plan_units_reject_unknown_changed_intent_and_completed(
+                self,
+            ):
         self.saved_many_unit_plan()
-        with self.assertRaisesRegex(ValueError, "not present in the saved plan"):
-            with archive_state.prepared({**self.spec, "archive_units": ["missing"]}, self.site, self.home):
+        with self.assertRaisesRegex(
+            ValueError, "not present in the saved plan"
+        ):
+            with archive_state.prepared(
+                {**self.spec, "archive_units": ["missing"]},
+                self.site, self.home,
+            ):
                 pass
         with self.assertRaisesRegex(ValueError, "already completed"):
-            with archive_state.prepared({**self.spec, "archive_units": ["unit-00"]}, self.site, self.home):
+            with archive_state.prepared(
+                {**self.spec, "archive_units": ["unit-00"]},
+                self.site, self.home,
+            ):
                 pass
         with self.assertRaisesRegex(ValueError, "different saved archive plan"):
-            with archive_state.prepared({**self.spec, "exclude": ["*.tmp"],
-                                         "archive_units": ["unit-17"]}, self.site, self.home):
+            with archive_state.prepared(
+                {
+                    **self.spec, "exclude": ["*.tmp"],
+                    "archive_units": ["unit-17"],
+                }, self.site, self.home,
+            ):
                 pass
 
-    def test_exact_saved_plan_units_require_existing_plan_and_unique_names(self):
-        with self.assertRaisesRegex(ValueError, "requires an existing saved archive plan"):
-            with archive_state.prepared({**self.spec, "archive_units": ["unit-17"]}, self.site, self.home):
+    def test_exact_saved_plan_units_require_existing_plan_and_unique_names(
+                self,
+            ):
+        with self.assertRaisesRegex(
+            ValueError, "requires an existing saved archive plan"
+        ):
+            with archive_state.prepared(
+                {**self.spec, "archive_units": ["unit-17"]},
+                self.site, self.home,
+            ):
                 pass
         self.saved_many_unit_plan()
         with self.assertRaisesRegex(ValueError, "must be unique"):
-            with archive_state.prepared({**self.spec, "archive_units": ["unit-17", "unit-17"]},
-                                        self.site, self.home):
+            with archive_state.prepared(
+                {**self.spec, "archive_units": ["unit-17", "unit-17"]},
+                self.site, self.home,
+            ):
                 pass
 
     def test_cli_archive_unit_requires_archive_move(self):
-        options = cli.parser().parse_args(["data", "move", str(self.source), str(self.target),
-                                           "--archive", "--archive-unit", "child"])
-        specification = cli.execution_plan(cli.plan(options, self.site), self.site, options)
+        options = cli.parser().parse_args(
+            [
+                "data", "move", str(self.source), str(self.target), "--archive",
+                "--archive-unit", "child",
+            ]
+        )
+        specification = cli.execution_plan(
+            cli.plan(options, self.site), self.site, options
+        )
         self.assertEqual(specification["archive_units"], ["child"])
-        self.assertEqual(json.loads(json.dumps(specification))["archive_units"], ["child"])
-        options = cli.parser().parse_args(["data", "move", str(self.source), str(self.target),
-                                           "--archive-unit", "child"])
+        self.assertEqual(
+            json.loads(json.dumps(specification))["archive_units"], ["child"]
+        )
+        options = cli.parser().parse_args(
+            [
+                "data", "move", str(self.source), str(self.target),
+                "--archive-unit", "child",
+            ]
+        )
         with self.assertRaisesRegex(ValueError, "requires an executing"):
             cli.plan(options, self.site)
 
@@ -121,7 +213,9 @@ class ArchiveState(unittest.TestCase):
         with archive_state.prepared(self.spec, self.site, self.home):
             pass
         with self.assertRaisesRegex(ValueError, "different saved archive plan"):
-            with archive_state.prepared({**self.spec, "exclude": ["*.tmp"]}, self.site, self.home):
+            with archive_state.prepared(
+                {**self.spec, "exclude": ["*.tmp"]}, self.site, self.home
+            ):
                 pass
 
     def test_unplanned_existing_destination_is_not_mixed_with_new_layout(self):
@@ -144,14 +238,21 @@ class ArchiveState(unittest.TestCase):
         with archive.open("xb") as output:
             manifest = archives.pack(self.source / "child", output)
         (self.source / "child/a").unlink()
-        return {"source": str(self.source / "child"), "archive_destination": str(archive),
-                "target_root": str(self.site.roots["alluxio"]), "target_kind": "alluxio",
-                "format_action": "pack", "empty": False,
-                "archive_completed": {"manifest_sha256": formats._manifest_digest(manifest),
-                                      "deleted": True, "bytes": 7, "freed_bytes": 7}}
+        return {
+            "source": str(self.source / "child"),
+            "archive_destination": str(archive),
+            "target_root": str(self.site.roots["alluxio"]),
+            "target_kind": "alluxio", "format_action": "pack", "empty": False,
+            "archive_completed": {
+                "manifest_sha256": formats._manifest_digest(manifest),
+                "deleted": True, "bytes": 7, "freed_bytes": 7,
+            },
+        }
 
-    def test_completed_move_reverifies_destination_without_double_counting(self):
-        task = self.completed()
+    def test_completed_move_reverifies_destination_without_double_counting(
+                self,
+            ):
+        task   = self.completed()
         result = archive_state.resume_completed(task)
         self.assertTrue(result["reused"])
         self.assertFalse(result["deleted"])
@@ -168,7 +269,9 @@ class ArchiveState(unittest.TestCase):
         self.assertEqual((self.source / "child/new").read_text(), "keep")
 
     def test_failed_planning_publishes_no_partial_plan(self):
-        with patch.object(archive_plan, "plan_archive", side_effect=ValueError("incomplete")):
+        with patch.object(
+            archive_plan, "plan_archive", side_effect = ValueError("incomplete")
+        ):
             with self.assertRaisesRegex(ValueError, "incomplete"):
                 with archive_state.prepared(self.spec, self.site, self.home):
                     pass
@@ -179,7 +282,7 @@ class ArchiveState(unittest.TestCase):
         loose.write_text("inventory")
         state = self.home / "state"
         for path in (state / "locks", state / "pending"):
-            path.mkdir(parents=True)
+            path.mkdir(parents = True)
         original = transfer.receipt
 
         def lost_ack(path, record):
@@ -188,19 +291,36 @@ class ArchiveState(unittest.TestCase):
                 raise ValueError("lost cleanup acknowledgement")
 
         with archive_state.prepared(self.spec, self.site, self.home) as planned:
-            unit = next(item for item in planned["selection"] if item["source"] == str(loose))
-            task = {**unit, "source_root": str(self.site.roots["lustre"]),
-                    "target_root": str(self.site.roots["alluxio"]), "target_kind": "alluxio",
-                    "target": str(self.target), "directory": True, "target_base": True,
-                    "selection_root": str(self.source), "state": str(state),
-                    "scratch_root": str(self.site.roots["lustre"]), "delete": True,
-                    "receipt": str(self.home / "receipts.jsonl"), "progress": str(self.home / "progress.json"),
-                    "rclone": None, "settle_seconds": 0}
-            with patch.object(transfer, "receipt", side_effect=lost_ack), self.assertRaisesRegex(ValueError, "lost cleanup"):
+            unit = next(
+                item
+                for item in planned["selection"]
+                if item["source"] == str(loose)
+            )
+            task = {
+                **unit,
+                "source_root": str(self.site.roots["lustre"]),
+                "target_root": str(self.site.roots["alluxio"]),
+                "target_kind": "alluxio", "target": str(self.target),
+                "directory": True, "target_base": True,
+                "selection_root": str(self.source), "state": str(state),
+                "scratch_root": str(self.site.roots["lustre"]),
+                "delete": True,
+                "receipt": str(self.home / "receipts.jsonl"),
+                "progress": str(self.home / "progress.json"),
+                "rclone": None, "settle_seconds": 0,
+            }
+            with (
+                patch.object(transfer, "receipt", side_effect = lost_ack),
+                self.assertRaisesRegex(ValueError, "lost cleanup"),
+            ):
                 transfer.transfer(task)
         self.assertFalse(loose.exists())
         with archive_state.prepared(self.spec, self.site, self.home) as planned:
-            replay = next(item for item in planned["selection"] if item["source"] == str(loose))
+            replay = next(
+                item
+                for item in planned["selection"]
+                if item["source"] == str(loose)
+            )
             self.assertIn("archive_completed", replay)
             result = archive_state.resume_completed({**task, **replay})
             self.assertEqual(result["freed_bytes"], 0)

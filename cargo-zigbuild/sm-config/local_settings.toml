@@ -1,5 +1,5 @@
 name = "cargo-zigbuild"
 
-relocate = true
+relocate    = true
 destination = "{SM_ROOT}/cargo-zigbuild"
-modules = "{SM_ROOT}/modules"
+modules     = "{SM_ROOT}/modules"

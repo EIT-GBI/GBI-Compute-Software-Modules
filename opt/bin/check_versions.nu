@@ -26,8 +26,8 @@
 # Exit code is 0 when nothing needs doing, 1 when any version is
 # missing/partial/stale — so it can gate a `make` run.
 
-const ROLLING = ["stable", "nightly", "beta", "master", "main", "latest", "trunk"]
-const RECIPE_DIRS = ["sm-config", "sm-config-build"]
+const ROLLING       = ["stable", "nightly", "beta", "master", "main", "latest", "trunk"]
+const RECIPE_DIRS   = ["sm-config", "sm-config-build"]
 const NEEDS_INSTALL = ["missing", "partial", "stale"]
 
 # Expand {BRACED} placeholders. Longest key first, so that {INSTALL_VERSION}
@@ -43,7 +43,10 @@ def substitute [template: string, map: record] {
     for key in $keys {
         let val = ($map | get $key)
         if $val != null {
-            $out = ($out | str replace --all ("{" + $key + "}") ($val | into string))
+            $out = (
+                $out
+                | str replace --all ("{" + $key + "}") ($val | into string)
+            )
         }
     }
     $out
@@ -52,11 +55,19 @@ def substitute [template: string, map: record] {
 # Newest mtime of any file in a recipe directory.
 def recipe-mtime [config_dir: string] {
     let times = (ls $config_dir | where type == file | get modified)
-    if ($times | is-empty) { null } else { $times | math max }
+    if ($times | is-empty) {
+        null
+    } else {
+        $times | math max
+    }
 }
 
 def path-mtime [target: string] {
-    if ($target | path exists) { ls -D $target | get 0.modified } else { null }
+    if ($target | path exists) {
+        ls -D $target | get 0.modified
+    } else {
+        null
+    }
 }
 
 # One row per (target, mode) recipe directory found under the repo root.
@@ -71,7 +82,9 @@ def discover [root: string] {
         }
     }
     | where recipe in $RECIPE_DIRS
-    | insert mode {|r| if $r.recipe == "sm-config-build" { "build" } else { "default" }}
+    | insert mode {|r|
+        if $r.recipe == "sm-config-build" { "build" } else { "default" }
+    }
     | sort-by target mode
 }
 
@@ -82,13 +95,17 @@ def expand [recipe: record, sm_root: string, libc: string, ignore_mtime: bool] {
     let site = (if ($site_file | path exists) { open $site_file } else { {} })
 
     let name = ($site.name? | default $recipe.target)
-    let site_dest = (substitute ($site.destination? | default "{SM_ROOT}/{SITE_NAME}") {
-        SM_ROOT: $sm_root
-        SITE_NAME: $name
-    })
-    let modules_dir = (substitute ($site.modules? | default "{SM_ROOT}/modules") {
-        SM_ROOT: $sm_root
-    })
+    let site_dest = (
+        substitute ($site.destination? | default "{SM_ROOT}/{SITE_NAME}") {
+            SM_ROOT: $sm_root
+            SITE_NAME: $name
+        }
+    )
+    let modules_dir = (
+        substitute ($site.modules? | default "{SM_ROOT}/modules") {
+            SM_ROOT: $sm_root
+        }
+    )
 
     # render.sh passes --variant=musl for default-mode recipes only, and that
     # CLI value overrides whatever local_settings.toml says
@@ -98,7 +115,10 @@ def expand [recipe: record, sm_root: string, libc: string, ignore_mtime: bool] {
         $site.variant?
     }
 
-    let dest_tpl = ($settings.install?.destination? | default "{SITE_DESTINATION}/{INSTALL_VERSION_VARIANT}")
+    let dest_tpl = (
+        $settings.install?.destination?
+        | default "{SITE_DESTINATION}/{INSTALL_VERSION_VARIANT}"
+    )
     let staged = ($settings.install?.stage? | default false)
     let versions = ($settings.install?.versions? | default [])
     let mtime = (recipe-mtime $recipe.config_dir)
@@ -123,8 +143,12 @@ def expand [recipe: record, sm_root: string, libc: string, ignore_mtime: bool] {
         let has_module = ($module_file | path exists)
         let has_install = ($install_dir | path exists)
         let module_mtime = (path-mtime $module_file)
-        let comparable = ($has_module and ($mtime != null) and ($module_mtime != null))
-        let stale = ((not $ignore_mtime) and $comparable and ($mtime > $module_mtime))
+        let comparable = (
+            $has_module and ($mtime != null) and ($module_mtime != null)
+        )
+        let stale = (
+            (not $ignore_mtime) and $comparable and ($mtime > $module_mtime)
+        )
 
         let status = if (not $has_module) and (not $has_install) {
             "missing"
@@ -172,31 +196,42 @@ def orphans [recipes: list, names: list, sm_root: string, ignore_mtime: bool] {
         }
         | flatten
     )
-    if ($expected | is-empty) { return [] }
+    if ($expected | is-empty) {
+        return []
+    }
 
     $expected | where name in $names | select name modules_dir | uniq | each {|group|
         let dir = ($group.modules_dir | path join $group.name)
-        if not ($dir | path exists) { return [] }
+        if not ($dir | path exists) {
+            return []
+        }
         glob ($dir | path join "*.lua") | each {|f|
             {name: $group.name, tag: ($f | path parse | get stem), module_file: $f}
         }
     }
     | flatten
     | where {|found|
-        $expected | where {|e| ($e.name == $found.name) and ($e.tag == $found.tag)} | is-empty
+        $expected
+        | where {|e| ($e.name == $found.name) and ($e.tag == $found.tag)}
+        | is-empty
     }
 }
 
 def main [
-    ...targets: string          # recipe directories to check (default: all of them)
-    --module-path (-m): string  # install root (SM_ROOT); default: $__MODULE_PATH__ or <repo>/usr
-    --prefix: string            # repo root; default: $__PREFIX__ or derived from this script
-    --mode: string = "default"  # default | build | all
-    --variant: string = "gnu"   # gnu | musl -- applies to default-mode recipes
-    --ignore-mtime              # do not report installs older than their recipe as stale
-    --json                      # emit a JSON report instead of tables
-    --quiet (-q)                # print nothing, only set the exit code
-] {
+            ...targets: string
+            # recipe directories to check (default: all of them)
+            --module-path (-m): string
+            # install root (SM_ROOT); default: $__MODULE_PATH__ or <repo>/usr
+            --prefix: string
+            # repo root; default: $__PREFIX__ or derived from this script
+            --mode: string = "default"  # default | build | all
+            --variant: string = "gnu"
+            # gnu | musl -- applies to default-mode recipes
+            --ignore-mtime
+            # do not report installs older than their recipe as stale
+            --json                      # emit a JSON report instead of tables
+            --quiet (-q)                # print nothing, only set the exit code
+        ] {
     if $mode not-in ["default", "build", "all"] {
         error make {msg: $"--mode must be one of default|build|all, got '($mode)'"}
     }
@@ -241,13 +276,21 @@ def main [
         $mode_ok and $target_ok
     })
 
-    let rows = ($recipes | each {|r| expand $r $sm_root $variant $ignore_mtime} | flatten)
-    let leftovers = (orphans $all_recipes ($rows | get name | uniq) $sm_root $ignore_mtime)
+    let rows = (
+        $recipes | each {|r| expand $r $sm_root $variant $ignore_mtime} | flatten
+    )
+    let leftovers = (
+        orphans $all_recipes ($rows | get name | uniq) $sm_root $ignore_mtime
+    )
     let needs = ($rows | where status in $NEEDS_INSTALL)
 
     let commands = ($needs | each {|r|
         let mode_arg = if $r.mode == "build" { " MODE=build" } else { "" }
-        let variant_arg = if ($r.mode == "default") and ($variant == "musl") { " VARIANT=musl" } else { "" }
+        let variant_arg = if ($r.mode == "default") and ($variant == "musl") {
+            " VARIANT=musl"
+        } else {
+            ""
+        }
         $"make ($r.target)($mode_arg)($variant_arg) GBI_MODULE_PATH=($sm_root)"
     } | uniq)
 
@@ -271,7 +314,9 @@ def main [
         print $"install root: ($sm_root)"
         print $"mode:         ($mode)   variant: ($variant)"
         print ""
-        print ($rows | select target mode name version tag status module_ok install_ok)
+        print (
+            $rows | select target mode name version tag status module_ok install_ok
+        )
 
         if ($leftovers | is-not-empty) {
             print "installed modulefiles no recipe declares any more:"
@@ -286,9 +331,13 @@ def main [
                 print $"  ($row.status)  ($row.name)/($row.tag)  \(($row.target), mode=($row.mode))"
             }
             print ""
-            for cmd in $commands { print $"  ($cmd)" }
+            for cmd in $commands {
+                print $"  ($cmd)"
+            }
         }
     }
 
-    if ($needs | is-not-empty) { exit 1 }
+    if ($needs | is-not-empty) {
+        exit 1
+    }
 }

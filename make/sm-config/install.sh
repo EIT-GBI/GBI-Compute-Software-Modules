@@ -45,15 +45,21 @@ sh build.sh
 "${INSTALL_PREFIX}/bin/make" --version | head -n 1
 
 mkdir -p smoke
-cat > smoke/hello.c <<'SRC'
+cat > smoke/hello.c << 'SRC'
 #include <stdio.h>
-int main(void) { printf("hello from make\n"); return 0; }
+int main(void) {
+    printf("hello from make\n");
+    return 0;
+}
 SRC
 # recipe lines need tabs, hence printf rather than a heredoc
 printf 'all: hello\n\t./hello\n\nhello: hello.c\n\t$(CC) -O2 -o $@ $<\n' > smoke/Makefile
 # (capture, then grep: a `| grep -q` would close the pipe on the first match
 # and turn make's next write into a SIGPIPE failure)
-"${INSTALL_PREFIX}/bin/make" -C smoke > smoke/run.log 2>&1 || { cat smoke/run.log; exit 1; }
+"${INSTALL_PREFIX}/bin/make" -C smoke > smoke/run.log 2>&1 || {
+    cat smoke/run.log
+    exit 1
+}
 grep -q '^hello from make$' smoke/run.log
 echo "make: smoke test passed"
 #------------------------------------------------------------------------------

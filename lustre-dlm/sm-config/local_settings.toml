@@ -1,5 +1,5 @@
 name = "lustre-dlm"
 
-relocate = true
+relocate    = true
 destination = "{SM_ROOT}/lustre-dlm"
-modules = "{SM_ROOT}/modules"
+modules     = "{SM_ROOT}/modules"

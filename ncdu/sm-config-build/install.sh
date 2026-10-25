@@ -20,8 +20,7 @@ export ZIG_GLOBAL_CACHE_DIR=$(pwd)/zig-cache
 # arrays here, these are word-split on purpose (macOS still ships bash 3.2).
 ZIG_TARGET=""
 SDK_INC=""
-if [[ $OS == "darwin" ]]
-then
+if [[ $OS == "darwin" ]]; then
     SDK=$(xcrun --show-sdk-path)
     ZIG_TARGET="-target ${ARCH}-macos"
     SDK_INC="-I${SDK}/usr/include"
@@ -48,8 +47,7 @@ cp zstd/lib/zstd.h zstd/lib/zstd_errors.h "${DEPS}/include/"
 #______________________________________________________________________________
 # libncursesw -- taken from the system, but macOS needs a nudge
 #
-if [[ $OS == "darwin" ]]
-then
+if [[ $OS == "darwin" ]]; then
     # macOS's libncurses *is* built with wide-char support, it just isn't
     # shipped under the `ncursesw` name that ncdu asks for. Re-badging a copy
     # of the SDK stub gives zig something to resolve `-lncursesw` against, and

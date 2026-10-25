@@ -1,5 +1,5 @@
 name = "neovim"
 
-relocate = true
+relocate    = true
 destination = "{SM_ROOT}/neovim"
-modules = "{SM_ROOT}/modules"
+modules     = "{SM_ROOT}/modules"

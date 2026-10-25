@@ -17,8 +17,8 @@ class SDK(unittest.TestCase):
     def setUp(self):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
-        self.root = Path(temporary.name)
-        self.log = self.root / "child.json"
+        self.root  = Path(temporary.name)
+        self.log   = self.root / "child.json"
         executable = self.root / "gbi test executable"
         executable.write_text(
             f"#!{sys.executable}\n"
@@ -37,11 +37,14 @@ class SDK(unittest.TestCase):
 
     def test_archive_filters_paths_and_existing_allocation(self):
         sentinel = self.root / "shell-must-not-run"
-        source = f"--source with spaces\n$(touch {sentinel})"
-        target = self.root / "checkpoints.gbi.tar"
+        source   = f"--source with spaces\n$(touch {sentinel})"
+        target   = self.root / "checkpoints.gbi.tar"
         with patch.dict(os.environ, {"SLURM_JOB_ID": "12345"}):
-            result = data.move(source, target, include=["*.pt", "*.pt.*"],
-                               exclude="--literal-pattern", pack="tar", chunk_size="64MiB")
+            result = data.move(
+                source, target, include = ["*.pt", "*.pt.*"],
+                exclude = "--literal-pattern", pack = "tar",
+                chunk_size = "64MiB",
+            )
         options = self.parsed()
         self.assertEqual(options.source, source)
         self.assertEqual(options.destination, str(target))
@@ -63,18 +66,30 @@ class SDK(unittest.TestCase):
         self.assertFalse(self.parsed().delete_source)
         self.log.unlink()
         for prefect in (False, True):
-            with self.subTest(prefect=prefect), self.assertRaisesRegex(ValueError, "durable and always retained"):
-                data.move("saved.gbi.tar.gz", self.root / "restored", delete_source=True, prefect=prefect)
+            with (
+                self.subTest(prefect = prefect),
+                self.assertRaisesRegex(
+                    ValueError, "durable and always retained"
+                ),
+            ):
+                data.move(
+                    "saved.gbi.tar.gz", self.root / "restored",
+                    delete_source = True, prefect = prefect,
+                )
         self.assertFalse(self.log.exists())
-        data.move("saved.gbi.tar.gz", self.root / "restored", delete_source=False)
+        data.move(
+            "saved.gbi.tar.gz", self.root / "restored", delete_source = False
+        )
         self.assertFalse(self.parsed().delete_source)
 
     def test_preview_and_prefect_still_wait_for_cli(self):
-        data.copy("source", "target", pack_small=True, dry_run=True)
+        data.copy("source", "target", pack_small = True, dry_run = True)
         self.assertTrue(self.parsed().pack_small)
         self.assertTrue(self.parsed().dry_run)
-        data.move("source", "target", prefect=True, include=["*.pt", "*.pt.*"],
-                  exclude="unfinished*")
+        data.move(
+            "source", "target", prefect = True, include = ["*.pt", "*.pt.*"],
+            exclude = "unfinished*",
+        )
         self.assertTrue(self.parsed().prefect)
         self.assertTrue(self.parsed().wait)
         self.assertEqual(self.parsed().include, ["*.pt", "*.pt.*"])
@@ -82,24 +97,36 @@ class SDK(unittest.TestCase):
 
     def test_archive_intent_needs_no_tuning_options(self):
         for transfer in (data.copy, data.move):
-            transfer("source", "destination", archive=True)
+            transfer("source", "destination", archive = True)
             options = self.parsed()
             self.assertTrue(options.archive)
             self.assertIsNone(options.pack)
             self.assertFalse(options.pack_small)
             self.assertIsNone(options.chunk_size)
 
-    def test_prefect_portable_options_and_managed_preview_use_existing_flags(self):
+    def test_prefect_portable_options_and_managed_preview_use_existing_flags(
+                self,
+            ):
         for transfer in (data.copy, data.move):
-            transfer("source", "target.gbi.tar.gz", prefect=True, pack="gzip", dry_run=True)
+            transfer(
+                "source", "target.gbi.tar.gz", prefect = True, pack = "gzip",
+                dry_run = True,
+            )
             options = self.parsed()
             self.assertEqual(options.pack, "gzip")
-            self.assertTrue(options.prefect and options.dry_run and options.wait)
-            transfer("source", "target", prefect=True, pack_small=True)
+            self.assertTrue(
+                options.prefect and options.dry_run and options.wait
+            )
+            transfer("source", "target", prefect = True, pack_small = True)
             options = self.parsed()
-            self.assertTrue(options.pack_small and options.prefect and options.wait)
+            self.assertTrue(
+                options.pack_small and options.prefect and options.wait
+            )
             self.assertFalse(options.dry_run)
-            transfer("source", "target.gbi.tar.gz", prefect=True, pack="gzip", chunk_size=67108864)
+            transfer(
+                "source", "target.gbi.tar.gz", prefect = True, pack = "gzip",
+                chunk_size = 67108864,
+            )
             options = self.parsed()
             self.assertEqual(options.chunk_size, 67108864)
             self.assertTrue(options.prefect and options.wait)
@@ -113,30 +140,35 @@ class SDK(unittest.TestCase):
         self.assertEqual(raised.exception.cmd[2], "move")
 
     def test_prefect_restore_job_size_is_forwarded_only_when_explicit(self):
-        data.copy("source", "target", prefect=True)
+        data.copy("source", "target", prefect = True)
         self.assertIsNone(self.parsed().job_size)
         for transfer in (data.copy, data.move):
             for size in ("small", "large"):
-                transfer("source", "target", prefect=True, job_size=size)
+                transfer("source", "target", prefect = True, job_size = size)
                 self.assertEqual(self.parsed().job_size, size)
                 self.assertTrue(self.parsed().wait)
 
     def test_invalid_job_size_never_launches_a_process(self):
         for size in ("", "medium", True, 2, []):
-            with self.subTest(size=size), self.assertRaisesRegex(ValueError, "job_size"):
-                data.copy("source", "target", prefect=True, job_size=size)
+            with (
+                self.subTest(size = size),
+                self.assertRaisesRegex(ValueError, "job_size"),
+            ):
+                data.copy("source", "target", prefect = True, job_size = size)
         with self.assertRaisesRegex(ValueError, "prefect=True"):
-            data.copy("source", "target", job_size="small")
+            data.copy("source", "target", job_size = "small")
         self.assertFalse(self.log.exists())
 
     def test_ambiguous_deletion_value_never_launches_a_process(self):
-        with self.assertRaisesRegex(TypeError, "delete_source must be a boolean"):
-            data.move("source", "target", delete_source="false")
+        with self.assertRaisesRegex(
+            TypeError, "delete_source must be a boolean"
+        ):
+            data.move("source", "target", delete_source = "false")
         self.assertFalse(self.log.exists())
 
     def test_bad_filters_and_unknown_options_never_launch(self):
         with self.assertRaisesRegex(TypeError, "patterns must be strings"):
-            data.copy("source", "target", include=[42])
+            data.copy("source", "target", include = [42])
         with self.assertRaises(TypeError):
-            data.copy("source", "target", detach=True)
+            data.copy("source", "target", detach = True)
         self.assertFalse(self.log.exists())

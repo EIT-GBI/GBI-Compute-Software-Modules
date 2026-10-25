@@ -10,20 +10,29 @@ import sqlite3
 import subprocess
 from urllib.parse import quote
 
-
 SCHEMA_VERSION = "1"
 
 
 def database_path(site):
-    configured = site.values.get("usage_db", "").strip()
+    configured   = site.values.get("usage_db", "").strip()
     default_root = site.roots.get("fss", site.roots["lustre"])
-    path = Path(configured).expanduser() if configured else default_root / ".gbi" / "usage.sqlite3"
+    path = (
+        Path(configured).expanduser()
+        if configured
+        else default_root / ".gbi" / "usage.sqlite3"
+    )
     if not path.is_absolute():
         path = site.path.parent / path
     path = path.resolve()
-    allowed = [root for root in (site.roots.get("lustre"), site.roots.get("fss")) if root]
+    allowed = [
+        root
+        for root in (site.roots.get("lustre"), site.roots.get("fss"))
+        if root
+    ]
     if not any(path == root or root in path.parents for root in allowed):
-        raise ValueError("usage snapshot is outside your configured storage roots")
+        raise ValueError(
+            "usage snapshot is outside your configured storage roots"
+        )
     return path
 
 
@@ -33,8 +42,10 @@ def _metadata(connection, user):
     except sqlite3.Error as error:
         raise ValueError("usage snapshot cannot be read") from error
     metadata = dict(rows)
-    required = {"schema_version", "owner_uid", "root", "complete_input", "status",
-                "snapshot_at", "published_at"}
+    required = {
+        "schema_version", "owner_uid", "root", "complete_input", "status",
+        "snapshot_at", "published_at",
+    }
     if not required.issubset(metadata):
         raise ValueError("usage snapshot is missing publication metadata")
     if metadata.get("schema_version") != SCHEMA_VERSION:
@@ -46,7 +57,10 @@ def _metadata(connection, user):
         raise ValueError("usage snapshot has an invalid completeness marker")
     if complete_input == "false":
         metadata["status"] = "partial"
-    if _timestamp(metadata["snapshot_at"]) is None or _timestamp(metadata["published_at"]) is None:
+    if (
+        _timestamp(metadata["snapshot_at"]) is None
+        or _timestamp(metadata["published_at"]) is None
+    ):
         raise ValueError("usage snapshot has invalid publication timestamps")
     if metadata.get("owner") and metadata["owner"] != user:
         raise ValueError("usage snapshot belongs to another user")
@@ -57,7 +71,9 @@ def _metadata(connection, user):
 
 def _open(path):
     try:
-        connection = sqlite3.connect(f"file:{quote(str(path))}?mode=ro&immutable=1", uri=True)
+        connection = sqlite3.connect(
+            f"file:{quote(str(path))}?mode=ro&immutable=1", uri = True
+        )
     except sqlite3.Error as error:
         raise ValueError("published usage snapshot cannot be read") from error
     return connection
@@ -94,14 +110,18 @@ def _quota(site):
         return {"status": "unavailable", "detail": "lfs is not installed"}
     try:
         result = subprocess.run(
-            [command, "quota", "-h", "-u", str(os.getuid()), str(site.roots["lustre"])],
-            capture_output=True, text=True, timeout=5, check=False,
+            [
+                command, "quota", "-h", "-u", str(os.getuid()),
+                str(site.roots["lustre"]),
+            ], capture_output = True, text = True, timeout = 5, check = False,
         )
     except (OSError, subprocess.SubprocessError):
         return {"status": "unavailable", "detail": "lfs quota did not respond"}
     if result.returncode:
         return {"status": "unavailable", "detail": "lfs quota failed"}
-    lines = [line.strip() for line in result.stdout.splitlines() if line.strip()]
+    lines = [
+        line.strip() for line in result.stdout.splitlines() if line.strip()
+    ]
     for index, line in enumerate(lines):
         if not line.startswith("/"):
             continue
@@ -109,8 +129,10 @@ def _quota(site):
         if len(tokens) < 9 and index + 1 < len(lines):
             tokens.extend(lines[index + 1].split())
         if len(tokens) >= 9:
-            labels = ("filesystem", "used", "quota", "limit", "grace",
-                      "files", "file_quota", "file_limit", "file_grace")
+            labels = (
+                "filesystem", "used", "quota", "limit", "grace", "files",
+                "file_quota", "file_limit", "file_grace",
+            )
             return {"status": "available", **dict(zip(labels, tokens[:9]))}
         return {"status": "unavailable", "detail": "malformed Lustre quota row"}
     return {"status": "unavailable", "detail": "no Lustre quota row"}
@@ -122,9 +144,9 @@ def _canonical_path(site, requested):
         path = root
     else:
         candidate = Path(requested).expanduser()
-        path = candidate if candidate.is_absolute() else root / candidate
+        path      = candidate if candidate.is_absolute() else root / candidate
     try:
-        path = path.resolve(strict=False)
+        path = path.resolve(strict = False)
     except OSError as error:
         raise ValueError(f"usage path is not accessible: {path}") from error
     if path != root and root not in path.parents:
@@ -136,37 +158,49 @@ def _canonical_path(site, requested):
 
 def report(site, requested, depth, limit):
     root, path = _canonical_path(site, requested)
-    quota = _quota(site)
+    quota    = _quota(site)
     database = database_path(site)
     if not database.exists():
-        return {"path": path, "summary": None, "rows": [], "metadata": None, "quota": quota}
+        return {
+            "path": path, "summary": None, "rows": [], "metadata": None,
+            "quota": quota,
+        }
     connection = _open(database)
     try:
-        metadata = _metadata(connection, site.user)
+        metadata     = _metadata(connection, site.user)
         catalog_root = metadata["root"]
-        if not Path(catalog_root).is_absolute() or Path(catalog_root).resolve() != root:
+        if (
+            not Path(catalog_root).is_absolute()
+            or Path(catalog_root).resolve() != root
+        ):
             raise ValueError("usage snapshot is for a different Lustre root")
         relative = path.relative_to(root).as_posix() or "."
         try:
             summary = connection.execute(
-                "SELECT apparent_bytes, entries FROM directories WHERE path = ?", (relative,)
+                "SELECT apparent_bytes, entries FROM directories WHERE path = ?",
+                (relative,),
             ).fetchone()
         except sqlite3.Error as error:
-            raise ValueError("usage snapshot is missing its directory table") from error
+            raise ValueError(
+                "usage snapshot is missing its directory table"
+            ) from error
         if summary is None:
             raise ValueError(f"no cached usage result is available for {path}")
-        rows = []
+        rows    = []
         parents = [relative]
         for _ in range(depth):
             placeholders = ",".join("?" for _ in parents)
             try:
                 level_rows = connection.execute(
                     f"SELECT path, apparent_bytes, entries FROM directories "
-                    f"WHERE parent_path IN ({placeholders}) ORDER BY apparent_bytes DESC, path LIMIT ?",
+                    f"WHERE parent_path IN ({placeholders}) "
+                    "ORDER BY apparent_bytes DESC, path LIMIT ?",
                     [*parents, limit],
                 ).fetchall()
             except sqlite3.Error as error:
-                raise ValueError("usage snapshot is missing its directory table") from error
+                raise ValueError(
+                    "usage snapshot is missing its directory table"
+                ) from error
             rows.extend(level_rows)
             parents = [row[0] for row in level_rows]
             if not parents:
@@ -206,7 +240,11 @@ def _lfs_size(value):
 
 
 def _limit(value):
-    return "--" if not value or value in {"0", "0k", "0K", "-"} else _lfs_size(value)
+    return (
+        "--"
+        if not value or value in {"0", "0k", "0K", "-"}
+        else _lfs_size(value)
+    )
 
 
 def _count(value):
@@ -216,9 +254,9 @@ def _count(value):
         return "--"
 
 
-def _clip(value, width=56):
+def _clip(value, width = 56):
     value = _display_path(value)
-    return value if len(value) <= width else value[:width - 3] + "..."
+    return value if len(value) <= width else value[: width - 3] + "..."
 
 
 def _fss_row(metadata):
@@ -226,28 +264,44 @@ def _fss_row(metadata):
     # OCI; it then keeps the previous value, whose own observation time is kept.
     failed = bool(metadata) and "fss_lookup_failed_at" in metadata
     if not metadata or "fss_used_bytes" not in metadata:
-        detail = "lookup failed, no earlier value" if failed else "not published"
+        detail = (
+            "lookup failed, no earlier value" if failed else "not published"
+        )
         return ["FSS", "--", "--", "--", detail]
     observed = _timestamp(metadata.get("fss_observed_at"))
-    source = metadata.get("fss_source", "OCI per-UID usage")
+    source   = metadata.get("fss_source", "OCI per-UID usage")
     if observed:
         source = f"{_display_path(source)}, {_age(observed)}"
     if failed:
         source = f"{source} (latest lookup failed)"
     return [
         "FSS", _size(metadata["fss_used_bytes"]),
-        _size(metadata["fss_limit_bytes"]) if metadata.get("fss_limit_bytes") else "--",
-        _count(metadata.get("fss_files")), source,
+        (
+            _size(metadata["fss_limit_bytes"])
+            if metadata.get("fss_limit_bytes")
+            else "--"
+        ), _count(metadata.get("fss_files")), source,
     ]
 
 
-def _table(headers, rows, *, right=()):
-    widths = [max(len(str(value)) for value in [header, *(row[index] for row in rows)])
-              for index, header in enumerate(headers)]
+def _table(headers, rows, *, right = ()):
+    widths = [
+        max(
+            len(str(value)) for value in [header, *(row[index] for row in rows)]
+        )
+        for index, header in enumerate(headers)
+    ]
     for row in (headers, ["-" * width for width in widths], *rows):
-        print("  ".join(str(value).rjust(widths[index]) if index in right
-                        else str(value).ljust(widths[index])
-                        for index, value in enumerate(row)).rstrip())
+        print(
+            "  ".join(
+                (
+                    str(value).rjust(widths[index])
+                    if index in right
+                    else str(value).ljust(widths[index])
+                )
+                for index, value in enumerate(row)
+            ).rstrip()
+        )
 
 
 def print_report(result, depth, limit):
@@ -256,28 +310,45 @@ def print_report(result, depth, limit):
     print("\nStorage summary")
     quota = result["quota"]
     if quota["status"] == "available":
-        lustre = ["Lustre", _lfs_size(quota["used"]), _limit(quota["limit"]),
-                  _count(quota["files"]), "live UID quota"]
+        lustre = [
+            "Lustre", _lfs_size(quota["used"]), _limit(quota["limit"]),
+            _count(quota["files"]), "live UID quota",
+        ]
     else:
         lustre = ["Lustre", "--", "--", "--", quota["detail"]]
-    _table(("Tier", "Used", "Limit", "Files", "Measured by"),
-           [lustre, _fss_row(metadata)], right={1, 2, 3})
+    _table(
+        ("Tier", "Used", "Limit", "Files", "Measured by"),
+        [lustre, _fss_row(metadata)], right = {1, 2, 3},
+    )
     if result["summary"] is None:
-        print("\nFolder breakdown\nNo published Lustre folder inventory is available."
-              " No filesystem scan was started.")
+        print(
+            "\nFolder breakdown\nNo published Lustre folder inventory is available."
+            " No filesystem scan was started."
+        )
         return
-    status = metadata.get("status", "complete")
-    stamp = metadata["snapshot_at"]
+    status       = metadata.get("status", "complete")
+    stamp        = metadata["snapshot_at"]
     parsed_stamp = _timestamp(stamp)
-    print(f"\nLustre folder breakdown ({status} snapshot {stamp}, {_age(parsed_stamp)})")
-    print(f"Apparent total: {_size(result['summary'][0])} across "
-          f"{result['summary'][1]:,} inventory entries")
+    print(
+        f"\nLustre folder breakdown ({status} snapshot {stamp}, {_age(parsed_stamp)})"
+    )
+    print(
+        f"Apparent total: {_size(result['summary'][0])} across "
+        f"{result['summary'][1]:,} inventory entries"
+    )
     if status == "partial":
         unreadable = _count(metadata.get("unreadable_directories"))
-        detail = (f"{unreadable} folders you cannot open were not scanned"
-                  if unreadable not in {"--", "0"} else "missing paths are not included")
+        detail = (
+            f"{unreadable} folders you cannot open were not scanned"
+            if unreadable not in {"--", "0"}
+            else "missing paths are not included"
+        )
         print(f"Warning: this publication is partial; {detail}.")
-    rows = [[_clip(path), _size(apparent_bytes), f"{entries:,}"]
-            for path, apparent_bytes, entries in result["rows"]]
-    _table(("Folder", "Apparent size", "Entries"), rows, right={1, 2})
-    print("\nApparent sizes include directory and symlink entries; they are not allocated space.")
+    rows = [
+        [_clip(path), _size(apparent_bytes), f"{entries:,}"]
+        for path, apparent_bytes, entries in result["rows"]
+    ]
+    _table(("Folder", "Apparent size", "Entries"), rows, right = {1, 2})
+    print(
+        "\nApparent sizes include directory and symlink entries; they are not allocated space."
+    )

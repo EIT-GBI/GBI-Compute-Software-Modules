@@ -1,5 +1,5 @@
 name = "{{name}}"
 
-relocate = true
+relocate    = true
 destination = "{SM_ROOT}/{{name}}"
-modules = "{SM_ROOT}/modules"
+modules     = "{SM_ROOT}/modules"

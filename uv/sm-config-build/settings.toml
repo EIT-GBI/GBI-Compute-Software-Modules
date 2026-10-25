@@ -6,24 +6,24 @@ INSTALL_ROOT = "{SITE_DESTINATION}/{INSTALL_VERSION_VARIANT}"
 
 [install]
 versions = ["stable", "0.12.1"]
-prefix = "{SITE_DESTINATION}/{STAGE_DIR}/cargo"
+prefix   = "{SITE_DESTINATION}/{STAGE_DIR}/cargo"
 # note: this is Lua regex: you will need to escape - and + (using %)
 format = "^bin$"
 # (optional) relocate after install
 destination = "{SITE_DESTINATION}/{INSTALL_VERSION_VARIANT}/bin"
-stage = true
+stage       = true
 
 [module]
-PATH = "{INSTALL_DIR}"
+PATH            = "{INSTALL_DIR}"
 LD_LIBRARY_PATH = "{INSTALL_DIR}"
 INSTALL_VERSION = "{INSTALL_VERSION}"
 
 UV_TOOL_SCRIPTS_DIR = "{INSTALL_DIR}/opt/bin"
-UV_TOOL_BIN_DIR = "{INSTALL_DIR}/bin"
-UV_TOOL_DIR = "{INSTALL_DIR}/opt"
+UV_TOOL_BIN_DIR     = "{INSTALL_DIR}/bin"
+UV_TOOL_DIR         = "{INSTALL_DIR}/opt"
 
 UV_CONCURRENT_INSTALLS = 8
-UV_CONCURRENT_BUILDS = 8
+UV_CONCURRENT_BUILDS   = 8
 
 [post]
 # toggles mandatory relocate if `stage` and `clean` are true. If the install

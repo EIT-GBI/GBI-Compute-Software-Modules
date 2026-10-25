@@ -1,5 +1,5 @@
 name = "fish"
 
-relocate = true
+relocate    = true
 destination = "{SM_ROOT}/fish"
-modules = "{SM_ROOT}/modules"
+modules     = "{SM_ROOT}/modules"

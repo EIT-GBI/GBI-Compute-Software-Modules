@@ -12,21 +12,21 @@ ZIG_VERSION     = "0.15.2"
 
 # ncdu also needs libzstd, which ships with neither the macOS SDK nor every
 # linux => build a static one into the staging directory and link against that
-ZSTD_VERSION    = "1.5.7"
-ZSTD_PREFIX     = "https://github.com/facebook/zstd/releases/download"
+ZSTD_VERSION = "1.5.7"
+ZSTD_PREFIX  = "https://github.com/facebook/zstd/releases/download"
 
 NPROCS          = 8
 
 [install]
 versions = ["2.9.2"]
-prefix = "{SITE_DESTINATION}"
-format = "{INSTALL_VERSION_VARIANT}$"
+prefix   = "{SITE_DESTINATION}"
+format   = "{INSTALL_VERSION_VARIANT}$"
 # (optional) relocate after install
 destination = "{SITE_DESTINATION}/{INSTALL_VERSION_VARIANT}"
-stage = true
+stage       = true
 
 [module]
-NCDU_PATH = "{INSTALL_DIR}"
+NCDU_PATH       = "{INSTALL_DIR}"
 INSTALL_VERSION = "{INSTALL_VERSION}"
 
 [post]

@@ -1,6 +1,6 @@
-name = "uv"
+name    = "uv"
 variant = "compiled"
 
-relocate = true
+relocate    = true
 destination = "{SM_ROOT}/uv"
-modules = "{SM_ROOT}/modules"
+modules     = "{SM_ROOT}/modules"

@@ -1,5 +1,5 @@
 name = "xz"
 
-relocate = false
+relocate    = false
 destination = "{SM_ROOT}/xz"
-modules = "{SM_ROOT}/modules"
+modules     = "{SM_ROOT}/modules"

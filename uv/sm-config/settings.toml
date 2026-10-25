@@ -1,7 +1,7 @@
 [env]
-UV_NO_MODIFY_PATH = 1
+UV_NO_MODIFY_PATH   = 1
 UV_INSTALL_DIR_NAME = "bin"
-HOME_NAME = "opt"
+HOME_NAME           = "opt"
 
 SITE_CONFIG_DIR = "{SITE_CONFIG_DIR}"
 
@@ -9,19 +9,19 @@ N_PROCS = 8
 
 [install]
 versions = ["stable"]
-prefix = "{SITE_DESTINATION}"
+prefix   = "{SITE_DESTINATION}"
 # note: this is Lua regex: you will need to escape - and + (using %)
 format = "^{STAGE_DIR}$"
 # (optional) relocate after install
 destination = "{SITE_DESTINATION}/{INSTALL_VERSION_VARIANT}"
-stage = true
+stage       = true
 
 [module]
-UV_TOOL_SCRIPTS_DIR = "{INSTALL_DIR}/opt/bin"
-UV_TOOL_BIN_DIR = "{INSTALL_DIR}/bin"
-UV_TOOL_DIR = "{INSTALL_DIR}/opt"
+UV_TOOL_SCRIPTS_DIR    = "{INSTALL_DIR}/opt/bin"
+UV_TOOL_BIN_DIR        = "{INSTALL_DIR}/bin"
+UV_TOOL_DIR            = "{INSTALL_DIR}/opt"
 UV_CONCURRENT_INSTALLS = 8
-UV_CONCURRENT_BUILDS = 8
+UV_CONCURRENT_BUILDS   = 8
 
 [post]
 # toggles mandatory relocate if `stage` and `clean` are true. If the install

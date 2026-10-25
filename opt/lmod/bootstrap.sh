@@ -12,18 +12,18 @@ BASE_URL="https://github.com/JBlaschke/lua-regolith/releases/download/${VERSION}
 #
 detect_os() {
     case "$(uname -s)" in
-        Linux*)     echo "linux"   ;;
-        Darwin*)    echo "macos"   ;;
-        FreeBSD*)   echo "freebsd" ;;
-        *)          echo "unknown" ;;
+        Linux*) echo "linux" ;;
+        Darwin*) echo "macos" ;;
+        FreeBSD*) echo "freebsd" ;;
+        *) echo "unknown" ;;
     esac
 }
 
 detect_arch() {
     case "$(uname -m)" in
-        x86_64|amd64)       echo "x86_64" ;;
-        aarch64|arm64)      echo "arm64"  ;;
-        *)                  echo "unknown" ;;
+        x86_64 | amd64) echo "x86_64" ;;
+        aarch64 | arm64) echo "arm64" ;;
+        *) echo "unknown" ;;
     esac
 }
 
@@ -35,7 +35,7 @@ detect_libc() {
     fi
 
     # Check if the system uses musl (e.g. Alpine)
-    if command -v ldd >/dev/null 2>&1 && ldd --version 2>&1 | grep -qi musl; then
+    if command -v ldd > /dev/null 2>&1 && ldd --version 2>&1 | grep -qi musl; then
         echo "musl"
         return
     fi
@@ -79,7 +79,7 @@ DEFAULT_LIBC="$(detect_libc)"
 # CLI functions
 #
 usage() {
-    cat <<EOF
+    cat << EOF
 Usage: $0 [-n OS] [-a ARCH] [-l LIBC] [-h]
 
 Downloads and installs lua-regolith ${VERSION}, and configures Lmod to 
@@ -112,12 +112,15 @@ fallback=0
 OPTIND=1
 while getopts "hn:a:l:f" opt; do
     case "$opt" in
-        h)  usage ;;
-        n)  name="$OPTARG" ;;
-        a)  arch="$OPTARG" ;;
-        l)  libc="$OPTARG" ;;
-        f)  fallback=1 ;;
-        *)  echo "Error: unknown option -${opt}" >&2; exit 1 ;;
+        h) usage ;;
+        n) name="$OPTARG" ;;
+        a) arch="$OPTARG" ;;
+        l) libc="$OPTARG" ;;
+        f) fallback=1 ;;
+        *)
+            echo "Error: unknown option -${opt}" >&2
+            exit 1
+            ;;
     esac
 done
 
@@ -125,22 +128,34 @@ done
 # Validate inputs
 # ---------------------------------------------------------------------------
 case "$name" in
-    linux|macos|freebsd) ;;
-    *) echo "Error: unsupported OS '${name}' (expected: linux, macos, freebsd)" >&2; exit 1 ;;
+    linux | macos | freebsd) ;;
+    *)
+        echo "Error: unsupported OS '${name}' (expected: linux, macos, freebsd)" >&2
+        exit 1
+        ;;
 esac
 
 case "$arch" in
-    x86_64|arm64) ;;
-    *) echo "Error: unsupported architecture '${arch}' (expected: x86_64, arm64)" >&2; exit 1 ;;
+    x86_64 | arm64) ;;
+    *)
+        echo "Error: unsupported architecture '${arch}' (expected: x86_64, arm64)" >&2
+        exit 1
+        ;;
 esac
 
 # Libc suffix is only used (and required) on Linux
 libc_suffix=""
 if [ "$name" = "linux" ]; then
     case "$libc" in
-        glibc-latest|glibc-legacy|musl) libc_suffix="-${libc}" ;;
-        "") echo "Error: -l LIBC is required on Linux (glibc-latest, glibc-legacy, musl)" >&2; exit 1 ;;
-        *)  echo "Error: unsupported libc '${libc}' (expected: glibc-latest, glibc-legacy, musl)" >&2; exit 1 ;;
+        glibc-latest | glibc-legacy | musl) libc_suffix="-${libc}" ;;
+        "")
+            echo "Error: -l LIBC is required on Linux (glibc-latest, glibc-legacy, musl)" >&2
+            exit 1
+            ;;
+        *)
+            echo "Error: unsupported libc '${libc}' (expected: glibc-latest, glibc-legacy, musl)" >&2
+            exit 1
+            ;;
     esac
 elif [ -n "$libc" ]; then
     echo "Warning: -l LIBC is ignored on ${name} (only applies to Linux)" >&2
@@ -156,7 +171,7 @@ fi
 #______________________________________________________________________________
 # Install Lua backend (bundled with all dependencies required by Lmod)
 #
-if (( ! fallback )); then
+if ((!fallback)); then
     # -------------------------------------------------------------------------
     # Download
     # -------------------------------------------------------------------------
@@ -175,7 +190,7 @@ if (( ! fallback )); then
 
     echo "Done — lua-regolith ${VERSION} installed to ${__PREFIX__}/opt/bin"
 fi
-if (( fallback )); then
+if ((fallback)); then
     # -------------------------------------------------------------------------
     # Fallback: Install TACC Lua and all of its dependencies
     # -------------------------------------------------------------------------
@@ -194,9 +209,9 @@ fi
 #
 pushd ${__PREFIX__}/opt/lmod/github.com/TACC/Lmod
 
-./configure --prefix=${__PREFIX__}/opt           \
-    --with-lua=${__PREFIX__}/opt/bin/lua         \
-    --with-luac=${__PREFIX__}/opt/bin/luac       \
+./configure --prefix=${__PREFIX__}/opt \
+    --with-lua=${__PREFIX__}/opt/bin/lua \
+    --with-luac=${__PREFIX__}/opt/bin/luac \
     --with-lua_include=${__PREFIX__}/opt/include \
     --with-fastTCLInterp=no
 make install
@@ -230,7 +245,7 @@ __clean_path ML_INIT_FILE_FISH
 __clean_path ML_INIT_FILE_NU
 __clean_path MODULEPATH
 
-cat > "${__PREFIX__}/opt/share/env.sh" <<EOF
+cat > "${__PREFIX__}/opt/share/env.sh" << EOF
 # Source this file to add local module and Lua deployment to PATH.
 
 # Utilities and batteries-included Lua
@@ -238,8 +253,8 @@ cat > "${__PREFIX__}/opt/share/env.sh" <<EOF
 _path_to_add=${__PREFIX__}/opt/bin
 
 case ":\${PATH:-}:" in
-  *":\$_path_to_add:"*) ;;
-  *) PATH="\$_path_to_add\${PATH:+:\$PATH}" ;;
+    *":\$_path_to_add:"*) ;;
+    *) PATH="\$_path_to_add\${PATH:+:\$PATH}" ;;
 esac
 
 export PATH
@@ -261,7 +276,7 @@ quote_fish() {
     printf "'%s'" "$s"
 }
 
-cat > "${__PREFIX__}/opt/share/env.fish" <<EOF
+cat > "${__PREFIX__}/opt/share/env.fish" << EOF
 # Source this file to add local module and Lua deployment to PATH.
 
 # Utilities and batteries-included Lua
@@ -283,7 +298,6 @@ ml use $(quote_fish "${MODULEPATH}")
 #------------------------------------------------------------------------------
 EOF
 
-
 quote_nu() {
     local s=$1
     s=${s//\\/\\\\}
@@ -294,7 +308,7 @@ quote_nu() {
     printf '"%s"' "$s"
 }
 
-cat > "${__PREFIX__}/opt/share/env.nu" <<EOF
+cat > "${__PREFIX__}/opt/share/env.nu" << EOF
 # Source this file to add local module and Lua deployment to PATH.
 
 # Utilities and batteries-included Lua

@@ -1,6 +1,6 @@
-name = "zig"
+name    = "zig"
 variant = "compiled"
 
-relocate = false
+relocate    = false
 destination = "{SM_ROOT}/zig"
-modules = "{SM_ROOT}/modules"
+modules     = "{SM_ROOT}/modules"

@@ -1,5 +1,5 @@
 name = "make"
 
-relocate = false
+relocate    = false
 destination = "{SM_ROOT}/make"
-modules = "{SM_ROOT}/modules"
+modules     = "{SM_ROOT}/modules"

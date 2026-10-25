@@ -5,8 +5,7 @@ ARCH=$(to_lower "$RUNTIME_ARCH")
 [[ $ARCH == "amd64" ]] && ARCH="x86_64"
 
 # upstream only publishes the convenient static binaries for linux
-if [[ $OS != "linux" ]]
-then
+if [[ $OS != "linux" ]]; then
     echo "ncdu ships static binary releases for linux only (detected: '${OS}')."
     echo "Use 'make ncdu MODE=build' to compile from source instead."
     exit 1

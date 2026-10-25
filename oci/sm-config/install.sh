@@ -4,8 +4,7 @@ module load uv
 export UV_TOOL_DIR="${TOOL_DIR}"
 export UV_TOOL_BIN_DIR="${TOOL_BIN_DIR}"
 
-if [[ ${VERSION} == "stable" ]]
-then
+if [[ ${VERSION} == "stable" ]]; then
     uv tool install --reinstall --python "${PYTHON_VERSION}" oci-cli
 else
     uv tool install --reinstall --python "${PYTHON_VERSION}" "oci-cli==${VERSION}"

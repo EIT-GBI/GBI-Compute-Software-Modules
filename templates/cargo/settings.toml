@@ -16,4 +16,4 @@ summary = "installed with cargo from crates.io"
 # Re-emit these simple-modules placeholders verbatim, so that `{{{...}}}`
 # survives template expansion and is filled in later by simple-modules.
 INSTALL_VERSION = "{{{INSTALL_VERSION}}}"
-PATH = "{{{PATH}}}"
+PATH            = "{{{PATH}}}"

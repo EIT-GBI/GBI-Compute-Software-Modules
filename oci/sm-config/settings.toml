@@ -5,24 +5,24 @@ TOOL_BIN_DIR = "{SITE_DESTINATION}/{INSTALL_VERSION_VARIANT}/bin"
 # Use managed Python and keep its runtime inside this module version.
 UV_PYTHON_PREFERENCE  = "only-managed"
 UV_PYTHON_INSTALL_DIR = "{SITE_DESTINATION}/{INSTALL_VERSION_VARIANT}/python"
-PYTHON_VERSION = "3.12"
-VERSION = "{INSTALL_VERSION}"
+PYTHON_VERSION        = "3.12"
+VERSION               = "{INSTALL_VERSION}"
 
 [install]
 versions = ["3.94.2"]
-prefix = "{SITE_DESTINATION}"
+prefix   = "{SITE_DESTINATION}"
 
 # Lua pattern matching the version directory.
 format = "^{INSTALL_VERSION_VARIANT}$"
 
 # uv environments contain absolute paths: install at the final location.
 destination = "{SITE_DESTINATION}/{INSTALL_VERSION_VARIANT}"
-stage = false
+stage       = false
 
 [module]
-PATH = "{INSTALL_DIR}/bin"
+PATH            = "{INSTALL_DIR}/bin"
 INSTALL_VERSION = "{INSTALL_VERSION}"
 
 [post]
-safe = true
+safe  = true
 clean = false

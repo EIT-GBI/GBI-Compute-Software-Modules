@@ -1,6 +1,6 @@
-name = "fish"
+name    = "fish"
 variant = "compiled"
 
-relocate = false
+relocate    = false
 destination = "{SM_ROOT}/fish"
-modules = "{SM_ROOT}/modules"
+modules     = "{SM_ROOT}/modules"

@@ -25,31 +25,48 @@ class Transfers(unittest.TestCase):
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)
-        self.base = Path(self.temporary.name).resolve()
+        self.base        = Path(self.temporary.name).resolve()
         self.source_root = self.base / "source"
         self.target_root = self.base / "destination"
-        self.state = self.base / "state"
-        for path in (self.source_root, self.target_root, self.state / "locks", self.state / "pending"):
-            path.mkdir(parents=True)
+        self.state       = self.base / "state"
+        for path in (
+            self.source_root, self.target_root, self.state / "locks",
+            self.state / "pending",
+        ):
+            path.mkdir(parents = True)
         self.source = self.source_root / "file.dat"
         self.target = self.target_root / "file.dat"
         self.source.write_bytes(os.urandom(1024 * 1024))
-        self.task = {"source": str(self.source), "target": str(self.target),
-                     "source_root": str(self.source_root), "target_root": str(self.target_root),
-                     "selection_root": str(self.source_root), "state": str(self.state),
-                     "receipt": str(self.base / "receipt.jsonl"), "progress": str(self.base / "progress.json"),
-                     "rclone": shutil.which("rclone"), "settle_seconds": 1,
-                     "target_kind": "fss", "delete": True, "encode_link": False, "decode_link": False}
-        self.assertIsNotNone(self.task["rclone"], "tests require real rclone on PATH")
+        self.task = {
+            "source": str(self.source), "target": str(self.target),
+            "source_root": str(self.source_root),
+            "target_root": str(self.target_root),
+            "selection_root": str(self.source_root), "state": str(self.state),
+            "receipt": str(self.base / "receipt.jsonl"),
+            "progress": str(self.base / "progress.json"),
+            "rclone": shutil.which("rclone"), "settle_seconds": 1,
+            "target_kind": "fss", "delete": True, "encode_link": False,
+            "decode_link": False,
+        }
+        self.assertIsNotNone(
+            self.task["rclone"], "tests require real rclone on PATH"
+        )
 
     def test_move_checksums_then_receipts_then_deletes(self):
         expected = hashlib.sha256(self.source.read_bytes()).hexdigest()
-        outcome = transfer(self.task)
+        outcome  = transfer(self.task)
         self.assertTrue(outcome["deleted"])
         self.assertFalse(self.source.exists())
-        self.assertEqual(hashlib.sha256(self.target.read_bytes()).hexdigest(), expected)
-        rows = [json.loads(line) for line in Path(self.task["receipt"]).read_text().splitlines()]
-        self.assertEqual([row["event"] for row in rows], ["verified", "deleted"])
+        self.assertEqual(
+            hashlib.sha256(self.target.read_bytes()).hexdigest(), expected
+        )
+        rows = [
+            json.loads(line)
+            for line in Path(self.task["receipt"]).read_text().splitlines()
+        ]
+        self.assertEqual(
+            [row["event"] for row in rows], ["verified", "deleted"]
+        )
         self.assertEqual(rows[0]["sha256"], expected)
         self.assertEqual(list((self.state / "pending").iterdir()), [])
 
@@ -60,7 +77,7 @@ class Transfers(unittest.TestCase):
     def test_empty_source_directory_retained_if_destination_replaced(self):
         source = self.source_root / "empty"
         source.mkdir()
-        destination = self.target_root / "empty"
+        destination  = self.target_root / "empty"
         source_reads = 0
 
         def observe(path):
@@ -73,13 +90,23 @@ class Transfers(unittest.TestCase):
                     destination.mkdir()
             return result
 
-        with patch("gbi_data.transfer.fingerprint", side_effect=observe):
-            with self.assertRaisesRegex(ValueError, "empty directory source or destination changed"):
-                transfer({**self.task, "source": str(source), "target": str(destination), "empty": True})
+        with patch("gbi_data.transfer.fingerprint", side_effect = observe):
+            with self.assertRaisesRegex(
+                ValueError, "empty directory source or destination changed"
+            ):
+                transfer(
+                    {
+                        **self.task, "source": str(source),
+                        "target": str(destination), "empty": True,
+                    }
+                )
         self.assertTrue(source.is_dir())
 
-    def test_source_parent_retained_if_destination_changes_after_file_unlink(self):
+    def test_source_parent_retained_if_destination_changes_after_file_unlink(
+                self,
+            ):
         from gbi_data.transfer import receipt
+
         parent = self.source_root / "parent"
         parent.mkdir()
         self.source.rename(parent / "file.dat")
@@ -89,8 +116,12 @@ class Transfers(unittest.TestCase):
             if record["event"] == "deleted":
                 self.target.write_bytes(b"changed after file cleanup")
 
-        with patch("gbi_data.transfer.receipt", side_effect=receipt_then_change):
-            with self.assertRaisesRegex(ValueError, "destination changed during directory cleanup"):
+        with patch(
+            "gbi_data.transfer.receipt", side_effect = receipt_then_change
+        ):
+            with self.assertRaisesRegex(
+                ValueError, "destination changed during directory cleanup"
+            ):
                 transfer({**self.task, "source": str(parent / "file.dat")})
         self.assertTrue(parent.is_dir())
 
@@ -104,12 +135,12 @@ class Transfers(unittest.TestCase):
     def test_unreadable_source_does_not_create_destination(self):
         real_open = os.open
 
-        def fail_source(path, flags, mode=0o777, *, dir_fd=None):
+        def fail_source(path, flags, mode = 0o777, *, dir_fd = None):
             if os.fsdecode(path) == str(self.source):
                 raise OSError(5, "Input/output error")
-            return real_open(path, flags, mode, dir_fd=dir_fd)
+            return real_open(path, flags, mode, dir_fd = dir_fd)
 
-        with patch("gbi_data.transfer.os.open", side_effect=fail_source):
+        with patch("gbi_data.transfer.os.open", side_effect = fail_source):
             with self.assertRaisesRegex(OSError, "Input/output error"):
                 transfer({**self.task, "rclone": None})
         self.assertFalse(self.target.exists())
@@ -119,47 +150,72 @@ class Transfers(unittest.TestCase):
     def test_source_identity_change_does_not_create_destination(self):
         real_open = os.open
 
-        def replace_source_before_open(path, flags, mode=0o777, *, dir_fd=None):
+        def replace_source_before_open(path, flags, mode = 0o777, *, dir_fd = None):
             if os.fsdecode(path) == str(self.source):
                 self.source.write_bytes(b"changed before the pinned open")
-            return real_open(path, flags, mode, dir_fd=dir_fd)
+            return real_open(path, flags, mode, dir_fd = dir_fd)
 
-        with patch("gbi_data.transfer.os.open", side_effect=replace_source_before_open):
-            with self.assertRaisesRegex(ValueError, "source changed during preparation"):
+        with patch(
+            "gbi_data.transfer.os.open", side_effect = replace_source_before_open
+        ):
+            with self.assertRaisesRegex(
+                ValueError, "source changed during preparation"
+            ):
                 transfer({**self.task, "rclone": None})
         self.assertFalse(self.target.exists())
         self.assertEqual(list((self.state / "pending").iterdir()), [])
 
     def test_identical_destination_reused_and_verified(self):
         shutil.copyfile(self.source, self.target)
-        with patch("gbi_data.transfer.copy_stream", side_effect=AssertionError("must not recopy")), \
-             patch("gbi_data.transfer.digest", side_effect=transfer_digest) as hashed:
+        with (
+            patch(
+                "gbi_data.transfer.copy_stream",
+                side_effect = AssertionError("must not recopy"),
+            ),
+            patch(
+                "gbi_data.transfer.digest", side_effect = transfer_digest
+            ) as hashed,
+        ):
             outcome = transfer(self.task)
         self.assertTrue(outcome["reused"])
         self.assertFalse(self.source.exists())
-        self.assertEqual(sum(Path(call.args[0]) == self.target for call in hashed.call_args_list), 1)
+        self.assertEqual(
+            sum(
+                Path(call.args[0]) == self.target
+                for call in hashed.call_args_list
+            ), 1,
+        )
 
     def test_owned_same_size_partial_resume_does_not_reuse_stale_digest(self):
         expected = hashlib.sha256(self.source.read_bytes()).hexdigest()
-        old = b"old destination"
-        self.target.write_bytes((old * ((self.source.stat().st_size // len(old)) + 1))[:self.source.stat().st_size])
+        old      = b"old destination"
+        self.target.write_bytes(
+            (old * ((self.source.stat().st_size // len(old)) + 1))[
+                : self.source.stat().st_size
+            ]
+        )
         target_identity = fingerprint(self.target)[:3]
-        key = hashlib.sha256(os.fsencode(self.target)).hexdigest()
-        (self.state / "pending" / f"{key}.json").write_text(json.dumps({
-            "source": str(self.source),
-            "fingerprint": fingerprint(self.source),
-            "target_identity": target_identity,
-            "phase": "writing",
-        }))
+        key             = hashlib.sha256(os.fsencode(self.target)).hexdigest()
+        (self.state / "pending" / f"{key}.json").write_text(
+            json.dumps(
+                {
+                    "source": str(self.source),
+                    "fingerprint": fingerprint(self.source),
+                    "target_identity": target_identity, "phase": "writing",
+                }
+            )
+        )
         outcome = transfer({**self.task, "rclone": None})
         self.assertFalse(outcome["reused"])
         self.assertFalse(self.source.exists())
-        self.assertEqual(hashlib.sha256(self.target.read_bytes()).hexdigest(), expected)
+        self.assertEqual(
+            hashlib.sha256(self.target.read_bytes()).hexdigest(), expected
+        )
 
     def test_reused_destination_change_after_digest_retains_source(self):
         shutil.copyfile(self.source, self.target)
         target_fingerprints = 0
-        real_fingerprint = fingerprint
+        real_fingerprint    = fingerprint
 
         def change_after_final_observation(path):
             nonlocal target_fingerprints
@@ -170,7 +226,10 @@ class Transfers(unittest.TestCase):
                     self.target.write_bytes(b"changed after digest")
             return observed
 
-        with patch("gbi_data.transfer.fingerprint", side_effect=change_after_final_observation):
+        with patch(
+            "gbi_data.transfer.fingerprint",
+            side_effect = change_after_final_observation,
+        ):
             with self.assertRaisesRegex(ValueError, "checksum"):
                 transfer({**self.task, "delete": False})
         self.assertTrue(self.source.exists())
@@ -181,7 +240,8 @@ class Transfers(unittest.TestCase):
             value = copy_stream(*args)
             self.target.write_bytes(b"corrupt")
             return value
-        with patch("gbi_data.transfer.copy_stream", side_effect=corrupt):
+
+        with patch("gbi_data.transfer.copy_stream", side_effect = corrupt):
             with self.assertRaisesRegex(ValueError, "checksum"):
                 transfer(self.task)
         self.assertTrue(self.source.exists())
@@ -190,18 +250,24 @@ class Transfers(unittest.TestCase):
         def short(source, target, fd, *args):
             os.close(fd)
             return hashlib.sha256(b"").hexdigest(), 0
-        with patch("gbi_data.transfer.copy_stream", side_effect=short):
+
+        with patch("gbi_data.transfer.copy_stream", side_effect = short):
             with self.assertRaisesRegex(ValueError, "stream was short"):
                 transfer(self.task)
         self.assertTrue(self.source.exists())
         self.assertFalse(Path(self.task["receipt"]).exists())
 
-    @unittest.skipIf(sys.platform == "darwin", "rclone reader timeout diagnostic is Linux-only")
+    @unittest.skipIf(
+        sys.platform == "darwin",
+        "rclone reader timeout diagnostic is Linux-only",
+    )
     def test_blocked_reader_times_out_without_source_deletion(self):
         blocked = self.base / "blocked-reader"
         blocked.write_text("#!/bin/sh\nexec sleep 60\n")
         blocked.chmod(0o700)
-        result = cli.supervise({**self.task, "rclone": str(blocked)}, 0.2, threading.Event())
+        result = cli.supervise(
+            {**self.task, "rclone": str(blocked)}, 0.2, threading.Event()
+        )
         self.assertIn("timed out", result["error"])
         self.assertTrue(self.source.exists())
         self.assertFalse(Path(self.task["receipt"]).exists())
@@ -211,8 +277,11 @@ class Transfers(unittest.TestCase):
             value = copy_stream(*args)
             self.source.write_bytes(b"x" * self.source.stat().st_size)
             return value
-        with patch("gbi_data.transfer.copy_stream", side_effect=change):
-            with self.assertRaisesRegex(ValueError, "source (?:content )?changed"):
+
+        with patch("gbi_data.transfer.copy_stream", side_effect = change):
+            with self.assertRaisesRegex(
+                ValueError, "source (?:content )?changed"
+            ):
                 transfer(self.task)
         self.assertTrue(self.source.exists())
 
@@ -224,33 +293,42 @@ class Transfers(unittest.TestCase):
     def test_same_size_same_timestamp_source_edit_retains_source(self):
         def change(*args):
             original = self.source.stat()
-            value = copy_stream(*args)
+            value    = copy_stream(*args)
             self.source.write_bytes(b"x" * original.st_size)
-            os.utime(self.source, ns=(original.st_atime_ns, original.st_mtime_ns))
+            os.utime(
+                self.source, ns = (original.st_atime_ns, original.st_mtime_ns)
+            )
             return value
-        with patch("gbi_data.transfer.copy_stream", side_effect=change):
+
+        with patch("gbi_data.transfer.copy_stream", side_effect = change):
             with self.assertRaisesRegex(ValueError, "source content changed"):
                 transfer(self.task)
         self.assertTrue(self.source.exists())
 
     def test_no_receipt_means_no_deletion(self):
-        with patch("gbi_data.transfer.receipt", side_effect=OSError("scratch unavailable")):
+        with patch(
+            "gbi_data.transfer.receipt",
+            side_effect = OSError("scratch unavailable"),
+        ):
             with self.assertRaises(OSError):
                 transfer(self.task)
         self.assertTrue(self.source.exists())
         self.assertEqual(self.source.read_bytes(), self.target.read_bytes())
 
     def test_native_copy_keeps_source_when_receipt_fails(self):
-        with patch("gbi_data.transfer.receipt", side_effect=OSError("scratch unavailable")):
+        with patch(
+            "gbi_data.transfer.receipt",
+            side_effect = OSError("scratch unavailable"),
+        ):
             with self.assertRaises(OSError):
                 transfer({**self.task, "rclone": None})
         self.assertEqual(self.source.read_bytes(), self.target.read_bytes())
 
     def test_darwin_native_pinned_inode_rejects_replacement(self):
-        original = self.source.read_bytes()
+        original    = self.source.read_bytes()
         replacement = b"replacement source" * (len(original) // 18 + 1)
-        replacement = replacement[:len(original)]
-        real_copy = copy_stream
+        replacement = replacement[: len(original)]
+        real_copy   = copy_stream
 
         def replace_after_pinning(*args):
             swapped = self.source.with_name("swapped-source")
@@ -258,10 +336,19 @@ class Transfers(unittest.TestCase):
             os.replace(swapped, self.source)
             return real_copy(*args)
 
-        with patch("gbi_data.transfer.sys.platform", "darwin"), \
-                patch("gbi_data.transfer.copy_stream", side_effect=replace_after_pinning):
-            with self.assertRaisesRegex(ValueError, "source changed during transfer"):
-                transfer({**self.task, "rclone": "/missing/rclone", "delete": True})
+        with (
+            patch("gbi_data.transfer.sys.platform", "darwin"),
+            patch(
+                "gbi_data.transfer.copy_stream",
+                side_effect = replace_after_pinning,
+            ),
+        ):
+            with self.assertRaisesRegex(
+                ValueError, "source changed during transfer"
+            ):
+                transfer(
+                    {**self.task, "rclone": "/missing/rclone", "delete": True}
+                )
         self.assertEqual(self.target.read_bytes(), original)
         self.assertEqual(self.source.read_bytes(), replacement)
         self.assertFalse(Path(self.task["receipt"]).exists())
@@ -269,7 +356,9 @@ class Transfers(unittest.TestCase):
     def test_changed_small_selection_cannot_start_copying(self):
         original = fingerprint(self.source)
         self.source.write_bytes(b"changed")
-        with self.assertRaisesRegex(ValueError, "changed since the foreground probe"):
+        with self.assertRaisesRegex(
+            ValueError, "changed since the foreground probe"
+        ):
             transfer({**self.task, "rclone": None, "expected_source": original})
         self.assertFalse(self.target.exists())
         self.assertEqual(self.source.read_bytes(), b"changed")
@@ -278,9 +367,12 @@ class Transfers(unittest.TestCase):
         def grow(*args):
             self.source.write_bytes(b"x" * 2 * 1024 * 1024)
             return copy_stream(*args)
-        with patch("gbi_data.transfer.copy_stream", side_effect=grow):
+
+        with patch("gbi_data.transfer.copy_stream", side_effect = grow):
             with self.assertRaisesRegex(ValueError, "grew beyond"):
-                transfer({**self.task, "rclone": None, "max_bytes": 1024 * 1024})
+                transfer(
+                    {**self.task, "rclone": None, "max_bytes": 1024 * 1024}
+                )
         self.assertTrue(self.source.exists())
         self.assertLessEqual(self.target.stat().st_size, 1024 * 1024)
 
@@ -289,7 +381,8 @@ class Transfers(unittest.TestCase):
             with os.fdopen(fd, "wb") as output:
                 output.write(b"partial")
             raise OSError("interrupted")
-        with patch("gbi_data.transfer.copy_stream", side_effect=partial):
+
+        with patch("gbi_data.transfer.copy_stream", side_effect = partial):
             with self.assertRaises(OSError):
                 transfer(self.task)
         self.assertTrue(self.source.exists())
@@ -301,7 +394,8 @@ class Transfers(unittest.TestCase):
         def partial(source, target, fd, *args):
             os.close(fd)
             raise OSError("interrupted")
-        with patch("gbi_data.transfer.copy_stream", side_effect=partial):
+
+        with patch("gbi_data.transfer.copy_stream", side_effect = partial):
             with self.assertRaises(OSError):
                 transfer(self.task)
         self.source.write_bytes(b"new version")
@@ -322,7 +416,12 @@ class Transfers(unittest.TestCase):
         other.mkdir()
         (self.target_root / "link").symlink_to(other)
         with self.assertRaises(ValueError):
-            transfer({**self.task, "target": str(self.target_root / "link" / "new" / "file")})
+            transfer(
+                {
+                    **self.task,
+                    "target": str(self.target_root / "link" / "new" / "file"),
+                }
+            )
         self.assertEqual(list(other.iterdir()), [])
 
     def test_native_symlink_is_not_followed(self):
@@ -336,23 +435,42 @@ class Transfers(unittest.TestCase):
         self.source.unlink()
         self.source.symlink_to("../original")
         stored = self.target.with_name("file.dat.rclonelink")
-        transfer({**self.task, "target": str(stored), "target_kind": "alluxio", "encode_link": True})
+        transfer(
+            {
+                **self.task, "target": str(stored), "target_kind": "alluxio",
+                "encode_link": True,
+            }
+        )
         self.assertEqual(stored.read_text(), "../original")
         restored = self.source_root / "restored"
-        transfer({**self.task, "source": str(stored), "source_root": str(self.target_root),
-                  "target": str(restored), "target_root": str(self.source_root),
-                  "selection_root": str(self.target_root), "decode_link": True, "delete": False})
+        transfer(
+            {
+                **self.task, "source": str(stored),
+                "source_root": str(self.target_root), "target": str(restored),
+                "target_root": str(self.source_root),
+                "selection_root": str(self.target_root), "decode_link": True,
+                "delete": False,
+            }
+        )
         self.assertTrue(stored.exists())
         self.assertEqual(os.readlink(restored), "../original")
 
-    def test_direct_encoded_link_restore_preserves_explicit_destination_name(self):
+    def test_direct_encoded_link_restore_preserves_explicit_destination_name(
+                self,
+            ):
         stored = self.source_root / "debug-internal.log.rclonelink"
         stored.write_text("run/logs/debug-internal.log")
         destination = self.target_root / "debug-internal.log"
-        transfer({**self.task, "source": str(stored), "target": str(destination),
-                  "decode_link": True, "target_base": True, "delete": False})
+        transfer(
+            {
+                **self.task, "source": str(stored), "target": str(destination),
+                "decode_link": True, "target_base": True, "delete": False,
+            }
+        )
         self.assertTrue(destination.is_symlink())
-        self.assertEqual(os.readlink(destination), "run/logs/debug-internal.log")
+        self.assertEqual(
+            os.readlink(destination), "run/logs/debug-internal.log"
+        )
         self.assertFalse((self.target_root / "debug-i").exists())
 
     def test_directory_encoded_link_restore_strips_representation_suffix(self):
@@ -363,23 +481,39 @@ class Transfers(unittest.TestCase):
         destination_dir = self.target_root / "restored"
         destination_dir.mkdir()
         destination = destination_dir / "debug-internal.log"
-        transfer({**self.task, "source": str(stored), "selection_root": str(source_dir),
-                  "target": str(destination_dir), "directory": True, "target_base": True,
-                  "decode_link": True, "delete": False})
+        transfer(
+            {
+                **self.task, "source": str(stored),
+                "selection_root": str(source_dir),
+                "target": str(destination_dir), "directory": True,
+                "target_base": True, "decode_link": True, "delete": False,
+            }
+        )
         self.assertTrue(destination.is_symlink())
-        self.assertEqual(os.readlink(destination), "run/logs/debug-internal.log")
+        self.assertEqual(
+            os.readlink(destination), "run/logs/debug-internal.log"
+        )
 
     def test_alluxio_encoded_link_does_not_duplicate_suffix(self):
         stored = self.source.with_name("file.dat.rclonelink")
         stored.write_text("../original")
-        task = {key: value for key, value in self.task.items()
-                if key not in ("encode_link", "decode_link")}
+        task = {
+            key: value
+            for key, value in self.task.items()
+            if key not in ("encode_link", "decode_link")
+        }
         destination = self.target.with_name("file.dat.rclonelink")
-        transfer({**task, "source": str(stored), "target": str(destination),
-                  "source_kind": "alluxio", "target_kind": "alluxio", "target_base": True,
-                  "delete": False})
+        transfer(
+            {
+                **task, "source": str(stored), "target": str(destination),
+                "source_kind": "alluxio", "target_kind": "alluxio",
+                "target_base": True, "delete": False,
+            }
+        )
         self.assertTrue(destination.exists())
-        self.assertFalse(destination.with_name("file.dat.rclonelink.rclonelink").exists())
+        self.assertFalse(
+            destination.with_name("file.dat.rclonelink.rclonelink").exists()
+        )
         self.assertEqual(destination.read_text(), "../original")
 
 
@@ -390,37 +524,59 @@ class Interface(unittest.TestCase):
         self.base = Path(self.temporary.name).resolve()
         self.user = pwd.getpwuid(os.getuid()).pw_name
         self.conf = self.base / "site.conf"
-        roots = {name: self.base / name for name in ("lustre", "fss", "bucket")}
+        roots     = {name: self.base / name for name in ("lustre", "fss", "bucket")}
         for root in roots.values():
-            (root / self.user).mkdir(parents=True)
-        self.conf.write_text("".join(f"{name}_root = {root}\n" for name, root in roots.items()) + "partition = test\n")
+            (root / self.user).mkdir(parents = True)
+        self.conf.write_text(
+            "".join(f"{name}_root = {root}\n" for name, root in roots.items())
+            + "partition = test\n"
+        )
         self.site = Site(self.conf)
 
     def test_history_records_do_not_require_kernel_fast_copy(self):
         run_dir = self.site.roots["lustre"] / "history-test"
         run_dir.mkdir()
-        expected = {name: (name + "\n").encode()
-                    for name in ("request.json", "receipts.jsonl", "slurm.out", "slurm.json")}
+        expected = {
+            name: (name + "\n").encode()
+            for name in (
+                "request.json", "receipts.jsonl", "slurm.out", "slurm.json",
+            )
+        }
         for name, contents in expected.items():
             (run_dir / name).write_bytes(contents)
         published = {}
 
         def supervise(task, *_args):
             self.assertFalse(task["delete"])
-            published[Path(task["target"]).name] = Path(task["source"]).read_bytes()
+            published[Path(task["target"]).name] = Path(
+                task["source"]
+            ).read_bytes()
             return {}
 
-        with patch("gbi_data.cli.shutil.copyfile", side_effect=OSError(61, "No data available")), \
-             patch("gbi_data.cli.supervise", side_effect=supervise):
-            cli.publish_history(run_dir, self.site, self.base / "state", None,
-                                {"phase": "complete"}, threading.Event())
+        with (
+            patch(
+                "gbi_data.cli.shutil.copyfile",
+                side_effect = OSError(61, "No data available"),
+            ),
+            patch("gbi_data.cli.supervise", side_effect = supervise),
+        ):
+            cli.publish_history(
+                run_dir, self.site, self.base / "state", None,
+                {"phase": "complete"}, threading.Event(),
+            )
         self.assertEqual({name: published[name] for name in expected}, expected)
         self.assertEqual(list(published)[-1], "progress.json")
-        self.assertEqual(json.loads(published["progress.json"]), {"phase": "complete"})
-        self.assertEqual({name: (run_dir / name).read_bytes() for name in expected}, expected)
+        self.assertEqual(
+            json.loads(published["progress.json"]), {"phase": "complete"}
+        )
+        self.assertEqual(
+            {name: (run_dir / name).read_bytes() for name in expected}, expected
+        )
 
     def test_small_file_all_routes_needs_neither_slurm_nor_rclone(self):
-        environment = {**os.environ, "GBI_DATA_SITE_CONF": str(self.conf), "PATH": ""}
+        environment = {
+            **os.environ, "GBI_DATA_SITE_CONF": str(self.conf), "PATH": "",
+        }
         environment.pop("SLURM_JOB_ID", None)
         for source_kind, source_root in self.site.roots.items():
             for target_kind, target_root in self.site.roots.items():
@@ -429,27 +585,46 @@ class Interface(unittest.TestCase):
                 source = source_root / f"small-to-{target_kind}"
                 source.write_bytes(os.urandom(5000))
                 expected = source.read_bytes()
-                target = target_root / f"small-from-{source_kind}"
-                result = subprocess.run([sys.executable, "-B", "-m", "gbi_data.cli", "data", "move",
-                                         str(source), str(target)], env=environment,
-                                        capture_output=True, text=True, timeout=10)
-                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                target   = target_root / f"small-from-{source_kind}"
+                result = subprocess.run(
+                    [
+                        sys.executable, "-B", "-m", "gbi_data.cli", "data",
+                        "move", str(source), str(target),
+                    ], env = environment, capture_output = True, text = True,
+                    timeout = 10,
+                )
+                self.assertEqual(
+                    result.returncode, 0, result.stdout + result.stderr
+                )
                 self.assertIn("Foreground transfer", result.stdout)
                 self.assertNotIn("Submitted transfer", result.stdout)
                 self.assertEqual(target.read_bytes(), expected)
                 self.assertEqual(source.exists(), source_kind == "alluxio")
-        histories = list((self.site.roots["alluxio"] / ".gbi/transfers").glob("*/*/history.json"))
+        histories = list(
+            (self.site.roots["alluxio"] / ".gbi/transfers").glob(
+                "*/*/history.json"
+            )
+        )
         self.assertEqual(len(histories), 6)
         for path in histories:
             record = json.loads(path.read_text())
             self.assertEqual(record["request"]["execution"], "inline")
             self.assertEqual(record["progress"]["phase"], "complete")
             self.assertEqual(record["receipts"][0]["reader"], "native")
-            status = subprocess.run([sys.executable, "-B", "-m", "gbi_data.cli", "data", "status",
-                                     path.parent.name], env=environment, capture_output=True, text=True, timeout=10)
-            self.assertEqual(status.returncode, 0, status.stdout + status.stderr)
+            status = subprocess.run(
+                [
+                    sys.executable, "-B", "-m", "gbi_data.cli", "data",
+                    "status", path.parent.name,
+                ], env = environment, capture_output = True, text = True,
+                timeout = 10,
+            )
+            self.assertEqual(
+                status.returncode, 0, status.stdout + status.stderr
+            )
             self.assertIn("Complete", status.stdout)
-        self.assertEqual(list((self.site.roots["lustre"] / ".gbi/runs").iterdir()), [])
+        self.assertEqual(
+            list((self.site.roots["lustre"] / ".gbi/runs").iterdir()), []
+        )
 
     def test_submission_wait_policy_and_result(self):
         source = self.site.roots["lustre"] / "wait-policy"
@@ -457,25 +632,34 @@ class Interface(unittest.TestCase):
         target = self.site.roots["alluxio"] / source.name
         for flags, terminal, follows in (
             (["--detach", "--wait"], False, True),
-            (["--detach", "--wait"], True, True),
-            (["--detach"], True, False),
-            (["--detach"], False, False),
-            (["--wait"], False, True),
-            ([], False, False),
-            ([], True, True),
+            (["--detach", "--wait"], True, True), (["--detach"], True, False),
+            (["--detach"], False, False), (["--wait"], False, True),
+            ([], False, False), ([], True, True),
         ):
-            with self.subTest(flags=flags, terminal=terminal), \
-                 patch.dict(os.environ, {"GBI_DATA_SITE_CONF": str(self.conf), "SLURM_JOB_ID": ""}), \
-                 patch("sys.argv", ["gbi", "data", "copy", str(source), str(target), *flags]), \
-                 patch("sys.stdout.isatty", return_value=terminal), \
-                 patch("gbi_data.cli.probe", return_value=None), \
-                 patch("gbi_data.cli.jobs.submit", return_value="314159") as submit, \
-                 patch("gbi_data.cli.jobs.watch", return_value=1) as watch:
+            with (
+                self.subTest(flags = flags, terminal = terminal),
+                patch.dict(
+                    os.environ,
+                    {"GBI_DATA_SITE_CONF": str(self.conf), "SLURM_JOB_ID": ""},
+                ),
+                patch(
+                    "sys.argv",
+                    ["gbi", "data", "copy", str(source), str(target), *flags],
+                ),
+                patch("sys.stdout.isatty", return_value = terminal),
+                patch("gbi_data.cli.probe", return_value = None),
+                patch(
+                    "gbi_data.cli.jobs.submit", return_value = "314159"
+                ) as submit,
+                patch("gbi_data.cli.jobs.watch", return_value = 1) as watch,
+            ):
                 self.assertEqual(cli.main(), 1 if follows else 0)
                 submit.assert_called_once()
                 if follows:
                     watch.assert_called_once_with(
-                        submit.call_args.args[0], "314159", archive_root=self.site.roots["alluxio"])
+                        submit.call_args.args[0], "314159",
+                        archive_root = self.site.roots["alluxio"],
+                    )
                 else:
                     watch.assert_not_called()
                 self.assertEqual(source.read_bytes(), b"keep this source")
@@ -487,87 +671,142 @@ class Interface(unittest.TestCase):
         sbatch = binary / "sbatch"
         sbatch.write_text("#!/bin/sh\nprintf '314159\\n'\n")
         sbatch.chmod(0o700)
-        environment = {**os.environ, "GBI_DATA_SITE_CONF": str(self.conf), "PATH": str(binary)}
+        environment = {
+            **os.environ, "GBI_DATA_SITE_CONF": str(self.conf),
+            "PATH": str(binary),
+        }
         environment.pop("SLURM_JOB_ID", None)
-        for name, size, flags in (("large", 8589934593, []), ("background", 5000, ["--detach"])):
+        for name, size, flags in (
+            ("large", 8589934593, []), ("background", 5000, ["--detach"]),
+        ):
             source = self.site.roots["lustre"] / name
             with source.open("wb") as stream:
                 stream.truncate(size)
-            result = subprocess.run([sys.executable, "-B", "-m", "gbi_data.cli", "data", "move",
-                                     str(source), str(self.site.roots["alluxio"] / name),
-                                     "--exclude", "*.tmp", "--exclude", "scratch*", *flags],
-                                    env=environment, capture_output=True, text=True, timeout=10)
-            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            result = subprocess.run(
+                [
+                    sys.executable, "-B", "-m", "gbi_data.cli", "data", "move",
+                    str(source), str(self.site.roots["alluxio"] / name),
+                    "--exclude", "*.tmp", "--exclude", "scratch*", *flags,
+                ], env = environment, capture_output = True, text = True,
+                timeout = 10,
+            )
+            self.assertEqual(
+                result.returncode, 0, result.stdout + result.stderr
+            )
             self.assertIn("Submitted transfer 314159", result.stdout)
             self.assertEqual(source.stat().st_size, size)
-        for path in (self.site.roots["lustre"] / ".gbi/runs").glob("*/request.json"):
+        for path in (self.site.roots["lustre"] / ".gbi/runs").glob(
+            "*/request.json"
+        ):
             record = json.loads(path.read_text())
             self.assertEqual(record["execution"], "slurm")
             self.assertIsNone(record["selection"])
             self.assertEqual(record["exclude"], ["*.tmp", "scratch*"])
 
     def test_probe_bounds_file_count_and_excluded_entry_scan(self):
-        self.conf.write_text(self.conf.read_text() + "inline_scan_entries = 32\n")
+        self.conf.write_text(
+            self.conf.read_text() + "inline_scan_entries = 32\n"
+        )
         self.site = Site(self.conf)
-        source = self.site.roots["lustre"] / "tree"
+        source    = self.site.roots["lustre"] / "tree"
         source.mkdir()
         for number in range(33):
             (source / str(number)).touch()
-        options = cli.parser().parse_args(["data", "move", str(source), str(self.site.roots["alluxio"] / "tree")])
+        options = cli.parser().parse_args(
+            [
+                "data", "move", str(source),
+                str(self.site.roots["alluxio"] / "tree"),
+            ]
+        )
         specification = cli.plan(options, self.site)
         self.assertIsNone(selection.probe(specification, self.site))
         self.site.values["inline_scan_entries"] = "20"
         with self.assertRaisesRegex(ValueError, "larger scan"):
-            selection.foreground_selection({**specification, "include": ["*.pt"]}, self.site)
+            selection.foreground_selection(
+                {**specification, "include": ["*.pt"]}, self.site
+            )
 
     def test_foreground_engine_and_slurm_threshold_are_independent(self):
         source = self.site.roots["lustre"] / "file"
         for destination_kind in ("fss", "alluxio"):
-            for size, mode, reader in ((5000, "inline", "native"),
-                                       (9 * 1024**2, "inline", "rclone"),
-                                       (2 * 1024**3, "inline", "rclone"),
-                                       (8 * 1024**3, "inline", "rclone"),
-                                       (8 * 1024**3 + 1, "slurm", "rclone")):
+            for size, mode, reader in (
+                (5000, "inline", "native"), (9 * 1024**2, "inline", "rclone"),
+                (2 * 1024**3, "inline", "rclone"),
+                (8 * 1024**3, "inline", "rclone"),
+                (8 * 1024**3 + 1, "slurm", "rclone"),
+            ):
                 with source.open("wb") as stream:
                     stream.truncate(size)
-                options = cli.parser().parse_args(["data", "move", str(source),
-                                                  str(self.site.roots[destination_kind] / "destination")])
-                with patch.dict(os.environ, {key: value for key, value in os.environ.items()
-                                            if key != "SLURM_JOB_ID"}, clear=True):
-                    planned = cli.execution_plan(cli.plan(options, self.site), self.site, options)
-                self.assertEqual((planned["execution"], planned["reader"]), (mode, reader))
+                options = cli.parser().parse_args(
+                    [
+                        "data", "move", str(source),
+                        str(self.site.roots[destination_kind] / "destination"),
+                    ]
+                )
+                with patch.dict(
+                    os.environ,
+                    {
+                        key: value
+                        for key, value in os.environ.items()
+                        if key != "SLURM_JOB_ID"
+                    }, clear = True,
+                ):
+                    planned = cli.execution_plan(
+                        cli.plan(options, self.site), self.site, options
+                    )
+                self.assertEqual(
+                    (planned["execution"], planned["reader"]), (mode, reader)
+                )
 
     def test_everyday_directory_uses_native_small_files_without_slurm(self):
         source = self.site.roots["lustre"] / "everyday"
         source.mkdir()
         for number in range(40):
             (source / str(number)).write_bytes(os.urandom(1000))
-        target = self.site.roots["alluxio"] / "everyday"
+        target      = self.site.roots["alluxio"] / "everyday"
         environment = {**os.environ, "GBI_DATA_SITE_CONF": str(self.conf)}
         environment.pop("SLURM_JOB_ID", None)
-        result = subprocess.run([sys.executable, "-B", "-m", "gbi_data.cli", "data", "move",
-                                 str(source), str(target)], env=environment,
-                                capture_output=True, text=True, timeout=30)
+        result = subprocess.run(
+            [
+                sys.executable, "-B", "-m", "gbi_data.cli", "data", "move",
+                str(source), str(target),
+            ], env = environment, capture_output = True, text = True,
+            timeout = 30,
+        )
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("Foreground transfer.", result.stdout)
         self.assertNotIn("Submitted transfer", result.stdout)
-        history = next((self.site.roots["alluxio"] / ".gbi/transfers").glob("*/*/history.json"))
+        history = next(
+            (self.site.roots["alluxio"] / ".gbi/transfers").glob(
+                "*/*/history.json"
+            )
+        )
         bundle = json.loads(history.read_text())
         self.assertEqual(bundle["progress"]["files"], 40)
-        self.assertTrue(all(record["reader"] == "native" for record in bundle["receipts"]
-                            if record["event"] == "verified"))
+        self.assertTrue(
+            all(
+                record["reader"] == "native"
+                for record in bundle["receipts"]
+                if record["event"] == "verified"
+            )
+        )
         self.assertEqual(len(list(target.iterdir())), 40)
 
     def test_bulk_request_still_requires_pinned_rclone(self):
         source = self.site.roots["lustre"] / "needs-rclone"
         source.write_bytes(b"keep")
         target = self.site.roots["fss"] / "target"
-        options = cli.parser().parse_args(["data", "copy", str(source), str(target)])
-        request = {**cli.plan(options, self.site), "reader": "rclone", "execution": "allocation"}
+        options = cli.parser().parse_args(
+            ["data", "copy", str(source), str(target)]
+        )
+        request = {
+            **cli.plan(options, self.site), "reader": "rclone",
+            "execution": "allocation",
+        }
         run_dir = self.base / "run-without-rclone"
         run_dir.mkdir()
         (run_dir / "request.json").write_text(json.dumps(request))
-        with patch("gbi_data.cli.shutil.which", return_value=None):
+        with patch("gbi_data.cli.shutil.which", return_value = None):
             with self.assertRaisesRegex(ValueError, "rclone is unavailable"):
                 cli.run(run_dir, self.site, self.base / "home")
         self.assertEqual(source.read_bytes(), b"keep")
@@ -585,28 +824,42 @@ class Interface(unittest.TestCase):
         self.assertFalse((self.site.roots["lustre"] / ".gbi").exists())
 
     def test_existing_allocation_does_not_submit_another_job(self):
-        options = cli.parser().parse_args(["data", "copy", "source", "destination"])
-        with patch.dict(os.environ, {"SLURM_JOB_ID": "42"}), patch("gbi_data.cli.probe", return_value=None):
-            self.assertEqual(cli.execution_plan({}, self.site, options)["execution"], "allocation")
+        options = cli.parser().parse_args(
+            ["data", "copy", "source", "destination"]
+        )
+        with (
+            patch.dict(os.environ, {"SLURM_JOB_ID": "42"}),
+            patch("gbi_data.cli.probe", return_value = None),
+        ):
+            self.assertEqual(
+                cli.execution_plan({}, self.site, options)["execution"],
+                "allocation",
+            )
 
     def test_all_six_directions_and_object_deletion_policy(self):
         for source_kind, source_root in self.site.roots.items():
             source = source_root / "data"
-            source.mkdir(exist_ok=True)
+            source.mkdir(exist_ok = True)
             for target_kind, target_root in self.site.roots.items():
                 if source_kind == target_kind:
                     continue
-                options = cli.parser().parse_args(["data", "move", str(source), str(target_root / "dest")])
+                options = cli.parser().parse_args(
+                    ["data", "move", str(source), str(target_root / "dest")]
+                )
                 planned = cli.plan(options, self.site)
                 self.assertEqual(planned["delete"], source_kind != "alluxio")
                 options.delete_source = True
-                with self.assertRaisesRegex(ValueError, "--delete-source is not supported"):
+                with self.assertRaisesRegex(
+                    ValueError, "--delete-source is not supported"
+                ):
                     cli.plan(options, self.site)
 
     def test_source_overlap_refused(self):
         source = self.site.roots["lustre"] / "data"
         source.mkdir()
-        options = cli.parser().parse_args(["data", "move", str(source), str(source / "child")])
+        options = cli.parser().parse_args(
+            ["data", "move", str(source), str(source / "child")]
+        )
         with self.assertRaisesRegex(ValueError, "overlap"):
             cli.plan(options, self.site)
 
@@ -617,19 +870,33 @@ class Interface(unittest.TestCase):
             alias.rename(physical)
             alias.symlink_to(physical)
         site = Site(self.conf)
-        result = subprocess.run([sys.executable, "-B", "-m", "gbi_data.cli", "data", "roots"],
-                                env={**os.environ, "GBI_DATA_SITE_CONF": str(self.conf)},
-                                capture_output=True, text=True, timeout=10)
+        result = subprocess.run(
+            [sys.executable, "-B", "-m", "gbi_data.cli", "data", "roots"],
+            env = {**os.environ, "GBI_DATA_SITE_CONF": str(self.conf)},
+            capture_output = True, text = True, timeout = 10,
+        )
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(result.stdout, "".join(f"{kind:8} {alias}\n" for kind, alias in aliases.items()))
+        self.assertEqual(
+            result.stdout,
+            "".join(f"{kind:8} {alias}\n" for kind, alias in aliases.items()),
+        )
         for kind, alias in aliases.items():
             physical = self.base / f"physical-{kind}-root"
             self.assertEqual(site.classify(alias), (physical, kind, physical))
-            self.assertEqual(site.classify(alias / "data"), (physical / "data", kind, physical))
+            self.assertEqual(
+                site.classify(alias / "data"),
+                (physical / "data", kind, physical),
+            )
             # Final symlinks remain data; explicit traversal resolves normally.
             (alias / "link").symlink_to(self.base)
-            self.assertEqual(site.classify(alias / "link"), (physical / "link", kind, physical))
-            self.assertEqual(site.classify(alias / "link" / "outside")[0], self.base / "outside")
+            self.assertEqual(
+                site.classify(alias / "link"),
+                (physical / "link", kind, physical),
+            )
+            self.assertEqual(
+                site.classify(alias / "link" / "outside")[0],
+                self.base / "outside",
+            )
 
     def test_mount_types_include_shared_lustre_and_alluxio_nfs(self):
         table = self.base / "mountinfo"
@@ -637,25 +904,49 @@ class Interface(unittest.TestCase):
             "1 0 0:1 / /mnt/lustre rw - lustre server:/scratch rw\n"
             "2 0 0:2 / /mnt/instrument-data/nextseq ro - nfs4 server:/nextseq-alluxio ro\n"
             "3 0 0:3 / /mnt/personal rw - fuse.alluxio-fuse alluxio-fuse rw\n"
-            "4 0 0:4 / /mnt/shared\\040home rw - nfs server:/home rw\n")
-        self.assertEqual(mounted_roots(table), [
-            ("lustre", Path("/mnt/lustre")), ("alluxio", Path("/mnt/instrument-data/nextseq")),
-            ("alluxio", Path("/mnt/personal")), ("fss", Path("/mnt/shared home"))])
+            "4 0 0:4 / /mnt/shared\\040home rw - nfs server:/home rw\n"
+        )
+        self.assertEqual(
+            mounted_roots(table),
+            [
+                ("lustre", Path("/mnt/lustre")),
+                ("alluxio", Path("/mnt/instrument-data/nextseq")),
+                ("alluxio", Path("/mnt/personal")),
+                ("fss", Path("/mnt/shared home")),
+            ],
+        )
 
-    def test_shared_paths_use_unix_access_and_object_sources_stay_by_default(self):
+    def test_shared_paths_use_unix_access_and_object_sources_stay_by_default(
+                self,
+            ):
         instrument = self.base / "instrument"
-        shared = self.base / "shared-testbed"
-        other = self.base / "another-users-directory"
+        shared     = self.base / "shared-testbed"
+        other      = self.base / "another-users-directory"
         for path in (instrument, shared, other):
             path.mkdir()
-        with patch("gbi_data.storage.mounted_roots", return_value=[("alluxio", instrument), ("lustre", shared)]):
+        with patch(
+            "gbi_data.storage.mounted_roots",
+            return_value = [("alluxio", instrument), ("lustre", shared)],
+        ):
             site = Site(self.conf)
-        for source, target in ((instrument, shared), (instrument, other), (other, shared), (shared, other)):
-            options = cli.parser().parse_args(["data", "move", str(source), str(target / "new")])
+        for source, target in (
+            (instrument, shared), (instrument, other), (other, shared),
+            (shared, other),
+        ):
+            options = cli.parser().parse_args(
+                ["data", "move", str(source), str(target / "new")]
+            )
             planned = cli.plan(options, site)
             self.assertEqual(planned["delete"], source != instrument)
-        options = cli.parser().parse_args(["data", "move", str(instrument), str(shared / "new"), "--delete-source"])
-        with self.assertRaisesRegex(ValueError, "--delete-source is not supported"):
+        options = cli.parser().parse_args(
+            [
+                "data", "move", str(instrument), str(shared / "new"),
+                "--delete-source",
+            ]
+        )
+        with self.assertRaisesRegex(
+            ValueError, "--delete-source is not supported"
+        ):
             cli.plan(options, site)
 
     def test_shared_copy_and_move_use_foreground_and_slurm_snapshot(self):
@@ -669,50 +960,95 @@ class Interface(unittest.TestCase):
         sbatch = binary / "sbatch"
         sbatch.write_text("#!/bin/sh\nprintf '314159\\n'\n")
         sbatch.chmod(0o700)
-        environment = {**os.environ, "GBI_DATA_SITE_CONF": str(self.conf),
-                       "PATH": str(binary) + os.pathsep + os.environ["PATH"]}
+        environment = {
+            **os.environ, "GBI_DATA_SITE_CONF": str(self.conf),
+            "PATH": str(binary) + os.pathsep + os.environ["PATH"],
+        }
         environment.pop("SLURM_JOB_ID", None)
         for verb, flags in (("copy", []), ("move", ["--detach"])):
-            result = subprocess.run([sys.executable, "-B", "-m", "gbi_data.cli", "data", verb,
-                                     str(source), str(target / verb), *flags],
-                                    env=environment, capture_output=True, text=True, timeout=15)
-            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            result = subprocess.run(
+                [
+                    sys.executable, "-B", "-m", "gbi_data.cli", "data", verb,
+                    str(source), str(target / verb), *flags,
+                ], env = environment, capture_output = True, text = True,
+                timeout = 15,
+            )
+            self.assertEqual(
+                result.returncode, 0, result.stdout + result.stderr
+            )
             if flags:
-                run_dir, = (self.site.roots["lustre"] / ".gbi/runs").iterdir()
-                environment.update(GBI_DATA_SITE_CONF=str(run_dir / "site.conf"),
-                                   PYTHONPATH=str(run_dir / "runtime"), SLURM_JOB_ID="314159")
-                result = subprocess.run([sys.executable, "-B", "-m", "gbi_data.cli", "data", "_run", str(run_dir)],
-                                        env=environment, capture_output=True, text=True, timeout=15)
-                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                (run_dir,) = (self.site.roots["lustre"] / ".gbi/runs").iterdir()
+                environment.update(
+                    GBI_DATA_SITE_CONF = str(run_dir / "site.conf"),
+                    PYTHONPATH = str(run_dir / "runtime"),
+                    SLURM_JOB_ID = "314159",
+                )
+                result = subprocess.run(
+                    [
+                        sys.executable, "-B", "-m", "gbi_data.cli", "data",
+                        "_run", str(run_dir),
+                    ], env = environment, capture_output = True, text = True,
+                    timeout = 15,
+                )
+                self.assertEqual(
+                    result.returncode, 0, result.stdout + result.stderr
+                )
             self.assertEqual((target / verb / "reads.dat").stat().st_size, 5000)
             self.assertEqual(payload.exists(), verb == "copy")
-        self.assertEqual((target / "copy/reads.dat").read_bytes(), (target / "move/reads.dat").read_bytes())
+        self.assertEqual(
+            (target / "copy/reads.dat").read_bytes(),
+            (target / "move/reads.dat").read_bytes(),
+        )
 
     def test_allocation_prints_transfer_id_and_records_slurm_job(self):
         source = self.site.roots["lustre"] / "allocation-source"
         target = self.site.roots["alluxio"] / "allocation-target"
         source.write_bytes(b"allocation")
         output = io.StringIO()
-        with patch.dict(os.environ, {"GBI_DATA_SITE_CONF": str(self.conf), "SLURM_JOB_ID": "314159"}), \
-                patch("sys.argv", ["gbi", "data", "copy", str(source), str(target), "--local"]), \
-                patch("gbi_data.cli.probe", return_value=None), \
-                patch("gbi_data.cli.run", return_value=0), \
-                patch("sys.stdout", output):
+        with (
+            patch.dict(
+                os.environ,
+                {
+                    "GBI_DATA_SITE_CONF": str(self.conf),
+                    "SLURM_JOB_ID": "314159",
+                },
+            ),
+            patch(
+                "sys.argv",
+                ["gbi", "data", "copy", str(source), str(target), "--local"],
+            ),
+            patch("gbi_data.cli.probe", return_value = None),
+            patch("gbi_data.cli.run", return_value = 0),
+            patch("sys.stdout", output),
+        ):
             self.assertEqual(cli.main(), 0)
         run_dir = next((self.site.roots["lustre"] / ".gbi/runs").iterdir())
         request = json.loads((run_dir / "request.json").read_text())
         self.assertEqual(request["allocation_job_id"], "314159")
-        self.assertIn(f"Transfer {run_dir.name}. Reconnect: gbi data status {run_dir.name} --watch",
-                      output.getvalue())
+        self.assertIn(
+            f"Transfer {run_dir.name}. Reconnect: gbi data status {run_dir.name} --watch",
+            output.getvalue(),
+        )
 
     def test_detach_inside_allocation_does_not_record_parent_job(self):
         source = self.site.roots["lustre"] / "detached-source"
         source.write_bytes(b"detached")
         target = self.site.roots["alluxio"] / "detached-target"
-        with patch.dict(os.environ, {"GBI_DATA_SITE_CONF": str(self.conf), "SLURM_JOB_ID": "314159"}), \
-                patch("sys.argv", ["gbi", "data", "copy", str(source), str(target), "--detach"]), \
-                patch("gbi_data.cli.jobs.submit", return_value="271828"), \
-                patch("sys.stdout", io.StringIO()):
+        with (
+            patch.dict(
+                os.environ,
+                {
+                    "GBI_DATA_SITE_CONF": str(self.conf),
+                    "SLURM_JOB_ID": "314159",
+                },
+            ),
+            patch(
+                "sys.argv",
+                ["gbi", "data", "copy", str(source), str(target), "--detach"],
+            ),
+            patch("gbi_data.cli.jobs.submit", return_value = "271828"),
+            patch("sys.stdout", io.StringIO()),
+        ):
             self.assertEqual(cli.main(), 0)
         run_dir = next((self.site.roots["lustre"] / ".gbi/runs").iterdir())
         request = json.loads((run_dir / "request.json").read_text())
@@ -726,7 +1062,9 @@ class Interface(unittest.TestCase):
         (root / ".gbi").mkdir()
         (root / ".gbi" / "file.pt").write_text("x")
         found = list(cli.entries(root, self.site, root, ["*.pt", "*.pt.*"]))
-        self.assertEqual({p.name for p, _ in found}, {"file.pt", "file.pt.ready.json"})
+        self.assertEqual(
+            {p.name for p, _ in found}, {"file.pt", "file.pt.ready.json"}
+        )
 
     def test_source_lookup_failure_does_not_hide_valid_entry(self):
         root = self.site.roots["lustre"] / "lookup"
@@ -735,28 +1073,31 @@ class Interface(unittest.TestCase):
         valid.touch()
 
         class Child:
-            def __init__(self, name, broken=False):
-                self.name = name
-                self.path = str(root / name)
+            def __init__(self, name, broken = False):
+                self.name   = name
+                self.path   = str(root / name)
                 self.broken = broken
 
-            def is_dir(self, follow_symlinks=False):
+            def is_dir(self, follow_symlinks = False):
                 if self.broken:
                     raise OSError("metadata unavailable")
                 return False
 
         class Scanner:
             def __enter__(self):
-                return iter((Child("broken", broken=True), Child("valid")))
+                return iter((Child("broken", broken = True), Child("valid")))
 
             def __exit__(self, *_):
                 return False
 
         errors = []
-        with patch("gbi_data.selection.os.scandir", return_value=Scanner()):
-            found = list(selection.entries(
-                root, self.site, root, [],
-                on_error=lambda path, error: errors.append((path, error))))
+        with patch("gbi_data.selection.os.scandir", return_value = Scanner()):
+            found = list(
+                selection.entries(
+                    root, self.site, root, [],
+                    on_error = lambda path, error: errors.append((path, error)),
+                )
+            )
         self.assertEqual(found, [(valid, False)])
         self.assertEqual(errors[0][0], root / "broken")
         self.assertIn("metadata unavailable", str(errors[0][1]))
@@ -767,14 +1108,18 @@ class Interface(unittest.TestCase):
         first, second = source / "first", source / "second"
         first.write_bytes(b"first")
         second.write_bytes(b"second")
-        target = self.site.roots["fss"] / "slow"
+        target  = self.site.roots["fss"] / "slow"
         run_dir = self.site.roots["lustre"] / ".gbi" / "runs" / "slow-test"
-        run_dir.mkdir(parents=True)
-        request = {"source": str(source), "target": str(target), "source_kind": "lustre",
-                   "target_kind": "fss", "source_root": str(self.site.roots["lustre"]),
-                   "target_root": str(self.site.roots["fss"]), "directory": True, "delete": False,
-                   "include": [], "verb": "copy", "uid": os.getuid(), "site": str(self.conf),
-                   "execution": "allocation", "selection": None, "reader": "rclone"}
+        run_dir.mkdir(parents = True)
+        request = {
+            "source": str(source), "target": str(target),
+            "source_kind": "lustre", "target_kind": "fss",
+            "source_root": str(self.site.roots["lustre"]),
+            "target_root": str(self.site.roots["fss"]),
+            "directory": True, "delete": False, "include": [], "verb": "copy",
+            "uid": os.getuid(), "site": str(self.conf),
+            "execution": "allocation", "selection": None, "reader": "rclone",
+        }
         (run_dir / "request.json").write_text(json.dumps(request))
         slow = threading.Event()
         waited_during_slow = []
@@ -794,35 +1139,48 @@ class Interface(unittest.TestCase):
             return done, pending
 
         def fast_supervise(task, *_args):
-            return {"bytes": Path(task["source"]).stat().st_size, "deleted": False}
+            return {
+                "bytes": Path(task["source"]).stat().st_size,
+                "deleted": False,
+            }
 
-        with patch("gbi_data.selection.entries", side_effect=slow_entries), \
-             patch("gbi_data.cli.wait", side_effect=observe_wait), \
-             patch("gbi_data.cli.supervise", side_effect=fast_supervise), \
-             patch("gbi_data.cli.shutil.which", return_value="rclone"), \
-             patch("gbi_data.cli.publish_history", return_value="history"):
+        with (
+            patch("gbi_data.selection.entries", side_effect = slow_entries),
+            patch("gbi_data.cli.wait", side_effect = observe_wait),
+            patch("gbi_data.cli.supervise", side_effect = fast_supervise),
+            patch("gbi_data.cli.shutil.which", return_value = "rclone"),
+            patch("gbi_data.cli.publish_history", return_value = "history"),
+        ):
             self.assertEqual(cli.run(run_dir, self.site, self.base / "home"), 0)
         self.assertIn(True, waited_during_slow)
 
-    def test_coordinator_collects_second_receipt_while_first_worker_blocks(self):
+    def test_coordinator_collects_second_receipt_while_first_worker_blocks(
+                self,
+            ):
         source = self.site.roots["lustre"] / "blocked-worker"
         source.mkdir()
         first, second = source / "first", source / "second"
         first.write_bytes(b"first")
         second.write_bytes(b"second")
         target = self.site.roots["fss"] / "blocked-worker"
-        run_dir = self.site.roots["lustre"] / ".gbi" / "runs" / "blocked-worker-test"
-        run_dir.mkdir(parents=True)
-        request = {"source": str(source), "target": str(target), "source_kind": "lustre",
-                   "target_kind": "fss", "source_root": str(self.site.roots["lustre"]),
-                   "target_root": str(self.site.roots["fss"]), "directory": True, "delete": False,
-                   "include": [], "verb": "copy", "uid": os.getuid(), "site": str(self.conf),
-                   "execution": "allocation", "selection": None, "reader": "rclone"}
+        run_dir = (
+            self.site.roots["lustre"] / ".gbi" / "runs" / "blocked-worker-test"
+        )
+        run_dir.mkdir(parents = True)
+        request = {
+            "source": str(source), "target": str(target),
+            "source_kind": "lustre", "target_kind": "fss",
+            "source_root": str(self.site.roots["lustre"]),
+            "target_root": str(self.site.roots["fss"]),
+            "directory": True, "delete": False, "include": [], "verb": "copy",
+            "uid": os.getuid(), "site": str(self.conf),
+            "execution": "allocation", "selection": None, "reader": "rclone",
+        }
         (run_dir / "request.json").write_text(json.dumps(request))
-        first_started = threading.Event()
+        first_started   = threading.Event()
         second_finished = threading.Event()
-        completed = []
-        paused = False
+        completed       = []
+        paused          = False
 
         def entries_with_blocked_worker(*_args, **_kwargs):
             yield first, False
@@ -838,22 +1196,34 @@ class Interface(unittest.TestCase):
             return fingerprint(path)
 
         def supervised(task, *_args):
-            name = Path(task["source"]).name
+            name    = Path(task["source"]).name
             outcome = transfer(task)
             if name == "second":
                 second_finished.set()
             completed.append(name)
             return outcome
 
-        with patch("gbi_data.selection.entries", side_effect=entries_with_blocked_worker), \
-             patch("gbi_data.cli.supervise", side_effect=supervised), \
-             patch("gbi_data.transfer.fingerprint", side_effect=blocked_fingerprint), \
-             patch("gbi_data.cli.publish_history", return_value="history"), \
-             patch("gbi_data.cli.shutil.rmtree"):
+        with (
+            patch(
+                "gbi_data.selection.entries",
+                side_effect = entries_with_blocked_worker,
+            ),
+            patch("gbi_data.cli.supervise", side_effect = supervised),
+            patch(
+                "gbi_data.transfer.fingerprint", side_effect = blocked_fingerprint
+            ),
+            patch("gbi_data.cli.publish_history", return_value = "history"),
+            patch("gbi_data.cli.shutil.rmtree"),
+        ):
             self.assertEqual(cli.run(run_dir, self.site, self.base / "home"), 0)
         self.assertEqual(completed, ["second", "first"])
-        receipts = [json.loads(line) for line in (run_dir / "receipts.jsonl").read_text().splitlines()]
-        self.assertEqual([Path(row["source"]).name for row in receipts], ["second", "first"])
+        receipts = [
+            json.loads(line)
+            for line in (run_dir / "receipts.jsonl").read_text().splitlines()
+        ]
+        self.assertEqual(
+            [Path(row["source"]).name for row in receipts], ["second", "first"]
+        )
 
     def test_inline_selection_keeps_the_transfer_width_bound(self):
         source = self.site.roots["lustre"] / "selected"
@@ -863,31 +1233,44 @@ class Interface(unittest.TestCase):
             path = source / str(number)
             path.write_bytes(str(number).encode())
             files.append(path)
-        target = self.site.roots["fss"] / "selected"
+        target  = self.site.roots["fss"] / "selected"
         run_dir = self.site.roots["lustre"] / ".gbi" / "runs" / "selected-test"
-        run_dir.mkdir(parents=True)
-        request = {"source": str(source), "target": str(target), "source_kind": "lustre",
-                   "target_kind": "fss", "source_root": str(self.site.roots["lustre"]),
-                   "target_root": str(self.site.roots["fss"]), "directory": True, "delete": False,
-                   "include": [], "verb": "copy", "uid": os.getuid(), "site": str(self.conf),
-                   "execution": "inline", "selection": [
-                       {"path": str(path), "empty": False, "fingerprint": fingerprint(path)}
-                       for path in files], "reader": "native"}
+        run_dir.mkdir(parents = True)
+        request = {
+            "source": str(source), "target": str(target),
+            "source_kind": "lustre", "target_kind": "fss",
+            "source_root": str(self.site.roots["lustre"]),
+            "target_root": str(self.site.roots["fss"]),
+            "directory": True, "delete": False, "include": [], "verb": "copy",
+            "uid": os.getuid(), "site": str(self.conf), "execution": "inline",
+            "selection": [
+                {
+                    "path": str(path), "empty": False,
+                    "fingerprint": fingerprint(path),
+                }
+                for path in files
+            ], "reader": "native",
+        }
         (run_dir / "request.json").write_text(json.dumps(request))
         pending_sizes = []
-        real_wait = cli.wait
+        real_wait     = cli.wait
 
         def observe_wait(*args, **kwargs):
             pending_sizes.append(len(args[0]))
             return real_wait(*args, **kwargs)
 
         def fast_supervise(task, *_args):
-            return {"bytes": Path(task["source"]).stat().st_size, "deleted": False}
+            return {
+                "bytes": Path(task["source"]).stat().st_size,
+                "deleted": False,
+            }
 
         self.site.values["jobs"] = "2"
-        with patch("gbi_data.cli.wait", side_effect=observe_wait), \
-             patch("gbi_data.cli.supervise", side_effect=fast_supervise), \
-             patch("gbi_data.cli.publish_history", return_value="history"):
+        with (
+            patch("gbi_data.cli.wait", side_effect = observe_wait),
+            patch("gbi_data.cli.supervise", side_effect = fast_supervise),
+            patch("gbi_data.cli.publish_history", return_value = "history"),
+        ):
             self.assertEqual(cli.run(run_dir, self.site, self.base / "home"), 0)
         self.assertLessEqual(max(pending_sizes), 2)
 
@@ -901,41 +1284,65 @@ class Interface(unittest.TestCase):
         self.assertEqual(stream.get(1)[0:2], ("entry", (empty, True)))
         self.assertEqual(stream.get(1)[0], "done")
 
-    def test_empty_directory_preparation_preserves_placeholder_and_counts_files(self):
+    def test_empty_directory_preparation_preserves_placeholder_and_counts_files(
+                self,
+            ):
         source = self.site.roots["lustre"] / "with-empty"
         source.mkdir()
         (source / "empty").mkdir()
         (source / "file").write_bytes(b"contents")
         target = self.site.roots["fss"] / "with-empty"
-        environment = {**os.environ, "GBI_DATA_SITE_CONF": str(self.conf), "PATH": ""}
-        result = subprocess.run([sys.executable, "-B", "-m", "gbi_data.cli", "data", "move",
-                                 str(source), str(target)], env=environment,
-                                capture_output=True, text=True, timeout=15)
+        environment = {
+            **os.environ, "GBI_DATA_SITE_CONF": str(self.conf), "PATH": "",
+        }
+        result = subprocess.run(
+            [
+                sys.executable, "-B", "-m", "gbi_data.cli", "data", "move",
+                str(source), str(target),
+            ], env = environment, capture_output = True, text = True,
+            timeout = 15,
+        )
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        history = next((self.site.roots["alluxio"] / ".gbi/transfers").glob("*/*/history.json"))
+        history = next(
+            (self.site.roots["alluxio"] / ".gbi/transfers").glob(
+                "*/*/history.json"
+            )
+        )
         progress = json.loads(history.read_text())["progress"]
-        self.assertEqual((progress["files"], progress["bytes"]), (1, len(b"contents")))
+        self.assertEqual(
+            (progress["files"], progress["bytes"]), (1, len(b"contents"))
+        )
         self.assertTrue((target / "empty").is_dir())
         self.assertFalse((source / "empty").exists())
 
     def test_progress_has_no_percentage_until_discovery_complete(self):
-        progress = {"files": 2, "bytes": 20, "freed": 10, "failed": 0,
-                    "elapsed": 2, "discovered_bytes": 40, "phase": "running", "discovery_complete": False}
+        progress = {
+            "files": 2, "bytes": 20, "freed": 10, "failed": 0, "elapsed": 2,
+            "discovered_bytes": 40, "phase": "running",
+            "discovery_complete": False,
+        }
         self.assertNotIn("%", jobs.display(progress))
         progress["discovery_complete"] = True
         self.assertIn("50.0%", jobs.display(progress))
         progress["phase"] = "saving history"
         self.assertIn("Saving history", jobs.terminal_display(progress))
 
-    def test_interruption_before_discovery_exhaustion_keeps_progress_unknown(self):
+    def test_interruption_before_discovery_exhaustion_keeps_progress_unknown(
+                self,
+            ):
         source = self.site.roots["lustre"] / "interrupted"
         source.mkdir()
         files = [source / "first", source / "second"]
         for path in files:
             path.write_bytes(b"contents")
         target = self.site.roots["alluxio"] / "interrupted"
-        options = cli.parser().parse_args(["data", "copy", str(source), str(target), "--detach"])
-        specification = {**cli.plan(options, self.site), "execution": "slurm", "reader": "native"}
+        options = cli.parser().parse_args(
+            ["data", "copy", str(source), str(target), "--detach"]
+        )
+        specification = {
+            **cli.plan(options, self.site), "execution": "slurm",
+            "reader": "native",
+        }
         run_dir = self.base / "run"
         run_dir.mkdir()
         (run_dir / "request.json").write_text(json.dumps(specification))
@@ -943,23 +1350,30 @@ class Interface(unittest.TestCase):
         discovery = MagicMock()
         discovery.get.side_effect = [
             ("entry", (files[0], False), None),
-            ("entry", (files[1], False), None),
-            ("done", None, None),
+            ("entry", (files[1], False), None), ("done", None, None),
         ]
 
         captured = {}
 
         def interrupted_supervise(task, _timeout, stopped):
             stopped.set()
-            return {"bytes": Path(task["source"]).stat().st_size, "deleted": False}
+            return {
+                "bytes": Path(task["source"]).stat().st_size,
+                "deleted": False,
+            }
 
-        def capture_history(_run_dir, _site, _state, _rclone, progress, _stopped, _inline=False):
+        def capture_history(
+                    _run_dir, _site, _state, _rclone, progress, _stopped,
+                    _inline = False,
+                ):
             captured.update(progress)
             return "history"
 
-        with patch("gbi_data.cli.stream_entries", return_value=discovery), \
-             patch("gbi_data.cli.supervise", side_effect=interrupted_supervise), \
-             patch("gbi_data.cli.publish_history", side_effect=capture_history):
+        with (
+            patch("gbi_data.cli.stream_entries", return_value = discovery),
+            patch("gbi_data.cli.supervise", side_effect = interrupted_supervise),
+            patch("gbi_data.cli.publish_history", side_effect = capture_history),
+        ):
             self.assertEqual(cli.run(run_dir, self.site, self.base / "home"), 1)
         self.assertEqual(captured["phase"], "interrupted")
         self.assertFalse(captured["discovery_complete"])
@@ -968,7 +1382,7 @@ class Interface(unittest.TestCase):
 
     def test_full_cli_all_routes_archives_history_and_cleans_scratch(self):
         environment = {**os.environ, "GBI_DATA_SITE_CONF": str(self.conf)}
-        number = 100
+        number      = 100
         for source_kind, source_root in self.site.roots.items():
             for target_kind, target_root in self.site.roots.items():
                 if source_kind == target_kind:
@@ -977,25 +1391,56 @@ class Interface(unittest.TestCase):
                 environment["SLURM_JOB_ID"] = str(number)
                 source = source_root / f"source-{number}"
                 source.mkdir()
-                (source / "a file\nwith whitespace").write_bytes(b"preserve these bytes")
+                (source / "a file\nwith whitespace").write_bytes(
+                    b"preserve these bytes"
+                )
                 target = target_root / f"target-{number}"
-                command = [sys.executable, "-B", "-m", "gbi_data.cli", "data", "move",
-                           str(source), str(target), "--local"]
-                result = subprocess.run(command, env=environment, capture_output=True, text=True, timeout=30)
-                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-                self.assertEqual((target / "a file\nwith whitespace").read_bytes(), b"preserve these bytes")
-                self.assertEqual((source / "a file\nwith whitespace").exists(), source_kind == "alluxio")
-                history = list((self.site.roots["alluxio"] / ".gbi" / "transfers" / str(number)).iterdir())
+                command = [
+                    sys.executable, "-B", "-m", "gbi_data.cli", "data", "move",
+                    str(source), str(target), "--local",
+                ]
+                result = subprocess.run(
+                    command, env = environment, capture_output = True,
+                    text = True, timeout = 30,
+                )
+                self.assertEqual(
+                    result.returncode, 0, result.stdout + result.stderr
+                )
+                self.assertEqual(
+                    (target / "a file\nwith whitespace").read_bytes(),
+                    b"preserve these bytes",
+                )
+                self.assertEqual(
+                    (source / "a file\nwith whitespace").exists(),
+                    source_kind == "alluxio",
+                )
+                history = list(
+                    (
+                        self.site.roots["alluxio"]
+                        / ".gbi"
+                        / "transfers"
+                        / str(number)
+                    ).iterdir()
+                )
                 self.assertEqual(len(history), 1)
-                progress = json.loads((history[0] / "progress.json").read_text())
+                progress = json.loads(
+                    (history[0] / "progress.json").read_text()
+                )
                 self.assertEqual(progress["phase"], "complete")
                 self.assertEqual(progress["files"], 1)
                 scratch = self.site.roots["lustre"] / ".gbi" / "runs"
                 self.assertEqual(list(scratch.iterdir()), [])
                 self.assertFalse((self.site.roots["fss"] / ".gbi").exists())
-                status = subprocess.run([sys.executable, "-B", "-m", "gbi_data.cli", "data", "status", str(number)],
-                                        env=environment, capture_output=True, text=True, timeout=10)
-                self.assertEqual(status.returncode, 0, status.stdout + status.stderr)
+                status = subprocess.run(
+                    [
+                        sys.executable, "-B", "-m", "gbi_data.cli", "data",
+                        "status", str(number),
+                    ], env = environment, capture_output = True, text = True,
+                    timeout = 10,
+                )
+                self.assertEqual(
+                    status.returncode, 0, status.stdout + status.stderr
+                )
                 self.assertIn("Complete", status.stdout)
 
 

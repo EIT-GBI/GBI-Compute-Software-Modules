@@ -25,17 +25,17 @@ make neovim
 make nu
 make uv
 make zig
-make cc                 # shims over zig -- versioned by it, so after zig
-make make               # built through cc
-make xz                 # built through cc + make
-make cargo-zigbuild     # needs uv (above) and cc
+make cc             # shims over zig -- versioned by it, so after zig
+make make           # built through cc
+make xz             # built through cc + make
+make cargo-zigbuild # needs uv (above) and cc
 # NO NCDU binary releases for macOS -- upstream ships linux static builds only
 make parallel-tar
 make go
 make rclone
 make gbi
-make lustre-dlm         # needs uv (above)
-make oci                # needs uv (above)
+make lustre-dlm # needs uv (above)
+make oci        # needs uv (above)
 make java
 make nextflow
 # NO LFS on macOS -- Lustre client utilities are linux/amd64 only
@@ -43,8 +43,7 @@ make nextflow
 # Buuild tests potentially take more time => leave them as optional. Assumed to
 # be true for heavy testing
 [[ 1 == ${TEST_HEAVY:-0} ]] && TEST_BUILD=1
-if [[ 1 == ${TEST_BUILD:-0} ]]
-then
+if [[ 1 == ${TEST_BUILD:-0} ]]; then
     make MODE=build cmake
     make MODE=build bat
     make MODE=build eza
@@ -53,14 +52,13 @@ then
     make MODE=build nu
     make MODE=build uv
     make MODE=build ncdu
-make MODE=build parallel-tar
+    make MODE=build parallel-tar
 fi
 
 # The infrastructure targets are opt-in: llvm alone is a >1GB download (or a
 # ~16min source build), and `zig MODE=build` runs for ~2h on top of it.
 # Run them with:  TEST_HEAVY=1 ./run.sh test/test_macos.sh
-if [[ 1 == ${TEST_HEAVY:-0} ]]
-then
+if [[ 1 == ${TEST_HEAVY:-0} ]]; then
     # zig via bootstrap.c -- no dependencies, installs as zig/<ver>-bootstrap
     make MODE=build zig-bootstrap
 

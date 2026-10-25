@@ -1,6 +1,6 @@
-name = "rust"
+name    = "rust"
 variant = "compiled"
 
-relocate = false
+relocate    = false
 destination = "{SM_ROOT}/rust"
-modules = "{SM_ROOT}/modules"
+modules     = "{SM_ROOT}/modules"

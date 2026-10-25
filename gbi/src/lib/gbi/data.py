@@ -11,7 +11,6 @@ import os
 from pathlib import Path
 import subprocess
 
-
 _CLI = Path(__file__).resolve().parents[2] / "bin" / "gbi"
 
 
@@ -22,36 +21,51 @@ def _patterns(value):
     return values
 
 
-def _transfer(verb, source, destination, *, include, exclude, pack, pack_small,
-              chunk_size, dry_run, prefect, delete_source=False, job_size=None, archive=False):
+def _transfer(
+            verb, source, destination, *, include, exclude, pack, pack_small,
+            chunk_size, dry_run, prefect, delete_source = False,
+            job_size = None, archive = False,
+        ):
     if not isinstance(delete_source, bool):
         raise TypeError("delete_source must be a boolean")
     if delete_source:
-        raise ValueError("delete_source=True is not supported; Object Storage originals are durable and always retained")
+        raise ValueError(
+            "delete_source=True is not supported; Object Storage originals are "
+            "durable and always retained"
+        )
     if job_size is not None:
         if job_size not in ("small", "large"):
             raise ValueError("job_size must be small or large")
         if not prefect:
-            raise ValueError("job_size requires prefect=True and a restore to Lustre or FSS")
+            raise ValueError(
+                "job_size requires prefect=True and a restore to Lustre or FSS"
+            )
     command = [str(_CLI), "data", verb, "--wait"]
     for flag, patterns in (("include", include), ("exclude", exclude)):
         command.extend(f"--{flag}={pattern}" for pattern in _patterns(patterns))
-    for flag, value in (("pack", pack), ("chunk-size", chunk_size), ("job-size", job_size)):
+    for flag, value in (
+        ("pack", pack), ("chunk-size", chunk_size), ("job-size", job_size),
+    ):
         if value is not None:
             command.append(f"--{flag}={value}")
-    for flag, enabled in (("archive", archive), ("pack-small", pack_small), ("dry-run", dry_run),
-                          ("prefect", prefect)):
+    for flag, enabled in (
+        ("archive", archive), ("pack-small", pack_small), ("dry-run", dry_run),
+        ("prefect", prefect),
+    ):
         if not isinstance(enabled, bool):
             raise TypeError(f"{flag.replace('-', '_')} must be a boolean")
         if enabled:
             command.append(f"--{flag}")
     command.extend(["--", os.fspath(source), os.fspath(destination)])
     # Inherit output: progress stays live and large jobs do not buffer logs in RAM.
-    return subprocess.run(command, check=True)
+    return subprocess.run(command, check = True)
 
 
-def copy(source, destination, *, include=(), exclude=(), pack=None,
-         pack_small=False, chunk_size=None, dry_run=False, prefect=False, job_size=None, archive=False):
+def copy(
+            source, destination, *, include = (), exclude = (), pack = None,
+            pack_small = False, chunk_size = None, dry_run = False,
+            prefect = False, job_size = None, archive = False,
+        ):
     """Copy and verify, retaining originals; return only when the CLI finishes.
 
     archive=True selects a saved directory-archive layout with automatic packing
@@ -76,14 +90,20 @@ def copy(source, destination, *, include=(), exclude=(), pack=None,
     verification/receipt rules apply unchanged. Ordinary transfers reuse an
     existing Slurm allocation; queued transfers are followed until they finish.
     """
-    return _transfer("copy", source, destination, include=include, exclude=exclude,
-                     pack=pack, pack_small=pack_small, chunk_size=chunk_size,
-                     dry_run=dry_run, prefect=prefect, job_size=job_size, archive=archive)
+    return _transfer(
+        "copy", source, destination, include = include, exclude = exclude,
+        pack = pack, pack_small = pack_small, chunk_size = chunk_size,
+        dry_run = dry_run, prefect = prefect, job_size = job_size,
+        archive = archive,
+    )
 
 
-def move(source, destination, *, include=(), exclude=(), pack=None,
-         pack_small=False, chunk_size=None, dry_run=False, prefect=False,
-         delete_source=False, job_size=None, archive=False):
+def move(
+            source, destination, *, include = (), exclude = (), pack = None,
+            pack_small = False, chunk_size = None, dry_run = False,
+            prefect = False, delete_source = False, job_size = None,
+            archive = False,
+        ):
     """Copy and verify, then remove unchanged selected filesystem originals.
 
     Options and return/exception behavior match copy(). Object Storage originals
@@ -91,7 +111,9 @@ def move(source, destination, *, include=(), exclude=(), pack=None,
     archive restore always keeps its container. This calls the same maintained
     `gbi data move` operation; deletion is never a separate SDK pass.
     """
-    return _transfer("move", source, destination, include=include, exclude=exclude,
-                     pack=pack, pack_small=pack_small, chunk_size=chunk_size,
-                     dry_run=dry_run, prefect=prefect, delete_source=delete_source, job_size=job_size,
-                     archive=archive)
+    return _transfer(
+        "move", source, destination, include = include, exclude = exclude,
+        pack = pack, pack_small = pack_small, chunk_size = chunk_size,
+        dry_run = dry_run, prefect = prefect, delete_source = delete_source,
+        job_size = job_size, archive = archive,
+    )

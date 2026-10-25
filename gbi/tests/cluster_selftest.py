@@ -40,23 +40,35 @@ def await_fixture(path, checksum):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--large-bytes", type=int, default=0, help="optional bytes per file for four parallel files")
+    parser.add_argument(
+        "--large-bytes", type = int, default = 0,
+        help = "optional bytes per file for four parallel files",
+    )
     options = parser.parse_args()
     if not os.environ.get("SLURM_JOB_ID"):
         parser.error("run inside a Slurm job")
     site = Site(os.environ["GBI_DATA_SITE_CONF"])
-    token = "gbi-selftest-" + time.strftime("%Y%m%dT%H%M%SZ", time.gmtime()) + "-" + uuid.uuid4().hex[:8]
+    token = (
+        "gbi-selftest-"
+        + time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
+        + "-"
+        + uuid.uuid4().hex[:8]
+    )
     roots = {name: root / token for name, root in site.roots.items()}
     for root in roots.values():
-        root.mkdir(mode=0o700)
+        root.mkdir(mode = 0o700)
     results = []
 
     def execute(source, destination, *flags):
         started = time.monotonic()
-        result = subprocess.run(["gbi", "data", "move", str(source), str(destination), "--local", *flags],
-                                text=True, capture_output=True)
-        print(result.stdout, end="", flush=True)
-        print(result.stderr, end="", flush=True)
+        result = subprocess.run(
+            [
+                "gbi", "data", "move", str(source), str(destination), "--local",
+                *flags,
+            ], text = True, capture_output = True,
+        )
+        print(result.stdout, end = "", flush = True)
+        print(result.stderr, end = "", flush = True)
         if result.returncode:
             raise AssertionError(f"transfer failed: {source} -> {destination}")
         return time.monotonic() - started
@@ -80,54 +92,87 @@ def main():
             # may reject unusual names independently of the CLI.
             if source_kind != "alluxio" and target_kind != "alluxio":
                 (source / "line\nbreak").write_bytes(b"newline filename")
-                expected["line\nbreak"] = hashlib.sha256(b"newline filename").hexdigest()
+                expected["line\nbreak"] = hashlib.sha256(
+                    b"newline filename"
+                ).hexdigest()
                 (source / "link").symlink_to("file 00.dat")
             destination = target_root / ("from-" + source_kind)
-            elapsed = execute(source, destination)
+            elapsed     = execute(source, destination)
             for name, checksum in expected.items():
                 assert digest(destination / name) == checksum, name
-                assert (source / name).exists() == (source_kind == "alluxio"), name
-            results.append({"route": f"{source_kind}->{target_kind}", "files": len(expected), "seconds": elapsed})
-            print("PASS " + json.dumps(results[-1]), flush=True)
+                assert (source / name).exists() == (
+                    source_kind == "alluxio"
+                ), name
+            results.append(
+                {
+                    "route": f"{source_kind}->{target_kind}",
+                    "files": len(expected), "seconds": elapsed,
+                }
+            )
+            print("PASS " + json.dumps(results[-1]), flush = True)
 
     # The obsolete deletion flag must fail without touching either path.
     explicit = roots["alluxio"] / "explicit-delete.dat"
     explicit.write_bytes(b"purpose-made disposable fixture")
-    await_fixture(explicit, hashlib.sha256(b"purpose-made disposable fixture").hexdigest())
+    await_fixture(
+        explicit, hashlib.sha256(b"purpose-made disposable fixture").hexdigest()
+    )
     destination = roots["lustre"] / "explicit-delete.dat"
-    rejected = subprocess.run(["gbi", "data", "move", str(explicit), str(destination),
-                               "--local", "--delete-source"], text=True, capture_output=True)
-    assert rejected.returncode != 0 and "--delete-source is not supported" in rejected.stderr
-    assert explicit.read_bytes() == b"purpose-made disposable fixture" and not destination.exists()
+    rejected = subprocess.run(
+        [
+            "gbi", "data", "move", str(explicit), str(destination), "--local",
+            "--delete-source",
+        ], text = True, capture_output = True,
+    )
+    assert (
+        rejected.returncode != 0
+        and "--delete-source is not supported" in rejected.stderr
+    )
+    assert (
+        explicit.read_bytes() == b"purpose-made disposable fixture"
+        and not destination.exists()
+    )
     results.append({"object_source_deletion_rejected": "PASS"})
 
     if options.large_bytes:
         source = roots["lustre"] / "large"
         source.mkdir()
-        block = os.urandom(1024 * 1024)
+        block    = os.urandom(1024 * 1024)
         expected = {}
         for index in range(4):
-            path = source / f"checkpoint-{index}.pt"
+            path      = source / f"checkpoint-{index}.pt"
             remaining = options.large_bytes
             with path.open("wb") as stream:
                 while remaining:
-                    chunk = block[:min(remaining, len(block))]
+                    chunk = block[: min(remaining, len(block))]
                     stream.write(chunk)
                     remaining -= len(chunk)
             expected[path.name] = digest(path)
         destination = roots["alluxio"] / "large"
-        elapsed = execute(source, destination)
+        elapsed     = execute(source, destination)
         for name, checksum in expected.items():
             assert digest(destination / name) == checksum
             assert not (source / name).exists()
-        results.append({"parallel_large_files": 4, "bytes_each": options.large_bytes,
-                        "seconds": elapsed, "MiB_per_second": options.large_bytes * 4 / elapsed / 2**20})
-        print("PASS " + json.dumps(results[-1]), flush=True)
+        results.append(
+            {
+                "parallel_large_files": 4, "bytes_each": options.large_bytes,
+                "seconds": elapsed,
+                "MiB_per_second": options.large_bytes * 4 / elapsed / 2**20,
+            }
+        )
+        print("PASS " + json.dumps(results[-1]), flush = True)
 
     report = roots["alluxio"] / "acceptance.json"
     with report.open("x") as stream:
-        json.dump({"user": site.user, "job": os.environ["SLURM_JOB_ID"], "results": results}, stream, indent=2)
-    print(f"PASS all checks; retained fixtures and report: {report}", flush=True)
+        json.dump(
+            {
+                "user": site.user, "job": os.environ["SLURM_JOB_ID"],
+                "results": results,
+            }, stream, indent = 2,
+        )
+    print(
+        f"PASS all checks; retained fixtures and report: {report}", flush = True
+    )
 
 
 if __name__ == "__main__":

@@ -50,8 +50,7 @@ cd build
 # platform one. A source-built llvm (`make llvm MODE=build`) uses the system
 # C++ toolchain and ships no libc++.a, so this correctly stays empty there.
 LINKER_FLAGS=""
-if [[ -f "${LLVM_ROOT}/lib/libc++.a" ]]
-then
+if [[ -f "${LLVM_ROOT}/lib/libc++.a" ]]; then
     echo "Detected a bundled libc++ in ${LLVM_ROOT} => linking it statically"
     LINKER_FLAGS="-nostdlib++ ${LLVM_ROOT}/lib/libc++.a ${LLVM_ROOT}/lib/libc++abi.a"
 fi

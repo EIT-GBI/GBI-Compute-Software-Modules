@@ -14,13 +14,13 @@ from gbi_data import archives
 
 
 class CountingBytesIO(io.BytesIO):
-    def __init__(self, value=b"", max_read=None):
+    def __init__(self, value = b"", max_read = None):
         super().__init__(value)
-        self.max_read = max_read
-        self.read_calls = []
+        self.max_read    = max_read
+        self.read_calls  = []
         self.write_calls = []
 
-    def read(self, size=-1):
+    def read(self, size = -1):
         if self.max_read is not None and size >= 0:
             size = min(size, self.max_read)
         self.read_calls.append(size)
@@ -35,68 +35,96 @@ class Archives(unittest.TestCase):
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)
-        self.base = Path(self.temporary.name).resolve()
+        self.base   = Path(self.temporary.name).resolve()
         self.source = self.base / "source"
         self.source.mkdir()
 
     def fixture(self):
         (self.source / "empty").mkdir()
         (self.source / "nested").mkdir()
-        (self.source / "nested" / "file\n odd.txt").write_bytes(b"portable\0payload" * 200)
+        (self.source / "nested" / "file\n odd.txt").write_bytes(
+            b"portable\0payload" * 200
+        )
         (self.source / "dangling").symlink_to("absent")
         (self.source / "relative").symlink_to("nested/file\n odd.txt")
         (self.source / "absolute").symlink_to("/outside/never-follow")
-        os.link(self.source / "nested" / "file\n odd.txt", self.source / "alias")
-        for path in (self.source / "empty", self.source / "nested", self.source / "alias"):
+        os.link(
+            self.source / "nested" / "file\n odd.txt", self.source / "alias"
+        )
+        for path in (
+            self.source / "empty", self.source / "nested",
+            self.source / "alias",
+        ):
             os.chmod(path, 0o750 if path.is_dir() else 0o640)
-            os.utime(path, ns=(1700000000123456789, 1700000000123456789))
+            os.utime(path, ns = (1700000000123456789, 1700000000123456789))
 
     def packed(self, **kwargs):
-        stream = io.BytesIO()
+        stream   = io.BytesIO()
         manifest = archives.pack(self.source, stream, **kwargs)
         return stream, manifest
 
     def test_round_trip_tar_and_gzip(self):
         self.fixture()
         for compression in (None, "gzip"):
-            with self.subTest(compression=compression):
-                stream, packed = self.packed(compression=compression)
+            with self.subTest(compression = compression):
+                stream, packed = self.packed(compression = compression)
                 archives.verify_archive(stream, packed)
                 target = self.base / str(compression)
                 result = archives.restore(stream, target)
                 self.assertTrue(result["verified"])
-                self.assertEqual((target / "alias").read_bytes(), (self.source / "alias").read_bytes())
-                self.assertEqual((target / "alias").stat().st_ino, (target / "nested" / "file\n odd.txt").stat().st_ino)
-                self.assertEqual(os.readlink(target / "absolute"), "/outside/never-follow")
-                self.assertEqual((target / "empty").stat().st_mtime_ns, 1700000000123456789)
+                self.assertEqual(
+                    (target / "alias").read_bytes(),
+                    (self.source / "alias").read_bytes(),
+                )
+                self.assertEqual(
+                    (target / "alias").stat().st_ino,
+                    (target / "nested" / "file\n odd.txt").stat().st_ino,
+                )
+                self.assertEqual(
+                    os.readlink(target / "absolute"), "/outside/never-follow"
+                )
+                self.assertEqual(
+                    (target / "empty").stat().st_mtime_ns, 1700000000123456789
+                )
                 archives.restore(stream, target)  # identical retry
 
     def test_metadata_budget_matches_stored_manifest_for_mixed_entries(self):
         self.fixture()
         for compression in (None, "gzip"):
-            with self.subTest(compression=compression):
-                budget = archives.check_metadata_budget(self.source, compression=compression)
-                stream, _ = self.packed(compression=compression)
+            with self.subTest(compression = compression):
+                budget = archives.check_metadata_budget(
+                    self.source, compression = compression
+                )
+                stream, _ = self.packed(compression = compression)
                 stream.seek(0)
                 mode = "r:gz" if compression == "gzip" else "r:"
-                with tarfile.open(fileobj=stream, mode=mode) as archive:
-                    manifest_bytes = archive.extractfile(archives.MANIFEST).read()
+                with tarfile.open(fileobj = stream, mode = mode) as archive:
+                    manifest_bytes = archive.extractfile(
+                        archives.MANIFEST
+                    ).read()
                 self.assertEqual(len(manifest_bytes), budget["manifest_bytes"])
-                self.assertLessEqual(budget["observation_bytes"], archives.MAX_MANIFEST)
+                self.assertLessEqual(
+                    budget["observation_bytes"], archives.MAX_MANIFEST
+                )
 
     def test_filtered_hardlink_without_primary(self):
         self.fixture()
         stream, packed = self.packed()
-        alias = next(e for e in packed["entries"] if e["type"] == "hardlink")
+        alias  = next(e for e in packed["entries"] if e["type"] == "hardlink")
         target = self.base / "filtered"
-        result = archives.restore(stream, target, includes=[Path(alias["path"]).name])
-        self.assertEqual((target / alias["path"]).read_bytes(), (self.source / alias["path"]).read_bytes())
+        result = archives.restore(
+            stream, target, includes = [Path(alias["path"]).name]
+        )
+        self.assertEqual(
+            (target / alias["path"]).read_bytes(),
+            (self.source / alias["path"]).read_bytes(),
+        )
         self.assertFalse((target / alias["target"]).exists())
         self.assertTrue(result["partial"])
 
     def test_unmarked_tar_is_not_extracted(self):
         stream = io.BytesIO()
-        with tarfile.open(fileobj=stream, mode="w") as tar:
+        with tarfile.open(fileobj = stream, mode = "w") as tar:
             member = tarfile.TarInfo("ordinary")
             tar.addfile(member)
         self.assertIsNone(archives.inspect_archive(stream))
@@ -107,11 +135,13 @@ class Archives(unittest.TestCase):
     def test_corrupt_payload_and_truncated_gzip_retain_sources(self):
         (self.source / "file").write_bytes(b"recognizable-payload")
         stream, manifest = self.packed()
-        damaged = stream.getvalue().replace(b"recognizable-payload", b"Recognizable-payload")
+        damaged = stream.getvalue().replace(
+            b"recognizable-payload", b"Recognizable-payload"
+        )
         with self.assertRaisesRegex(archives.ArchiveError, "checksum"):
             archives.cleanup_source(self.source, manifest, io.BytesIO(damaged))
         self.assertTrue((self.source / "file").exists())
-        gzip_stream, _ = self.packed(compression="gzip")
+        gzip_stream, _ = self.packed(compression = "gzip")
         with self.assertRaises(archives.ArchiveError):
             archives.inspect_archive(io.BytesIO(gzip_stream.getvalue()[:-8]))
 
@@ -121,19 +151,23 @@ class Archives(unittest.TestCase):
         stream, manifest = self.packed()
         (self.source / "b").write_text("changed")
         with self.assertRaises(archives.ArchiveError):
-            archives.cleanup_source(self.source, manifest, stream,
-                                    fresh_source_manifest=manifest)
+            archives.cleanup_source(
+                self.source, manifest, stream, fresh_source_manifest = manifest
+            )
         self.assertTrue((self.source / "a").exists())
 
     def test_cleanup_reuses_unchanged_fresh_source_hashes(self):
         (self.source / "a").write_text("a")
         (self.source / "b").write_text("b")
         stream, manifest = self.packed()
-        with patch.object(archives, "_hash_fd", wraps=archives._hash_fd) as hashed:
+        with patch.object(
+            archives, "_hash_fd", wraps = archives._hash_fd
+        ) as hashed:
             self.assertEqual(
-                archives.cleanup_source(self.source, manifest, stream,
-                                        fresh_source_manifest=manifest),
-                2,
+                archives.cleanup_source(
+                    self.source, manifest, stream,
+                    fresh_source_manifest = manifest,
+                ), 2,
             )
         self.assertEqual(hashed.call_count, 0)
 
@@ -141,43 +175,56 @@ class Archives(unittest.TestCase):
         (self.source / "a").write_text("a")
         (self.source / "b").write_text("b")
         stream, manifest = self.packed()
-        with patch.object(archives, "_hash_fd", wraps=archives._hash_fd) as hashed:
-            self.assertEqual(archives.cleanup_source(self.source, manifest, stream), 2)
+        with patch.object(
+            archives, "_hash_fd", wraps = archives._hash_fd
+        ) as hashed:
+            self.assertEqual(
+                archives.cleanup_source(self.source, manifest, stream), 2
+            )
         self.assertEqual(hashed.call_count, 4)
 
     def test_cleanup_rehashes_hardlink_after_ctime_change(self):
         (self.source / "one").write_text("same")
         (self.source / "two").hardlink_to(self.source / "one")
         stream, manifest = self.packed()
-        with patch.object(archives, "_hash_fd", wraps=archives._hash_fd) as hashed:
+        with patch.object(
+            archives, "_hash_fd", wraps = archives._hash_fd
+        ) as hashed:
             self.assertEqual(
-                archives.cleanup_source(self.source, manifest, stream,
-                                        fresh_source_manifest=manifest),
-                2,
+                archives.cleanup_source(
+                    self.source, manifest, stream,
+                    fresh_source_manifest = manifest,
+                ), 2,
             )
         self.assertGreaterEqual(hashed.call_count, 1)
 
     def test_filtered_cleanup_keeps_unselected_and_root(self):
         (self.source / "yes.txt").write_text("yes")
         (self.source / "no.bin").write_text("no")
-        stream, manifest = self.packed(includes=["*.txt"])
-        self.assertEqual(archives.cleanup_source(self.source, manifest, stream), 1)
+        stream, manifest = self.packed(includes = ["*.txt"])
+        self.assertEqual(
+            archives.cleanup_source(self.source, manifest, stream), 1
+        )
         self.assertTrue((self.source / "no.bin").exists())
         self.assertTrue(self.source.exists())
 
     def test_reserved_state_never_packed(self):
-        for directory in (".gbi", ".prefect-receipts", "transfer-locks", "site-private"):
+        for directory in (
+            ".gbi", ".prefect-receipts", "transfer-locks", "site-private",
+        ):
             (self.source / directory).mkdir()
             (self.source / directory / "secret").write_text("private")
         (self.source / "public").write_text("yes")
-        _, manifest = self.packed(reserved_names=["site-private"])
+        _, manifest = self.packed(reserved_names = ["site-private"])
         self.assertEqual([e["path"] for e in manifest["entries"]], ["public"])
 
     def test_excluded_special_file_does_not_block_selection(self):
         os.mkfifo(self.source / "pipe")
         (self.source / "wanted.txt").write_text("yes")
-        _, manifest = self.packed(includes=["*.txt"])
-        self.assertEqual([e["path"] for e in manifest["entries"]], ["wanted.txt"])
+        _, manifest = self.packed(includes = ["*.txt"])
+        self.assertEqual(
+            [e["path"] for e in manifest["entries"]], ["wanted.txt"]
+        )
         with self.assertRaisesRegex(archives.ArchiveError, "special file"):
             self.packed()
 
@@ -186,14 +233,14 @@ class Archives(unittest.TestCase):
         stream, _ = self.packed()
         target = self.base / "target"
         target.mkdir()
-        (target / "nested").mkdir(mode=0o700)
+        (target / "nested").mkdir(mode = 0o700)
         result = archives.restore(stream, target)
         self.assertEqual((target / "nested").stat().st_mode & 0o777, 0o700)
         self.assertEqual(result["reused_directories"], 1)
 
     def test_nested_empty_directory_ancestors_preserved(self):
-        (self.source / "parent" / "empty").mkdir(parents=True)
-        stream, _ = self.packed(includes=["empty"])
+        (self.source / "parent" / "empty").mkdir(parents = True)
+        stream, _ = self.packed(includes = ["empty"])
         archives.restore(stream, self.base / "target")
         self.assertTrue((self.base / "target" / "parent" / "empty").is_dir())
 
@@ -203,23 +250,32 @@ class Archives(unittest.TestCase):
         original = os.utime
 
         def whole_seconds(path, *args, **kwargs):
-            kwargs["ns"] = tuple(value // 1_000_000_000 * 1_000_000_000 for value in kwargs["ns"])
+            kwargs["ns"] = tuple(
+                value // 1_000_000_000 * 1_000_000_000 for value in kwargs["ns"]
+            )
             return original(path, *args, **kwargs)
 
-        with patch.object(archives.os, "utime", side_effect=whole_seconds):
-            self.assertTrue(archives.restore(stream, self.base / "seconds")["verified"])
+        with patch.object(archives.os, "utime", side_effect = whole_seconds):
+            self.assertTrue(
+                archives.restore(stream, self.base / "seconds")["verified"]
+            )
 
     def test_changed_header_refused_before_restore_writes(self):
         (self.source / "a").write_text("source")
         stream, _ = self.packed()
-        raw = stream.getvalue()
+        raw     = stream.getvalue()
         changed = io.BytesIO()
-        with tarfile.open(fileobj=io.BytesIO(raw), mode="r:") as before:
-            with tarfile.open(fileobj=changed, mode="w", format=tarfile.PAX_FORMAT) as after:
+        with tarfile.open(fileobj = io.BytesIO(raw), mode = "r:") as before:
+            with tarfile.open(
+                fileobj = changed, mode = "w", format = tarfile.PAX_FORMAT
+            ) as after:
                 for member in before:
                     if member.name == "data/a":
                         member.mode = 0o777
-                    after.addfile(member, before.extractfile(member) if member.isfile() else None)
+                    after.addfile(
+                        member,
+                        before.extractfile(member) if member.isfile() else None,
+                    )
         calls = 0
 
         def factory():
@@ -236,14 +292,14 @@ class Archives(unittest.TestCase):
         (self.source / "b").write_text("b")
         stream, manifest = self.packed()
         original = archives._hash_fd
-        calls = 0
+        calls    = 0
 
         def wrong_late(fd):
             nonlocal calls
             calls += 1
             return "0" * 64 if calls == 2 else original(fd)
 
-        with patch.object(archives, "_hash_fd", side_effect=wrong_late):
+        with patch.object(archives, "_hash_fd", side_effect = wrong_late):
             with self.assertRaisesRegex(archives.ArchiveError, "checksum"):
                 archives.cleanup_source(self.source, manifest, stream)
         self.assertTrue((self.source / "a").exists())
@@ -256,22 +312,28 @@ class Archives(unittest.TestCase):
         with stored.open("wb") as output:
             manifest = archives.pack(self.source, output)
         original = os.unlink
-        calls = 0
+        calls    = 0
 
         def mutate_after_unlink(path, *args, **kwargs):
             nonlocal calls
             result = original(path, *args, **kwargs)
-            calls += 1
+            calls  += 1
             if calls == 1:
                 stored.write_bytes(b"replaced")
             return result
 
-        with patch.object(archives.os, "unlink", side_effect=mutate_after_unlink):
-            with self.assertRaisesRegex(archives.ArchiveError, "archive changed"):
+        with patch.object(
+            archives.os, "unlink", side_effect = mutate_after_unlink
+        ):
+            with self.assertRaisesRegex(
+                archives.ArchiveError, "archive changed"
+            ):
                 archives.cleanup_source(self.source, manifest, stored)
         self.assertEqual(len(list(self.source.iterdir())), 1)
 
-    def test_empty_directory_cleanup_checks_archive_after_source_preflight(self):
+    def test_empty_directory_cleanup_checks_archive_after_source_preflight(
+                self,
+            ):
         (self.source / "empty").mkdir()
         stored = self.base / "stored.gbi.tar"
         with stored.open("wb") as output:
@@ -282,8 +344,12 @@ class Archives(unittest.TestCase):
             original(source, expected)
             stored.write_bytes(b"replaced after readback")
 
-        with patch.object(archives, "verify_source", side_effect=verify_then_change):
-            with self.assertRaisesRegex(archives.ArchiveError, "archive changed"):
+        with patch.object(
+            archives, "verify_source", side_effect = verify_then_change
+        ):
+            with self.assertRaisesRegex(
+                archives.ArchiveError, "archive changed"
+            ):
                 archives.cleanup_source(self.source, manifest, stored)
         self.assertTrue((self.source / "empty").is_dir())
 
@@ -300,8 +366,10 @@ class Archives(unittest.TestCase):
             stored.write_bytes(b"replaced during directory cleanup")
             return result
 
-        with patch.object(archives.os, "rmdir", side_effect=remove_then_change):
-            with self.assertRaisesRegex(archives.ArchiveError, "archive changed"):
+        with patch.object(archives.os, "rmdir", side_effect = remove_then_change):
+            with self.assertRaisesRegex(
+                archives.ArchiveError, "archive changed"
+            ):
                 archives.cleanup_source(self.source, manifest, stored)
         self.assertEqual(len(list(self.source.iterdir())), 1)
 
@@ -317,7 +385,9 @@ class Archives(unittest.TestCase):
     def test_hardlink_cleanup(self):
         self.fixture()
         stream, manifest = self.packed()
-        self.assertEqual(archives.cleanup_source(self.source, manifest, stream), 5)
+        self.assertEqual(
+            archives.cleanup_source(self.source, manifest, stream), 5
+        )
         self.assertEqual(list(self.source.iterdir()), [])
 
     def test_collision_keeps_existing_file_and_archive(self):
@@ -336,11 +406,11 @@ class Archives(unittest.TestCase):
         stream, _ = self.packed()
         raw = stream.getvalue()
         # Keep the first zero end record only, dropping the required second.
-        with tarfile.open(fileobj=io.BytesIO(raw), mode="r:") as archive:
+        with tarfile.open(fileobj = io.BytesIO(raw), mode = "r:") as archive:
             last = archive.getmembers()[-1]
-            end = last.offset_data + ((last.size + 511) // 512) * 512
+            end  = last.offset_data + ((last.size + 511) // 512) * 512
         with self.assertRaisesRegex(archives.ArchiveError, "end records"):
-            archives.inspect_archive(io.BytesIO(raw[:end + 512]))
+            archives.inspect_archive(io.BytesIO(raw[: end + 512]))
 
     def test_corrupt_marked_header_is_not_treated_as_ordinary_file(self):
         stream, _ = self.packed()
@@ -362,22 +432,30 @@ class Archives(unittest.TestCase):
         self.assertEqual(list(outside.iterdir()), [])
 
     def test_bad_members_and_version_refused(self):
-        for name, kind, link in (("data/../escape", tarfile.REGTYPE, ""),
-                                 ("/absolute", tarfile.REGTYPE, ""),
-                                 ("data/fifo", tarfile.FIFOTYPE, ""),
-                                 ("data/link", tarfile.LNKTYPE, "../escape")):
-            with self.subTest(name=name):
+        for name, kind, link in (
+            ("data/../escape", tarfile.REGTYPE, ""),
+            ("/absolute", tarfile.REGTYPE, ""),
+            ("data/fifo", tarfile.FIFOTYPE, ""),
+            ("data/link", tarfile.LNKTYPE, "../escape"),
+        ):
+            with self.subTest(name = name):
                 stream = io.BytesIO()
-                with tarfile.open(fileobj=stream, mode="w") as tar:
-                    archives._add_json(tar, archives.MARKER, {"format": archives.FORMAT, "version": 1})
+                with tarfile.open(fileobj = stream, mode = "w") as tar:
+                    archives._add_json(
+                        tar, archives.MARKER,
+                        {"format": archives.FORMAT, "version": 1},
+                    )
                     member = tarfile.TarInfo(name)
-                    member.type, member.linkname = kind, link
+                    member.type     = kind
+                    member.linkname = link
                     tar.addfile(member)
                 with self.assertRaises(archives.ArchiveError):
                     archives.inspect_archive(stream)
         stream = io.BytesIO()
-        with tarfile.open(fileobj=stream, mode="w") as tar:
-            archives._add_json(tar, archives.MARKER, {"format": archives.FORMAT, "version": 99})
+        with tarfile.open(fileobj = stream, mode = "w") as tar:
+            archives._add_json(
+                tar, archives.MARKER, {"format": archives.FORMAT, "version": 99}
+            )
         with self.assertRaisesRegex(archives.ArchiveError, "version"):
             archives.inspect_archive(stream)
 
@@ -391,7 +469,7 @@ class Archives(unittest.TestCase):
     def test_bounded_content_marker(self):
         (self.source / "large").write_bytes(bytes(2 * 1024 * 1024))
         for compression in (None, "gzip"):
-            stream, _ = self.packed(compression=compression)
+            stream, _ = self.packed(compression = compression)
             self.assertTrue(archives.archive_marker(stream))
             if compression is None:
                 self.assertLess(stream.tell(), 5000)
@@ -399,13 +477,15 @@ class Archives(unittest.TestCase):
             self.assertFalse(archives.archive_marker(io.BytesIO(data)))
 
     def test_plain_stream_buffering_preserves_manifest_and_restore(self):
-        payload = (bytes(range(256)) * (3 * 1024 * 1024 // 256 + 1))[:3 * 1024 * 1024]
+        payload = (bytes(range(256)) * (3 * 1024 * 1024 // 256 + 1))[
+            : 3 * 1024 * 1024
+        ]
         (self.source / "large").write_bytes(payload)
-        output = CountingBytesIO()
+        output   = CountingBytesIO()
         manifest = archives.pack(self.source, output)
         self.assertLess(len(output.write_calls), 64)
 
-        raw = output.getvalue()
+        raw    = output.getvalue()
         reader = CountingBytesIO(raw)
         archives.verify_archive(reader, manifest)
         self.assertLess(len(reader.read_calls), 64)
@@ -417,13 +497,13 @@ class Archives(unittest.TestCase):
     def test_tar_and_gzip_readers_handle_short_reads(self):
         self.fixture()
         for compression in (None, "gzip"):
-            with self.subTest(compression=compression):
-                output, manifest = self.packed(compression=compression)
-                reader = CountingBytesIO(output.getvalue(), max_read=137)
+            with self.subTest(compression = compression):
+                output, manifest = self.packed(compression = compression)
+                reader = CountingBytesIO(output.getvalue(), max_read = 137)
                 archives.verify_archive(reader, manifest)
                 target = self.base / f"short-{compression}"
                 result = archives.restore(
-                    CountingBytesIO(output.getvalue(), max_read=137), target
+                    CountingBytesIO(output.getvalue(), max_read = 137), target
                 )
                 self.assertTrue(result["verified"])
                 self.assertEqual(
@@ -433,43 +513,67 @@ class Archives(unittest.TestCase):
 
     def test_resumed_cleanup_requires_typed_matching_archive_evidence(self):
         self.fixture()
-        sink = io.BytesIO()
+        sink     = io.BytesIO()
         manifest = archives.pack(self.source, sink)
-        digest = hashlib.sha256(json.dumps(
-            {key: value for key, value in manifest.items() if not key.startswith("_")},
-            sort_keys=True, ensure_ascii=True, separators=(",", ":")
-        ).encode()).hexdigest()
+        digest = hashlib.sha256(
+            json.dumps(
+                {
+                    key: value
+                    for key, value in manifest.items()
+                    if not key.startswith("_")
+                }, sort_keys = True, ensure_ascii = True,
+                separators = (",", ":"),
+            ).encode()
+        ).hexdigest()
         evidence = archives.VerifiedArchiveEvidence._issue(digest, "a" * 64)
-        stored = io.BytesIO(b"native proof stands in for the destination archive")
+        stored = io.BytesIO(
+            b"native proof stands in for the destination archive"
+        )
 
-        with patch.object(archives, "verify_archive", side_effect=AssertionError("full readback")):
+        with patch.object(
+            archives, "verify_archive",
+            side_effect = AssertionError("full readback"),
+        ):
             result = archives.resume_cleanup_source(
-                self.source, manifest, stored, destination_unchanged=lambda: None,
-                verified_archive=evidence)
+                self.source, manifest, stored,
+                destination_unchanged = lambda: None,
+                verified_archive = evidence,
+            )
         self.assertGreater(result["removed"], 0)
         self.assertFalse((self.source / "nested" / "file\n odd.txt").exists())
 
-    def test_initial_cleanup_accepts_native_archive_evidence_with_fresh_source_guard(self):
+    def test_initial_cleanup_accepts_native_archive_evidence_with_fresh_source_guard(
+                self,
+            ):
         self.fixture()
-        sink = io.BytesIO()
+        sink     = io.BytesIO()
         manifest = archives.pack(self.source, sink)
-        digest = hashlib.sha256(json.dumps(
-            {key: value for key, value in manifest.items() if not key.startswith("_")},
-            sort_keys=True, ensure_ascii=True, separators=(",", ":")
-        ).encode()).hexdigest()
+        digest = hashlib.sha256(
+            json.dumps(
+                {
+                    key: value
+                    for key, value in manifest.items()
+                    if not key.startswith("_")
+                }, sort_keys = True, ensure_ascii = True,
+                separators = (",", ":"),
+            ).encode()
+        ).hexdigest()
         evidence = archives.VerifiedArchiveEvidence._issue(digest, "b" * 64)
         checks, forced = [], []
 
-        def destination_unchanged(*, force=False):
+        def destination_unchanged(*, force = False):
             checks.append("head")
             if force:
                 forced.append("head")
 
-        with patch.object(archives, "verify_archive", side_effect=AssertionError("full destination readback")):
+        with patch.object(
+            archives, "verify_archive",
+            side_effect = AssertionError("full destination readback"),
+        ):
             removed = archives.cleanup_source(
                 self.source, manifest, object(),
-                destination_unchanged=destination_unchanged,
-                verified_archive=evidence,
+                destination_unchanged = destination_unchanged,
+                verified_archive = evidence,
             )
 
         self.assertGreater(removed, 0)
@@ -480,13 +584,15 @@ class Archives(unittest.TestCase):
     def test_resumed_cleanup_reuses_unchanged_fresh_source_hashes(self):
         (self.source / "a").write_text("a")
         (self.source / "b").write_text("b")
-        sink = io.BytesIO()
+        sink     = io.BytesIO()
         manifest = archives.pack(self.source, sink)
-        with patch.object(archives, "_hash_fd", wraps=archives._hash_fd) as hashed:
+        with patch.object(
+            archives, "_hash_fd", wraps = archives._hash_fd
+        ) as hashed:
             result = archives.resume_cleanup_source(
                 self.source, manifest, sink,
-                destination_unchanged=lambda: None,
-                fresh_source_manifest=manifest,
+                destination_unchanged = lambda: None,
+                fresh_source_manifest = manifest,
             )
         self.assertEqual(result["removed"], 2)
         self.assertEqual(hashed.call_count, 0)
@@ -496,10 +602,11 @@ class Archives(unittest.TestCase):
         (self.source / "b").write_text("b")
         sink, manifest = self.packed()
         (self.source / "a").unlink()
-        with patch.object(archives, "_hash_fd", wraps=archives._hash_fd) as hashed:
+        with patch.object(
+            archives, "_hash_fd", wraps = archives._hash_fd
+        ) as hashed:
             result = archives.resume_cleanup_source(
-                self.source, manifest, sink,
-                destination_unchanged=lambda: None,
+                self.source, manifest, sink, destination_unchanged = lambda: None
             )
         self.assertEqual(result["removed"], 1)
         self.assertEqual(hashed.call_count, 1)
@@ -519,7 +626,7 @@ class Archives(unittest.TestCase):
         with self.assertRaisesRegex(archives.ArchiveError, "changed"):
             archives.resume_cleanup_source(
                 self.source, manifest, sink,
-                destination_unchanged=mutate_after_preflight,
+                destination_unchanged = mutate_after_preflight,
             )
         self.assertTrue(path.exists())
 
@@ -528,23 +635,26 @@ class Archives(unittest.TestCase):
         (self.source / "two").hardlink_to(self.source / "one")
         sink, manifest = self.packed()
         (self.source / "one").unlink()
-        with patch.object(archives, "_hash_fd", wraps=archives._hash_fd) as hashed:
+        with patch.object(
+            archives, "_hash_fd", wraps = archives._hash_fd
+        ) as hashed:
             result = archives.resume_cleanup_source(
-                self.source, manifest, sink,
-                destination_unchanged=lambda: None,
+                self.source, manifest, sink, destination_unchanged = lambda: None
             )
         self.assertEqual(result["removed"], 1)
         self.assertGreaterEqual(hashed.call_count, 2)
 
     def test_resumed_cleanup_rejects_evidence_for_another_manifest(self):
         self.fixture()
-        sink = io.BytesIO()
+        sink     = io.BytesIO()
         manifest = archives.pack(self.source, sink)
         evidence = archives.VerifiedArchiveEvidence._issue("0" * 64, "a" * 64)
         with self.assertRaisesRegex(archives.ArchiveError, "does not match"):
             archives.resume_cleanup_source(
                 self.source, manifest, io.BytesIO(b"unused"),
-                destination_unchanged=lambda: None, verified_archive=evidence)
+                destination_unchanged = lambda: None,
+                verified_archive = evidence,
+            )
         self.assertTrue((self.source / "nested" / "file\n odd.txt").exists())
 
 

@@ -12,7 +12,7 @@ GBI_MODULE_PATH ?= $(MKFILE_DIR)/usr
 ifeq ($(strip $(GBI_MODULE_PATH)),)
     $(error GBI_MODULE_PATH must not be empty)
 endif
-EP_ARG          := -m $(GBI_MODULE_PATH)
+EP_ARG := -m $(GBI_MODULE_PATH)
 
 VARIANT ?= gnu
 
@@ -23,7 +23,7 @@ ifneq ($(filter $(VARIANT),$(VARIANTS)),$(VARIANT))
 endif
 
 ifeq ($(VARIANT),musl)
-	EP_ARG += -g
+    EP_ARG += -g
 endif
 
 ML_INIT_FILE ?= $(MKFILE_DIR)/opt/lmod/lmod/init
@@ -59,15 +59,15 @@ endif
 #                                            (line 1: summary; rest: notes)
 #
 DEFAULT_TARGETS := $(sort $(notdir $(patsubst %/sm-config/settings.toml,%,\
-                       $(wildcard $(MKFILE_DIR)*/sm-config/settings.toml))))
+    $(wildcard $(MKFILE_DIR)*/sm-config/settings.toml))))
 BUILD_TARGETS   := $(sort $(notdir $(patsubst %/sm-config-build/settings.toml,%,\
-                       $(wildcard $(MKFILE_DIR)*/sm-config-build/settings.toml))))
+    $(wildcard $(MKFILE_DIR)*/sm-config-build/settings.toml))))
 ALL_RECIPES     := $(sort $(DEFAULT_TARGETS) $(BUILD_TARGETS))
 
 # Heavyweight / opt-in targets (marked by an sm-opt-in file in the recipe):
 # valid for `clean` and `make <target>`, but deliberately not walked by `all`
 AUX_TARGETS := $(filter $(ALL_RECIPES),$(sort $(notdir $(patsubst %/sm-opt-in,%,\
-                   $(wildcard $(MKFILE_DIR)*/sm-opt-in)))))
+    $(wildcard $(MKFILE_DIR)*/sm-opt-in)))))
 TARGETS     := $(filter-out $(AUX_TARGETS),$(ALL_RECIPES))
 
 # Module dependencies of a target, read from the `module load` lines of its
@@ -76,9 +76,9 @@ TARGETS     := $(filter-out $(AUX_TARGETS),$(ALL_RECIPES))
 # the recipe dir to read (sm-config or sm-config-build); sm_deps is the
 # build-mode view that `make help` and the MODE=build `all` use.
 sm_deps_in = $(sort $(foreach w,\
-                 $(shell sed -n 's,^[[:space:]]*module load[[:space:]]*,,p' \
-                     $(MKFILE_DIR)$(1)/$(2)/install.sh 2>/dev/null),\
-                 $(firstword $(subst /, ,$(w)))))
+    $(shell sed -n 's,^[[:space:]]*module load[[:space:]]*,,p' \
+        $(MKFILE_DIR)$(1)/$(2)/install.sh 2>/dev/null),\
+    $(firstword $(subst /, ,$(w)))))
 sm_deps = $(call sm_deps_in,$(1),sm-config-build)
 
 # Build steps
@@ -95,8 +95,8 @@ endif
 # versions (from settings.toml) and its build deps (from install.sh)
 #
 help:
-	@MODE="$(MODE)" VARIANT="$(VARIANT)" VARIANTS="$(VARIANTS)"    \
-	    GBI_MODULE_PATH="$(GBI_MODULE_PATH)" TARGETS="$(TARGETS)"          \
+	@MODE="$(MODE)" VARIANT="$(VARIANT)" VARIANTS="$(VARIANTS)" \
+	    GBI_MODULE_PATH="$(GBI_MODULE_PATH)" TARGETS="$(TARGETS)" \
 	    AUX_TARGETS="$(AUX_TARGETS)" $(RUN_CMD) $(HELP_CMD)
 #------------------------------------------------------------------------------
 
@@ -112,17 +112,17 @@ ifeq ($(MODE),build)
 # `module load` dependencies those toolchains cover. Anything with other deps
 # (e.g. on the opt-in cmake) is skipped and reported.
 ALL_PROVIDES := $(filter rust zig,$(DEFAULT_TARGETS))
-NTARGETS := $(strip $(foreach t,\
-                $(filter-out $(ALL_PROVIDES),$(filter $(BUILD_TARGETS),$(TARGETS))),\
-                $(if $(filter-out $(ALL_PROVIDES),$(call sm_deps,$(t))),,$(t))))
-NSKIPPED := $(filter-out $(ALL_PROVIDES) $(NTARGETS),$(TARGETS))
+NTARGETS     := $(strip $(foreach t,\
+    $(filter-out $(ALL_PROVIDES),$(filter $(BUILD_TARGETS),$(TARGETS))),\
+    $(if $(filter-out $(ALL_PROVIDES),$(call sm_deps,$(t))),,$(t))))
+NSKIPPED     := $(filter-out $(ALL_PROVIDES) $(NTARGETS),$(TARGETS))
 all:
 	$(warning Building all targets using MODE=build! Installing '$(ALL_PROVIDES)' in default mode first, then building: '$(NTARGETS)'. Omitting targets whose build dependencies 'all' does not provide: '$(NSKIPPED)')
 	@for target in $(ALL_PROVIDES); do \
-		$(MAKE) $$target MODE= ;      \
+	    $(MAKE) $$target MODE= ; \
 	done
 	@for target in $(NTARGETS); do \
-		$(MAKE) $$target;          \
+	    $(MAKE) $$target; \
 	done
 else
 # Default-mode recipes `module load` other modules while installing, too (cc
@@ -133,12 +133,12 @@ else
 # hand); tsort orders the targets those edges touch so that each lands after
 # what it loads, and every other target follows alphabetically.
 ALL_EDGES  = $(foreach t,$(TARGETS),\
-                 $(foreach d,$(filter $(TARGETS),$(call sm_deps_in,$(t),sm-config)),$(d) $(t)))
+    $(foreach d,$(filter $(TARGETS),$(call sm_deps_in,$(t),sm-config)),$(d) $(t)))
 ALL_LINKED = $(shell printf '%s\n' $(ALL_EDGES) | tsort)
 ALL_ORDER  = $(ALL_LINKED) $(filter-out $(ALL_LINKED),$(TARGETS))
 all:
 	@for target in $(ALL_ORDER); do \
-		$(MAKE) $$target;           \
+	    $(MAKE) $$target; \
 	done
 endif
 #------------------------------------------------------------------------------
@@ -149,10 +149,10 @@ endif
 # a build.
 #
 check:
-	@command -v $(NU) >/dev/null 2>&1 || {                                     \
+	@command -v $(NU) >/dev/null 2>&1 || { \
 	    echo "check needs nushell: install it ('make nu') and 'module load nu',"; \
-	    echo "or point NU at an interpreter, e.g. make check NU=/path/to/nu";  \
-	    exit 1;                                                               \
+	    echo "or point NU at an interpreter, e.g. make check NU=/path/to/nu"; \
+	    exit 1; \
 	}
 	@$(NU) $(MKFILE_DIR)/$(CHECK_CMD) --prefix $(MKFILE_DIR) $(CHECK_ARGS) $(TARGET)
 #------------------------------------------------------------------------------

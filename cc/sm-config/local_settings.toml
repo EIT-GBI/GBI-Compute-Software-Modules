@@ -3,6 +3,6 @@ name = "cc"
 # end is -- a gcc-based sibling would be cc/<gcc version>-gnu
 variant = "zig"
 
-relocate = true
+relocate    = true
 destination = "{SM_ROOT}/cc"
-modules = "{SM_ROOT}/modules"
+modules     = "{SM_ROOT}/modules"

@@ -1,5 +1,5 @@
 name = "lfs"
 
-relocate = true
+relocate    = true
 destination = "{SM_ROOT}/lfs"
-modules = "{SM_ROOT}/modules"
+modules     = "{SM_ROOT}/modules"

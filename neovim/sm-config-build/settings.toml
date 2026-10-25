@@ -6,11 +6,11 @@ CMAKE_BUILD_PARALLEL_LEVEL = 8
 
 [install]
 versions = ["master", "stable", "0.12.4"]
-prefix = "{SITE_DESTINATION}"
-format = "{INSTALL_VERSION_VARIANT}$"
+prefix   = "{SITE_DESTINATION}"
+format   = "{INSTALL_VERSION_VARIANT}$"
 # (optional) relocate after install
 destination = "{SITE_DESTINATION}/{INSTALL_VERSION_VARIANT}"
-stage = true
+stage       = true
 
 [module]
 NVIM_PATH = "{INSTALL_DIR}"

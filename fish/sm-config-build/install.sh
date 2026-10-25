@@ -12,5 +12,5 @@ echo "Building ${SOURCE_NAME}"
 
 cd downloaded/build
 cmake .. -DCMAKE_INSTALL_PREFIX=${INSTALL_DIR}/${INSTALL_VERSION_VARIANT}
-cmake --build .  -j ${N_PROCS}
+cmake --build . -j ${N_PROCS}
 cmake --install .

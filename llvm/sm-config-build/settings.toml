@@ -13,14 +13,14 @@ NLINK           = 1
 
 [install]
 versions = ["21.1.8"]
-prefix = "{SITE_DESTINATION}"
-format = "{INSTALL_VERSION_VARIANT}$"
+prefix   = "{SITE_DESTINATION}"
+format   = "{INSTALL_VERSION_VARIANT}$"
 # (optional) relocate after install
 destination = "{SITE_DESTINATION}/{INSTALL_VERSION_VARIANT}"
-stage = true
+stage       = true
 
 [module]
-LLVM_PATH = "{INSTALL_DIR}"
+LLVM_PATH       = "{INSTALL_DIR}"
 INSTALL_VERSION = "{INSTALL_VERSION}"
 
 [post]

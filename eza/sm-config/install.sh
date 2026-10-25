@@ -1,8 +1,7 @@
 OS=$(to_lower "$RUNTIME_OS")
 
 # upstream publishes release binaries for linux (and windows) only -- no darwin
-if [[ $OS != "linux" ]]
-then
+if [[ $OS != "linux" ]]; then
     echo "eza ships binary releases for linux only (detected: '${OS}')."
     echo "Use 'make eza MODE=build' to compile from source instead."
     exit 1

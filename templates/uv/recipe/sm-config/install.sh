@@ -7,8 +7,7 @@ export UV_TOOL_BIN_DIR="${TOOL_BIN_DIR}"
 
 # `stable` installs whatever the latest PyPI release is; anything else is
 # pinned. --reinstall makes re-running the recipe idempotent
-if [[ ${VERSION} == "stable" ]]
-then
+if [[ ${VERSION} == "stable" ]]; then
     uv tool install --reinstall {{name}}
 else
     uv tool install --reinstall {{name}}==${VERSION}

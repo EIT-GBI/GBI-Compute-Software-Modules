@@ -73,12 +73,16 @@ mkdir -p smoke
 xz --version > smoke/version.log
 cat smoke/version.log
 grep -q "^xz (XZ Utils) ${VERSION}$" smoke/version.log
-grep -q "^liblzma ${VERSION}$"       smoke/version.log
+grep -q "^liblzma ${VERSION}$" smoke/version.log
 
 # ~6 MB of text ending in a known line: at preset -1 (1 MiB dictionary) the
 # threaded encoder splits it into several blocks, so two threads really do
 # run. (awk, not seq: BSD seq prints large numbers in %g form, "1e+06".)
-awk 'BEGIN { for (i = 1; i <= 500000; i++) print "line " i; print "the last line" }' > smoke/data.txt
+awk 'BEGIN {
+    for (i = 1; i <= 500000; i++)
+        print "line " i
+    print "the last line"
+}' > smoke/data.txt
 xz --keep --threads=2 -1 smoke/data.txt
 xz --test smoke/data.txt.xz
 xz --list smoke/data.txt.xz > smoke/list.log

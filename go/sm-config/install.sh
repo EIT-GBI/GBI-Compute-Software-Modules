@@ -2,7 +2,7 @@ OS=$(to_lower "$RUNTIME_OS")
 ARCH=$(to_lower "$RUNTIME_ARCH")
 
 [[ $ARCH == "aarch64" ]] && ARCH="arm64"
-[[ $ARCH == "x86_64"  ]] && ARCH="amd64"
+[[ $ARCH == "x86_64" ]] && ARCH="amd64"
 
 # Note: go's releases carry no gnu/musl split, so there is no
 # `resolve_archive_name` here -- but go spells its arches its own way
