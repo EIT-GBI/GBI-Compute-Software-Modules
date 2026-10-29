@@ -1,1 +1,0 @@
-setenv("y", myModuleFullName())

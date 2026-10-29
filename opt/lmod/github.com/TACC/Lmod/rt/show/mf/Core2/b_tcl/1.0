@@ -1,3 +1,0 @@
-#%Module
-setenv A B
-exit
