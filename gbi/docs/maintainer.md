@@ -37,7 +37,8 @@ validates a configured file with the same `Site` parser used at runtime; a
 missing or invalid configured file fails the install. Existing
 `GBI_SITE_<KEY>` environment variables override values from the file. When the
 file variable is unset, installs retain the existing environment-and-defaults
-behavior.
+behavior. Either way, `lustre_root` and `bucket_root` are required: the install
+fails if either is empty, because every `gbi data` command needs both.
 
 For a shared cluster installation, run the recipe as a software maintainer from
 the reviewed release checkout. Software goes under `gbi/<version>` and the
@@ -69,9 +70,9 @@ into the installed site configuration. The principal settings are:
 
 | Setting | Purpose | Default |
 | --- | --- | --- |
-| `GBI_SITE_LUSTRE_ROOT` | Parent of each user's Lustre root | site supplied |
+| `GBI_SITE_LUSTRE_ROOT` | Parent of each user's Lustre root | site supplied (required) |
 | `GBI_SITE_FSS_ROOT` | Parent of each user's FSS root | site supplied |
-| `GBI_SITE_BUCKET_ROOT` | Parent of each user's Object Storage mount | site supplied |
+| `GBI_SITE_BUCKET_ROOT` | Parent of each user's Object Storage mount | site supplied (required) |
 | `GBI_SITE_PARTITION` | Slurm partition for queued work | site supplied |
 | `GBI_SITE_PREFECT_URL` | Optional HTTPS broker endpoint | empty |
 | `GBI_SITE_JOBS` | Concurrent file workers | 4 |
