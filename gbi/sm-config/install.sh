@@ -27,6 +27,15 @@ values.update(
 )
 if any("\n" in value or "\r" in value for value in values.values()):
     raise ValueError("site configuration values must be single lines")
+# Every gbi data verb needs both roots, and Site silently drops empty ones.
+missing = [
+    key for key in ("lustre_root", "bucket_root") if not values[key].strip()
+]
+if missing:
+    raise ValueError(
+        "site configuration needs " + " and ".join(missing)
+        + ": set GBI_SITE_CONFIG_FILE or GBI_SITE_<KEY>"
+    )
 output = Path("downloaded/etc/site.conf")
 output.write_text("".join(f"{key} = {value}\n" for key, value in values.items()))
 Site(output)

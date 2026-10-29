@@ -10,6 +10,10 @@ ROOT         = Path(__file__).resolve().parents[1]
 INSTALLER    = ROOT / "sm-config" / "install.sh"
 SOURCE       = ROOT / "src"
 VERSION_FILE = ROOT / "VERSION"
+ROOTS        = {
+    "GBI_SITE_LUSTRE_ROOT": "/site/scratch/users",
+    "GBI_SITE_BUCKET_ROOT": "/site/personal/users",
+}
 
 
 class Install(unittest.TestCase):
@@ -45,6 +49,8 @@ class Install(unittest.TestCase):
             directory = Path(temporary)
             config    = directory / "site.conf"
             config.write_text(
+                "lustre_root = /site/scratch/users\n"
+                "bucket_root = /site/personal/users\n"
                 "partition = batch\n"
                 "prefect_url = https://broker.example/api\n"
                 "lfs_bin = /site/tools/lfs\n"
@@ -66,12 +72,41 @@ class Install(unittest.TestCase):
             ):
         with tempfile.TemporaryDirectory() as temporary:
             result = self.run_installer(
-                Path(temporary), GBI_SITE_PARTITION = "cpu"
+                Path(temporary), GBI_SITE_PARTITION = "cpu", **ROOTS
             )
             self.assertEqual(result.returncode, 0, result.stderr)
             installed = self.read_config(temporary)
             self.assertEqual(installed["partition"], "cpu")
             self.assertEqual(installed["prefect_url"], "")
+            self.assertEqual(installed["lustre_root"], "/site/scratch/users")
+            self.assertEqual(installed["bucket_root"], "/site/personal/users")
+
+    def test_missing_lustre_or_bucket_root_fails(self):
+        lustre = {"GBI_SITE_LUSTRE_ROOT": "/site/scratch/users"}
+        cases  = (
+            ({}, None, "lustre_root and bucket_root"),
+            (lustre, None, "bucket_root"),
+            ({**ROOTS, "GBI_SITE_LUSTRE_ROOT": " "}, None, "lustre_root"),
+            (lustre, "bucket_root =\n", "bucket_root"),
+        )
+        for environment, text, missing in cases:
+            with (
+                self.subTest(environment = environment, config = text),
+                tempfile.TemporaryDirectory() as temporary,
+            ):
+                directory = Path(temporary)
+                if text is not None:
+                    config = directory / "site.conf"
+                    config.write_text(text)
+                    environment = {
+                        **environment, "GBI_SITE_CONFIG_FILE": str(config)
+                    }
+                result = self.run_installer(directory, **environment)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(f"needs {missing}", result.stderr)
+                self.assertFalse(
+                    (directory / "downloaded/etc/site.conf").exists()
+                )
 
     def test_configured_missing_or_invalid_file_fails(self):
         cases = ("missing", "unknown = value\n")

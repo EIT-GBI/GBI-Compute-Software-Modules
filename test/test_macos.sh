@@ -33,7 +33,10 @@ make cargo-zigbuild # needs uv (above) and cc
 make parallel-tar
 make go
 make rclone
-make gbi
+# gbi refuses to install without site roots; placeholders are enough here
+GBI_SITE_LUSTRE_ROOT=${GBI_MODULE_PATH}/gbi-site/scratch \
+GBI_SITE_BUCKET_ROOT=${GBI_MODULE_PATH}/gbi-site/personal \
+    make gbi
 make lustre-dlm # needs uv (above)
 make oci        # needs uv (above)
 make java
