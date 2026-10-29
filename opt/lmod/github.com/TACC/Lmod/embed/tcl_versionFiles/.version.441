@@ -1,6 +1,0 @@
-#%Module3.1.1#################################################
-##
-## version file for %{BASENAME}18.0.2
-##
-
-set     ModulesVersion      "18.0.2"

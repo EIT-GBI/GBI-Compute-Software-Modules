@@ -1,3 +1,0 @@
-#%Module
-
-setenv "Version" "arpack--96"

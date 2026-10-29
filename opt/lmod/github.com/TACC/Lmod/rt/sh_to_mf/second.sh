@@ -1,1 +1,0 @@
-export SECOND=FOO_BAR

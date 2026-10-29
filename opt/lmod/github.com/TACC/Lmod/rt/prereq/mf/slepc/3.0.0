@@ -1,4 +1,0 @@
-#%Module
-prereq petsc/3.0.0
-
-

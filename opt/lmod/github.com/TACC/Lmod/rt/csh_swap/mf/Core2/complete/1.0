@@ -1,2 +1,0 @@
-#%Module
-complete csh foo {p/*/c/}
