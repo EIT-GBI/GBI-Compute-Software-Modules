@@ -117,6 +117,15 @@ hashes the current source once, joins it to the original archived manifest, and
 reuses that fresh evidence under the same per-file guards. Hardlink ctime
 changes trigger a full rehash of remaining aliases.
 
+From 0.4.23, `archives.pack` prefetches selected files on reader threads
+(`GBI_PACK_READERS`, default 16; `PACK_PREFETCH_BYTES` 256 MiB in flight;
+files above `PACK_INLINE_BYTES` 32 MiB stream inline) and the cleanup
+functions accept `workers` for parallel verification and unlinking with a
+periodic destination check (`DESTINATION_CHECK_SECONDS`, 30 s). Consumers that
+already prove the destination by other means (server-verified upload checksums
+plus a pinned-identity listing) pass that proof as `verify_stored_archive`
+instead of re-reading the archive.
+
 `GBI_SITE_PREFECT_URL` must be an HTTPS URL without credentials, query
 parameters or fragments. The CLI tries the local broker socket first and uses
 the HTTPS endpoint only when that socket is unavailable. HTTPS uses the caller's

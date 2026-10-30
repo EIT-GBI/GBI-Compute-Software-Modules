@@ -58,6 +58,21 @@ and runtime acceptance are pending.
 representations: GBI preserves the explicit destination filename, while
 directory restores continue to remove the representation suffix.
 
+**0.4.23** makes archive packing and move cleanup parallel in the codec.
+`archives.pack` reads selected files up to 32 MiB ahead of the tar writer on
+16 reader threads (`GBI_PACK_READERS`, bounded to 256 MiB in flight), so one
+file-system round trip per file no longer serialises an archive; larger files
+stream inline; the tar bytes and manifest are identical for any reader count
+and every file is still read exactly once with its identity checked before and
+after. `cleanup_source` and `resume_cleanup_source` accept `workers`: entries
+are verified and unlinked on that many threads, one hardlink group per call,
+with the destination check once before the first unlink, every 30 seconds
+while unlinking, and once after, instead of before every unlink. The later
+names of a hardlinked inode are no longer re-hashed after its first name is
+unlinked. `verify_stored_archive` is documented as the caller's destination
+proof. Sequential behaviour (`workers=1`, the default) is unchanged; formats,
+receipts, journals and filters are compatible.
+
 Site operators can preserve nondefault installation settings with the optional
 `GBI_SITE_CONFIG_FILE` input; see the [maintainer reference](docs/maintainer.md)
 for its format and environment override behavior.
