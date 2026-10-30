@@ -1029,6 +1029,18 @@ def _verify_source_content(
             fresh_entries = None, verified_entries = None,
         ):
     with _parent(root_fd, entry["path"], create = False) as (parent, leaf):
+        return _verify_source_content_at(
+            parent, leaf, entry, before, allow_ctime_change,
+            fresh_entries, verified_entries,
+        )
+
+
+def _verify_source_content_at(
+            parent, leaf, entry, before, allow_ctime_change = False,
+            fresh_entries = None, verified_entries = None,
+        ):
+    """``_verify_source_content`` for a leaf under an already-open parent."""
+    if True:
         info        = os.stat(leaf, dir_fd = parent, follow_symlinks = False)
         observation = _observation(info)
         if (
@@ -1190,21 +1202,52 @@ def _unlink_groups(
             removed_inodes, check_destination, on_remove, workers, interval,
             pool,
         ):
-    """Unlink selected entries on ``workers`` threads, one hardlink group per call.
+    """Unlink selected entries on ``workers`` threads, one group per call.
 
-    Names of one inode are unlinked in manifest order by a single call, so the
-    ctime change that unlinking a hardlink's other name causes is tolerated
-    exactly as the sequential path tolerates it. The destination check runs on
-    the calling thread every ``interval`` seconds instead of before each unlink.
+    A group is either every name of one hardlinked inode, unlinked in manifest
+    order by a single call so the ctime change that unlinking a hardlink's
+    other name causes is tolerated exactly as the sequential path tolerates
+    it, or the single-name entries of one parent directory, whose descriptor
+    is opened once for all of them. The destination check runs on the calling
+    thread every ``interval`` seconds instead of before each unlink.
     Returns ``(count, freed_bytes)``.
     """
     lock  = threading.Lock()
     freed = [0]
 
-    def unlink_group(group):
+    def record(entry):
+        with lock:
+            if entry["type"] in ("file", "hardlink"):
+                freed[0] += entry["size"]
+            if on_remove is not None:
+                on_remove(entry)
+
+    def unlink_at(parent, name, entry, before):
+        now = os.stat(name, dir_fd = parent, follow_symlinks = False)
+        if stat.S_ISDIR(now.st_mode) or _observation(now)[:5] != before[:5]:
+            raise ArchiveError(
+                "selected source changed before removal; remaining sources kept"
+            )
+        os.unlink(name, dir_fd = parent)
+
+    def unlink_group(item):
+        kind, group = item
+        count = 0
+        if kind == "directory":
+            with _parent(root_fd, group[0]["path"], create = False) as (parent, _):
+                for entry in group:
+                    before = evidence[entry["path"]]
+                    leaf   = entry["path"].rsplit("/", 1)[-1]
+                    _verify_source_content_at(
+                        parent, leaf, entry, before, fresh_entries = fresh_entries,
+                        verified_entries = verified_entries,
+                    )
+                    unlink_at(parent, leaf, entry, before)
+                    count += 1
+                    record(entry)
+            return count
         key      = tuple(evidence[group[0]["path"]][:2])
         unlinked = key in removed_inodes
-        count    = 0
         for entry in group:
             before = evidence[entry["path"]]
             # Later names of one inode share the payload just verified for its
@@ -1215,25 +1258,11 @@ def _unlink_groups(
                     root_fd, entry, before, fresh_entries = fresh_entries,
                     verified_entries = verified_entries,
                 )
-            with _parent(root_fd, entry["path"], create = False) as (
-                parent, name,
-            ):
-                now = os.stat(name, dir_fd = parent, follow_symlinks = False)
-                if (
-                    stat.S_ISDIR(now.st_mode)
-                    or _observation(now)[:5] != before[:5]
-                ):
-                    raise ArchiveError(
-                        "selected source changed before removal; remaining sources kept"
-                    )
-                os.unlink(name, dir_fd = parent)
+            with _parent(root_fd, entry["path"], create = False) as (parent, name):
+                unlink_at(parent, name, entry, before)
             unlinked = True
             count   += 1
-            with lock:
-                if entry["type"] in ("file", "hardlink"):
-                    freed[0] += entry["size"]
-                if on_remove is not None:
-                    on_remove(entry)
+            record(entry)
         return count
 
     count = _run_windowed(
@@ -1243,11 +1272,34 @@ def _unlink_groups(
     return count, freed[0]
 
 
-def _inode_groups(entries, evidence):
-    groups = {}
+def _parent_of(path):
+    return path.rsplit("/", 1)[0] if "/" in path else ""
+
+
+def _cleanup_groups(entries, evidence):
+    """Group entries for parallel cleanup: hardlinked inodes together, the
+    rest per parent directory; order within a group is manifest order."""
+    names = {}
     for entry in entries:
-        groups.setdefault(tuple(evidence[entry["path"]][:2]), []).append(entry)
+        names.setdefault(tuple(evidence[entry["path"]][:2]), []).append(entry)
+    inode_groups = [("inode", group) for group in names.values() if len(group) > 1]
+    directories  = {}
+    for entry in entries:
+        if len(names[tuple(evidence[entry["path"]][:2])]) == 1:
+            directories.setdefault(_parent_of(entry["path"]), []).append(entry)
+    return inode_groups + [("directory", group) for group in directories.values()]
+
+
+def _parent_groups(items, path_of):
+    """Group items by the parent directory of ``path_of(item)``, keeping order."""
+    groups = {}
+    for item in items:
+        groups.setdefault(_parent_of(path_of(item)), []).append(item)
     return list(groups.values())
+
+
+def _inode_groups(entries, evidence):
+    return [group for _kind, group in _cleanup_groups(entries, evidence)]
 
 
 def cleanup_source(
@@ -1347,22 +1399,28 @@ def cleanup_source(
                 max_workers = workers, thread_name_prefix = "gbi-cleanup"
             ) as pool,
         ):
-            # Verify EVERY selected entry before the first unlink, in parallel.
-            def verify(entry):
-                _verify_source_content(
-                    root_fd, entry, evidence[entry["path"]],
-                    fresh_entries = fresh_entries,
-                )
+            # Verify EVERY selected entry before the first unlink, in parallel,
+            # opening each parent directory once for all of its entries.
+            def verify(group):
+                with _parent(root_fd, group[0]["path"], create = False) as (parent, _):
+                    for entry in group:
+                        _verify_source_content_at(
+                            parent, entry["path"].rsplit("/", 1)[-1], entry,
+                            evidence[entry["path"]], fresh_entries = fresh_entries,
+                        )
                 return 0
 
-            _run_windowed(pool, verify, files, window = workers * 32)
+            _run_windowed(
+                pool, verify, _parent_groups(files, lambda e: e["path"]),
+                window = workers * 32,
+            )
             verify_source(source, manifest)
             check_destination()
             if on_verified is not None:
                 on_verified()
             check_destination(force = True)
             removed, _freed = _unlink_groups(
-                root_fd, _inode_groups(files, evidence), evidence,
+                root_fd, _cleanup_groups(files, evidence), evidence,
                 fresh_entries = fresh_entries, verified_entries = None,
                 removed_inodes = set(), check_destination = check_destination,
                 on_remove = on_remove, workers = workers,
@@ -1545,10 +1603,14 @@ def resume_cleanup_source(
     )
 
     def verify_selected(root_fd, name, observation):
+        with _parent(root_fd, name, create = False) as (parent, leaf):
+            return verify_selected_at(parent, leaf, name, observation)
+
+    def verify_selected_at(parent, leaf, name, observation):
         entry  = selected_entries[name]
         before = expected[name]
-        verified_observation = _verify_source_content(
-            root_fd, entry, before,
+        verified_observation = _verify_source_content_at(
+            parent, leaf, entry, before,
             allow_ctime_change = tuple(observation[:2]) in removed_inodes,
             fresh_entries = fresh_entries,
         )
@@ -1559,13 +1621,22 @@ def resume_cleanup_source(
 
     with _directory(source) as root_fd:
         if pool is not None:
+            def verify_group(group):
+                with _parent(root_fd, group[0][0], create = False) as (parent, _):
+                    for name, observation in group:
+                        verify_selected_at(parent, name.rsplit("/", 1)[-1], name, observation)
+                return 0
+
             _run_windowed(
-                pool, lambda item: verify_selected(root_fd, *item),
-                (
-                    (name, observation)
-                    for name, observation in current.items()
-                    if name in selected_entries
-                    and not stat.S_ISDIR(expected[name][2])
+                pool, verify_group,
+                _parent_groups(
+                    [
+                        (name, observation)
+                        for name, observation in current.items()
+                        if name in selected_entries
+                        and not stat.S_ISDIR(expected[name][2])
+                    ],
+                    lambda item: item[0],
                 ),
                 window = workers * 32,
             )
@@ -1623,7 +1694,7 @@ def resume_cleanup_source(
         ]
         with _directory(source) as root_fd, pool:
             removed_count, freed_bytes = _unlink_groups(
-                root_fd, _inode_groups(remaining, expected), expected,
+                root_fd, _cleanup_groups(remaining, expected), expected,
                 fresh_entries = fresh_entries, verified_entries = verified_entries,
                 removed_inodes = removed_inodes,
                 check_destination = check_destination, on_remove = on_remove,
