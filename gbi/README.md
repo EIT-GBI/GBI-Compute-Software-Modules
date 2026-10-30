@@ -58,6 +58,12 @@ and runtime acceptance are pending.
 representations: GBI preserves the explicit destination filename, while
 directory restores continue to remove the representation suffix.
 
+**0.4.24** opens each parent directory once per cleanup pass instead of once
+per file: the parallel cleanup verifies and unlinks the single-name entries of
+one directory under one descriptor, hardlinked inodes still go as one group,
+and the module recipe version now moves with the package version (0.4.23's
+recipe had stayed at 0.4.22, which `gbi install` refuses).
+
 **0.4.23** makes archive packing and move cleanup parallel in the codec.
 `archives.pack` reads selected files up to 32 MiB ahead of the tar writer on
 16 reader threads (`GBI_PACK_READERS`, bounded to 256 MiB in flight), so one

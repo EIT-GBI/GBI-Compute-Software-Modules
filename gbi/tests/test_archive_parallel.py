@@ -253,5 +253,46 @@ class ParallelArchives(unittest.TestCase):
         self.assertGreater(len(set(seen)), 1)
 
 
+    def test_parallel_cleanup_opens_each_parent_directory_once(self):
+        stored, manifest = self.cleanup_fixture()
+        opened = []
+        original = archives._parent
+
+        def counting(root_fd, relative, create = True):
+            opened.append(relative)
+            return original(root_fd, relative, create = create)
+
+        with patch.object(archives, "_parent", counting):
+            count = archives.cleanup_source(
+                self.source, manifest, stored, lambda force = False: None,
+                fresh_source_manifest = manifest, workers = 8,
+                verify_stored_archive = lambda: None,
+            )
+        files = [e for e in manifest["entries"] if e["type"] != "directory"]
+        directories = {e["path"].rsplit("/", 1)[0] if "/" in e["path"] else "" for e in files}
+        self.assertEqual(count, len(files))
+        # Two passes (verify, unlink) open each parent once, plus the hardlink
+        # groups and the directory removals; never once per file per pass.
+        hardlinked = sum(1 for e in files if e["type"] == "hardlink") * 2
+        removals   = sum(1 for e in manifest["entries"] if e["type"] == "directory")
+        self.assertLessEqual(len(opened), 2 * len(directories) + 3 * hardlinked + removals)
+        self.assertLess(len(opened), len(files))
+
+    def test_parallel_cleanup_handles_hardlinks_across_directories(self):
+        self.fixture(files = 30)
+        os.link(self.source / "dir0" / "sub0" / "file0000.dat", self.source / "dir5" / "sub2" / "cross-alias.dat")
+        payload, manifest = self.pack(readers = 4)
+        removed = []
+        count = archives.cleanup_source(
+            self.source, manifest, io.BytesIO(payload), lambda force = False: None,
+            on_remove = removed.append, fresh_source_manifest = manifest, workers = 8,
+            verify_stored_archive = lambda: None,
+        )
+        files = [e for e in manifest["entries"] if e["type"] != "directory"]
+        self.assertEqual(count, len(files))
+        self.assertFalse(os.path.lexists(self.source / "dir5" / "sub2" / "cross-alias.dat"))
+        self.assertFalse(os.path.lexists(self.source / "dir0" / "sub0" / "file0000.dat"))
+
+
 if __name__ == "__main__":
     unittest.main()
