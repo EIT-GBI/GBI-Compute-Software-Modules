@@ -18,6 +18,7 @@ import json
 import os
 from pathlib import Path, PurePosixPath
 import stat
+import queue
 import tarfile
 import threading
 import time
@@ -210,6 +211,96 @@ class _HashReader:
         data = self.stream.read(size)
         self.hash.update(data)
         return data
+
+
+@contextmanager
+def _compressed(output, compression):
+    """The stream the tar writer targets: ``output`` or a gzip layer over it.
+
+    The gzip header carries no name and a zero timestamp, so packing an
+    unchanged source again yields byte-identical output and an interrupted
+    chunked upload can reuse the parts it already stored.
+    """
+    if compression not in ("gzip", "tar.gz"):
+        yield output
+        return
+    layer = gzip.GzipFile(
+        filename = "", fileobj = output, mode = "wb", mtime = 0
+    )
+    try:
+        yield layer
+    finally:
+        layer.close()
+
+
+READAHEAD_BLOCK = 8 * BLOCK
+READAHEAD_DEPTH = 8
+
+
+class _ReadAhead:
+    """Ordered block read-ahead for one large file on a helper thread.
+
+    The helper reads consecutive ``READAHEAD_BLOCK`` pieces into a bounded
+    queue while the caller hashes and frames the previous ones, so the tar
+    writer no longer waits for each network round trip of a file too large
+    to prefetch whole. Exactly the file's bytes are delivered, in order.
+    """
+
+    def __init__(self, stream, size):
+        self.stream   = stream
+        self.size     = size
+        self._queue   = queue.Queue(READAHEAD_DEPTH)
+        self._buffer  = b""
+        self._done    = False
+        self._failure = None
+        self._stop    = threading.Event()
+        self._thread  = threading.Thread(
+            target = self._fill, name = "gbi-readahead", daemon = True
+        )
+        self._thread.start()
+
+    def _fill(self):
+        try:
+            remaining = self.size
+            while remaining > 0 and not self._stop.is_set():
+                block = self.stream.read(min(READAHEAD_BLOCK, remaining))
+                if not block:
+                    break
+                remaining -= len(block)
+                self._queue.put(block)
+        except BaseException as error:
+            self._failure = error
+        finally:
+            self._queue.put(None)
+
+    def read(self, size = -1):
+        parts = []
+        wanted = size
+        while wanted != 0:
+            if not self._buffer:
+                if self._done:
+                    break
+                block = self._queue.get()
+                if block is None:
+                    self._done = True
+                    if self._failure is not None:
+                        raise self._failure
+                    break
+                self._buffer = block
+            take = len(self._buffer) if wanted < 0 else min(wanted, len(self._buffer))
+            parts.append(self._buffer[:take])
+            self._buffer = self._buffer[take:]
+            if wanted > 0:
+                wanted -= take
+        return b"".join(parts)
+
+    def close(self):
+        """Stop the helper and wait for it, so the stream may be closed safely."""
+        self._stop.set()
+        while not self._done:
+            if self._queue.get() is None:
+                self._done = True
+        self._thread.join()
 
 
 def _add_json(archive, name, value):
@@ -449,16 +540,16 @@ def pack(
     entries, observations, hardlinks = [], {}, {}
     directories = {}
     manifest_bytes, observation_bytes, selected_bytes = 0, 0, 0
-    mode = "w|gz" if compression in ("gzip", "tar.gz") else "w|"
     pool = ThreadPoolExecutor(
         max_workers = readers, thread_name_prefix = "gbi-pack"
     )
     try:
         with (
             _directory(source) as root_fd,
+            _compressed(output, compression) as sink,
             tarfile.open(
-                fileobj = output, mode = mode, format = tarfile.PAX_FORMAT,
-                bufsize = BLOCK,
+                fileobj = sink, mode = "w|", format = tarfile.PAX_FORMAT,
+                bufsize = BLOCK, copybufsize = BLOCK,
             ) as archive,
         ):
             _add_json(archive, MARKER, {"format": FORMAT, "version": VERSION})
@@ -577,9 +668,17 @@ def pack(
                             raise ArchiveError(
                                 "source changed before packing; source kept"
                             )
-                        reader      = _HashReader(stream)
+                        ahead       = _ReadAhead(stream, info.st_size)
+                        reader      = _HashReader(ahead)
                         member.size = info.st_size
-                        archive.addfile(member, reader)
+                        try:
+                            archive.addfile(member, reader)
+                            if ahead.read(1):
+                                raise ArchiveError(
+                                    "source changed during packing; source kept"
+                                )
+                        finally:
+                            ahead.close()
                         if (
                             stream.read(1)
                             or _observation(os.fstat(stream.fileno()))
@@ -704,7 +803,7 @@ def _tar_reader(source):
             try:
                 with tarfile.open(
                     fileobj = _PrefixReader(header, decoded), mode = "r|",
-                    bufsize = BLOCK,
+                    bufsize = BLOCK, copybufsize = BLOCK,
                 ) as archive:
                     yield archive
             except tarfile.ReadError as error:
