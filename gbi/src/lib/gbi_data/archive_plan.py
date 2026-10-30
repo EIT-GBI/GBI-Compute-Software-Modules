@@ -6,8 +6,10 @@ module only partitions the source tree and records the mapping needed to
 replay that partition after a partial transfer.
 """
 
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 import math
+import os
 from pathlib import Path, PurePosixPath
 import time
 
@@ -17,6 +19,9 @@ _OVERSIZE_MARKERS = (
     "archive manifest exceeds", "source observation inventory exceeds",
 )
 _MAX_PLANNED_PARTS = 4096
+# Threads re-observing the inventory after planning; each is one lstat.
+_VERIFY_WORKERS    = 16
+_VERIFY_WINDOW     = 4096
 _ARCHIVE_SUFFIX    = ".gbi.tar"
 _CHUNK_SUFFIX      = ".gbi-chunks"
 _LINK_SUFFIX       = ".rclonelink"
@@ -47,6 +52,50 @@ def _is_oversized(error):
     return any(marker in str(error) for marker in _OVERSIZE_MARKERS)
 
 
+def _subtree_budget(
+            entries, relative, *, includes, exclusions, selection_mode, visit,
+        ):
+    """The metadata budget of one inventory subtree, without a second walk.
+
+    ``entries`` are the ``(name, item)`` pairs below ``relative`` in walk
+    order; they are replayed through the codec's own budget accounting with
+    names re-rooted at the subtree, exactly as a live scan of that directory
+    would see them.
+    """
+    selected = archives._selection(
+        includes, exclusions, selection_mode,
+        relative if selection_mode == "relative" else "",
+    )
+    skip  = len(relative) + 1
+    items = {name[skip:]: item for name, item in entries}
+
+    def stream():
+        for name, item in items.items():
+            yield name, item["info"], item["kind"]
+
+    return archives._metadata_budget(
+        stream(), selected, visit = visit,
+        read_target = lambda name: items[name]["target"],
+    )
+
+
+def _subtree_bounds(inventory):
+    """Start and end positions of every directory's subtree in walk order."""
+    order  = list(inventory)
+    bounds = {}
+    stack  = []
+    for index, name in enumerate(order):
+        while stack and not name.startswith(stack[-1][0] + "/"):
+            top, start = stack.pop()
+            bounds[top] = (start, index)
+        if inventory[name]["kind"] == "directory":
+            stack.append((name, index + 1))
+    while stack:
+        top, start = stack.pop()
+        bounds[top] = (start, len(order))
+    return order, bounds
+
+
 def _archive_estimate(result):
     """Conservatively estimate tar bytes including metadata and padding."""
     entries = int(result["entries"])
@@ -71,6 +120,29 @@ def _restore_name(target):
     if name.endswith(_ARCHIVE_SUFFIX):
         return name[: -len(_ARCHIVE_SUFFIX)]
     return None
+
+
+def _verify_inventory(source, inventory, progress):
+    """Re-observe every entry after planning, several at a time, in order."""
+
+    def observe(relative):
+        try:
+            return _observation((source / PurePosixPath(relative)).lstat())
+        except OSError:
+            return None
+
+    names = list(inventory)
+    with ThreadPoolExecutor(
+        max_workers = _VERIFY_WORKERS, thread_name_prefix = "gbi-plan-verify"
+    ) as pool:
+        for start in range(0, len(names), _VERIFY_WINDOW):
+            window = names[start:start + _VERIFY_WINDOW]
+            for relative, current in zip(window, pool.map(observe, window)):
+                progress()
+                if current != inventory[relative]["observation"]:
+                    raise archives.ArchiveError(
+                        f"source changed during archive discovery: {relative}"
+                    )
 
 
 def _validate_units(units, source_entries):
@@ -177,11 +249,20 @@ def plan_archive(
             raise archives.ArchiveError(
                 f"unsupported special file: {relative!r}"
             )
+        target = None
+        if kind == "symlink":
+            try:
+                target = os.readlink(source / PurePosixPath(relative))
+            except OSError as error:
+                raise archives.ArchiveError(
+                    f"source changed during archive discovery: {relative}"
+                ) from error
         inventory[relative] = {
-            "kind": kind, "observation": _observation(info),
+            "kind": kind, "observation": _observation(info), "info": info,
             "bytes": info.st_size if kind in ("file", "symlink") else 0,
-            "selected": selected(relative),
+            "selected": selected(relative), "target": target,
         }
+    order, bounds = _subtree_bounds(inventory)
     children = {}
     for relative in sorted(inventory):
         parent = str(PurePosixPath(relative).parent)
@@ -240,6 +321,8 @@ def plan_archive(
                 f"encoded source requires explicit restore: {relative}"
             )
         child_paths = children.get(relative, [])
+        start, end  = bounds[relative]
+        entries     = [(name, inventory[name]) for name in order[start:end]]
         if not child_paths:
             if inventory[relative]["selected"]:
                 # The existing marked empty archive restores its named root.
@@ -247,21 +330,17 @@ def plan_archive(
                 # Storage, which has no POSIX directory entry to copy.
                 add_archive(
                     relative,
-                    archives.check_metadata_budget(
-                        source / PurePosixPath(relative),
-                        reserved_names = reserved_names, visit = progress,
+                    _subtree_budget(
+                        entries, relative, includes = (), exclusions = (),
+                        selection_mode = "basename", visit = progress,
                     ),
                 )
             return
-        path = source / PurePosixPath(relative)
         try:
-            result = archives.check_metadata_budget(
-                path, includes = includes, exclusions = exclusions,
-                reserved_names = reserved_names,
-                selection_mode = selection_mode,
-                selection_prefix = (
-                    relative if selection_mode == "relative" else ""
-                ), visit = progress,
+            result = _subtree_budget(
+                entries, relative, includes = includes,
+                exclusions = exclusions, selection_mode = selection_mode,
+                visit = progress,
             )
         except archives.ArchiveError as error:
             if not _is_oversized(error):
@@ -293,19 +372,7 @@ def plan_archive(
         raise archives.ArchiveError(
             "source changed during archive discovery; no plan created"
         )
-    for relative, item in inventory.items():
-        progress()
-        path = source / PurePosixPath(relative)
-        try:
-            current = _observation(path.lstat())
-        except OSError as error:
-            raise archives.ArchiveError(
-                f"source changed during archive discovery: {relative}"
-            ) from error
-        if current != item["observation"]:
-            raise archives.ArchiveError(
-                f"source changed during archive discovery: {relative}"
-            )
+    _verify_inventory(source, inventory, progress)
     _validate_units(units, inventory)
     progress()
     units.sort(key = lambda unit: unit["target_relative"])

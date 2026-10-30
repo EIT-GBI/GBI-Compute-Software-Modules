@@ -116,13 +116,13 @@ class ArchivePlan(unittest.TestCase):
         self.files("many", count = 2)
         elapsed = 0
 
-        def scan(path, **kwargs):
+        def scan(entries, relative, **kwargs):
             nonlocal elapsed
             self.assertIn("visit", kwargs)
             elapsed = 6
             kwargs["visit"]()
 
-        with patch.object(archives, "check_metadata_budget", side_effect = scan):
+        with patch.object(archive_plan, "_subtree_budget", side_effect = scan):
             with patch.object(
                 archive_plan.time, "monotonic", side_effect = lambda: elapsed
             ):
@@ -135,14 +135,14 @@ class ArchivePlan(unittest.TestCase):
 
     def test_source_mutation_during_qualification_is_rejected(self):
         self.files("mutable")
-        original = archives.check_metadata_budget
+        original = archive_plan._subtree_budget
 
-        def mutate(path, **kwargs):
+        def mutate(entries, relative, **kwargs):
             (self.source / "mutable/file-0.txt").write_bytes(b"changed")
-            return original(path, **kwargs)
+            return original(entries, relative, **kwargs)
 
         with patch.object(
-            archives, "check_metadata_budget", side_effect = mutate
+            archive_plan, "_subtree_budget", side_effect = mutate
         ):
             with self.assertRaisesRegex(
                 archives.ArchiveError, "source changed"
@@ -168,12 +168,106 @@ class ArchivePlan(unittest.TestCase):
     def test_non_oversize_scan_error_returns_no_plan(self):
         self.files("broken")
         with patch.object(
-            archives, "check_metadata_budget",
+            archive_plan, "_subtree_budget",
             side_effect = archives.ArchiveError("source changed during scan"),
         ):
             with self.assertRaisesRegex(
                 archives.ArchiveError, "source changed"
             ):
+                archive_plan.plan_archive(self.source, self.destination)
+
+    def mixed_tree(self):
+        import os
+        self.files("a/x", count = 3, size = 10)
+        self.files("a/y/deep", count = 2, size = 20)
+        self.files("b", count = 4, size = 5)
+        (self.source / "a/x/link").symlink_to("file-0.txt")
+        (self.source / "a/dangling").symlink_to("absent")
+        os.link(self.source / "a/x/file-1.txt", self.source / "a/y/alias.txt")
+        (self.source / "a/y/skip.tmp").write_bytes(b"t" * 9)
+        (self.source / "a/empty").mkdir()
+        self.files("a/.gbi/state")
+        (self.source / "top.txt").write_bytes(b"top")
+
+    def test_replayed_budgets_match_a_live_scan_of_each_unit(self):
+        self.mixed_tree()
+        with patch.object(archives, "MAX_MANIFEST", 900):
+            plan = archive_plan.plan_archive(
+                self.source, self.destination, exclusions = ("*.tmp",),
+                selection_mode = "relative",
+            )
+        packed = [u for u in plan.units if u["action"] == "pack"]
+        self.assertGreaterEqual(len(packed), 2)
+        for unit in packed:
+            relative = unit["source_relative"]
+            live = archives.check_metadata_budget(
+                self.source / relative, exclusions = ("*.tmp",),
+                selection_mode = "relative", selection_prefix = relative,
+            )
+            self.assertEqual(unit["bytes"], live["selected_bytes"], relative)
+            self.assertEqual(
+                unit["estimated_bytes"], archive_plan._archive_estimate(live),
+                relative,
+            )
+        names = {u["source_relative"] for u in plan.units}
+        self.assertIn("top.txt", names)
+        self.assertNotIn("a/.gbi", names)
+        self.assertTrue(any(n.startswith("a") for n in names))
+
+    def test_planning_walks_the_source_exactly_once(self):
+        self.mixed_tree()
+        walks = []
+        original = archives._walk
+
+        def counting(root, reserved = ()):
+            walks.append(str(root))
+            return original(root, reserved)
+
+        with patch.object(archives, "_walk", counting):
+            with patch.object(archives, "MAX_MANIFEST", 900):
+                plan = archive_plan.plan_archive(
+                    self.source, self.destination, selection_mode = "relative",
+                )
+        self.assertEqual(walks, [str(self.source)])
+        self.assertGreaterEqual(len(plan.units), 3)
+
+    def test_subtree_bounds_cover_each_directory_contiguously(self):
+        self.mixed_tree()
+        inventory = {}
+        for relative, info, kind in archives._walk(self.source, (".gbi",)):
+            inventory[relative] = {"kind": kind}
+        order, bounds = archive_plan._subtree_bounds(inventory)
+        for name, (start, end) in bounds.items():
+            below = order[start:end]
+            self.assertTrue(all(n.startswith(name + "/") for n in below), name)
+            self.assertEqual(
+                sorted(below), sorted(n for n in order if n.startswith(name + "/")), name
+            )
+        self.assertEqual(set(bounds), {n for n, i in inventory.items() if i["kind"] == "directory"})
+
+    def test_post_plan_verification_runs_in_parallel_and_fails_closed(self):
+        self.files("many", count = 40)
+        plan = archive_plan.plan_archive(self.source, self.destination)
+        self.assertEqual(len(plan.units), 1)
+        seen = set()
+        original = archive_plan._observation
+
+        def record(info):
+            import threading
+            seen.add(threading.get_ident())
+            return original(info)
+
+        with patch.object(archive_plan, "_observation", record):
+            archive_plan.plan_archive(self.source, self.destination)
+        self.assertGreater(len(seen), 1)
+        original_verify = archive_plan._verify_inventory
+
+        def mutate_then_verify(source, inventory, progress):
+            (self.source / "many/file-3.txt").write_bytes(b"grown!")
+            return original_verify(source, inventory, progress)
+
+        with patch.object(archive_plan, "_verify_inventory", mutate_then_verify):
+            with self.assertRaisesRegex(archives.ArchiveError, "source changed"):
                 archive_plan.plan_archive(self.source, self.destination)
 
 
