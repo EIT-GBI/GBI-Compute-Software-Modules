@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import tempfile
 import threading
+import time
 import unittest
 from unittest.mock import patch
 
@@ -53,8 +54,7 @@ class ParallelArchives(unittest.TestCase):
                 compression = compression, readers = 16,
                 inline_bytes = 1024 * 1024,
             )
-            if compression is None:
-                self.assertEqual(sequential, parallel)
+            self.assertEqual(sequential, parallel)
             self.assertEqual(
                 archives._public(manifest_one), archives._public(manifest_many)
             )
@@ -292,6 +292,56 @@ class ParallelArchives(unittest.TestCase):
         self.assertEqual(count, len(files))
         self.assertFalse(os.path.lexists(self.source / "dir5" / "sub2" / "cross-alias.dat"))
         self.assertFalse(os.path.lexists(self.source / "dir0" / "sub0" / "file0000.dat"))
+
+    def test_large_files_stream_through_ordered_readahead_with_identical_bytes(self):
+        self.fixture(files = 20)
+        big = self.source / "large.bin"
+        big.write_bytes(os.urandom(40 * 1024 * 1024 + 12345))
+        sequential, manifest_one = self.pack(readers = 1, inline_bytes = 0)
+        streamed, manifest_two = self.pack(readers = 4, inline_bytes = 1 << 20)
+        self.assertEqual(sequential, streamed)
+        self.assertEqual(
+            archives._public(manifest_one), archives._public(manifest_two)
+        )
+        entry = next(e for e in manifest_two["entries"] if e["path"] == "large.bin")
+        self.assertEqual(entry["sha256"], hashlib.sha256(big.read_bytes()).hexdigest())
+        archives.verify_archive(io.BytesIO(streamed), manifest_two)
+
+    def test_gzip_output_is_deterministic_and_round_trips(self):
+        self.fixture(files = 30)
+        first, manifest = self.pack(compression = "gzip")
+        time.sleep(1.1)
+        second, _again = self.pack(compression = "gzip")
+        self.assertEqual(first, second)
+        self.assertEqual(first[:2], b"\x1f\x8b")
+        self.assertEqual(first[4:8], b"\0\0\0\0")   # zero mtime
+        archives.verify_archive(io.BytesIO(first), manifest)
+        archives.restore(io.BytesIO(first), self.base / "restored")
+        self.assertEqual(
+            (self.base / "restored" / "large.bin").read_bytes(),
+            (self.source / "large.bin").read_bytes(),
+        )
+
+    def test_readahead_delivers_exact_bytes_and_reports_reader_failures(self):
+        data = os.urandom(3 * archives.READAHEAD_BLOCK + 777)
+        ahead = archives._ReadAhead(io.BytesIO(data), len(data))
+        out = b""
+        while True:
+            piece = ahead.read(1000003)
+            if not piece:
+                break
+            out += piece
+        ahead.close()
+        self.assertEqual(out, data)
+
+        class Broken(io.BytesIO):
+            def read(self, size = -1):
+                raise OSError(5, "read error")
+
+        failing = archives._ReadAhead(Broken(b"x" * 10), 10)
+        with self.assertRaises(OSError):
+            failing.read(5)
+        failing.close()
 
 
 if __name__ == "__main__":
