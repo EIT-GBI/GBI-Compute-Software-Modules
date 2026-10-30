@@ -5,6 +5,9 @@ fresh binary reader. Factories allow chunked storage without staging a tar file.
 The manifest is bounded to 64 MiB; payload size is not bounded by memory.
 """
 
+from collections import deque
+from concurrent.futures import FIRST_EXCEPTION, ThreadPoolExecutor
+from concurrent.futures import wait as _wait_futures
 from contextlib import contextmanager
 import gzip
 import inspect
@@ -16,6 +19,8 @@ import os
 from pathlib import Path, PurePosixPath
 import stat
 import tarfile
+import threading
+import time
 import uuid
 
 from .selection import matches
@@ -350,23 +355,86 @@ def check_metadata_budget(
     }
 
 
+PACK_READERS        = 16
+PACK_PREFETCH_BYTES = 256 * 1024 * 1024
+PACK_PREFETCH_ITEMS = 2048
+PACK_INLINE_BYTES   = 32 * 1024 * 1024
+
+
+def _pack_readers(readers):
+    if readers is None:
+        value   = os.environ.get("GBI_PACK_READERS", "").strip()
+        readers = int(value) if value.isdigit() and int(value) > 0 else PACK_READERS
+    if type(readers) is not int or readers < 1:
+        raise ArchiveError("pack readers must be a positive integer")
+    return readers
+
+
+def _read_entry(root_fd, name, observation):
+    """Read one selected regular file completely on a reader thread.
+
+    The file is opened relative to the pinned source root and its identity is
+    compared with the walk observation before and after the read, so a path
+    component swapped underneath the walk is detected as a different inode.
+    """
+    fd = os.open(
+        name, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC, dir_fd = root_fd
+    )
+    try:
+        if _observation(os.fstat(fd)) != observation:
+            raise ArchiveError("source changed before packing; source kept")
+        expected = observation[3]
+        digest   = hashlib.sha256()
+        blocks   = []
+        total    = 0
+        while True:
+            block = os.read(fd, BLOCK)
+            if not block:
+                break
+            total += len(block)
+            if total > expected:
+                raise ArchiveError("source changed during packing; source kept")
+            digest.update(block)
+            blocks.append(block)
+        if total != expected or _observation(os.fstat(fd)) != observation:
+            raise ArchiveError("source changed during packing; source kept")
+    finally:
+        os.close(fd)
+    return b"".join(blocks), digest.hexdigest()
+
+
 def pack(
             source, output, compression = None, includes = (), exclusions = (),
             reserved_names = (), max_bytes = None, *,
             selection_mode = "basename", selection_prefix = "",
+            readers = None, prefetch_bytes = PACK_PREFETCH_BYTES,
+            inline_bytes = PACK_INLINE_BYTES,
         ):
     """Stream a directory into standard tar/tar+gzip; return cleanup observations.
 
-    Output is caller-owned. Publish it only after success and independent
-    ``verify_archive`` readback. This function never deletes sources.
+    Output is caller-owned. Publish it only after success and the caller's
+    destination proof. This function never deletes sources.
     Filters match recursive basenames by default; ``selection_mode="relative"``
     matches source-relative POSIX segments, with ** spanning zero or more levels.
+
+    Selected regular files up to ``inline_bytes`` are read ahead of the tar
+    writer by ``readers`` threads (``GBI_PACK_READERS`` overrides the default),
+    holding at most ``prefetch_bytes`` of content, so one network round trip per
+    file no longer serialises the whole archive. Larger files stream inline.
+    The tar bytes are identical for any reader count: members are written in
+    walk order and every file is read exactly once.
     """
     selected = _selection(
         includes, exclusions, selection_mode, selection_prefix
     )
     if compression not in (None, "tar", "gzip", "tar.gz"):
         raise ArchiveError("compression must be tar or gzip")
+    readers = _pack_readers(readers)
+    if (
+        type(prefetch_bytes) is not int or prefetch_bytes < 0
+        or type(inline_bytes) is not int or inline_bytes < 0
+    ):
+        raise ArchiveError("pack prefetch bounds must be non-negative integers")
     source = Path(source)
     if (
         source.is_symlink()
@@ -382,151 +450,209 @@ def pack(
     directories = {}
     manifest_bytes, observation_bytes, selected_bytes = 0, 0, 0
     mode = "w|gz" if compression in ("gzip", "tar.gz") else "w|"
-    with (
-        _directory(source) as root_fd,
-        tarfile.open(
-            fileobj = output, mode = mode, format = tarfile.PAX_FORMAT, bufsize = BLOCK
-        ) as archive,
-    ):
-        _add_json(archive, MARKER, {"format": FORMAT, "version": VERSION})
-        for name, info, kind in _walk(source, reserved):
-            _relative(name)
-            path = source / name
-            observations[name] = _observation(info)
-            observation_bytes += len(_json([name, observations[name]]))
-            if observation_bytes > MAX_MANIFEST:
-                raise ArchiveError(
-                    "source observation inventory exceeds the 64 MiB supported limit"
-                )
-            if kind == "directory":
-                directories[name] = info
-                continue
-            if not selected(name):
-                continue
-            if kind == "special":
-                raise ArchiveError(
-                    f"selected source is an unsupported special file: {name!r}"
-                )
-            selected_bytes += info.st_size
-            if max_bytes is not None and selected_bytes > max_bytes:
-                raise ArchiveError(
-                    "selected source exceeds the foreground byte budget; "
-                    "source kept; retry through Slurm"
-                )
-            entry = {
-                "path": name, "type": kind,
-                "mode": stat.S_IMODE(info.st_mode) & 0o777,
-                "mtime_ns": info.st_mtime_ns, "size": info.st_size,
-            }
-            member = tarfile.TarInfo("data/" + name)
-            member.mode  = entry["mode"]
-            member.mtime = info.st_mtime_ns / 1_000_000_000
-            member.pax_headers = {
-                "mtime": str(info.st_mtime_ns // 1_000_000_000)
-                + "."
-                + f"{info.st_mtime_ns % 1_000_000_000:09d}"
-            }
-            if kind == "symlink":
-                with _parent(root_fd, name, create = False) as (parent, leaf):
-                    target = os.readlink(leaf, dir_fd = parent)
-                entry.update(
-                    target = target,
-                    sha256 = hashlib.sha256(os.fsencode(target)).hexdigest(),
-                )
-                member.type     = tarfile.SYMTYPE
-                member.linkname = target
-                archive.addfile(member)
-            elif (info.st_dev, info.st_ino) in hardlinks:
-                target = hardlinks[(info.st_dev, info.st_ino)]
-                entry.update(
-                    type = "hardlink", target = target["path"],
-                    sha256 = target["sha256"],
-                )
-                member.type     = tarfile.LNKTYPE
-                member.linkname = "data/" + target["path"]
-                archive.addfile(member)
-            else:
-                with _parent(root_fd, name, create = False) as (parent, leaf):
-                    fd = os.open(
-                        leaf, os.O_RDONLY | os.O_NOFOLLOW, dir_fd = parent
-                    )
-                with os.fdopen(fd, "rb") as stream:
-                    if (
-                        _observation(os.fstat(stream.fileno()))
-                        != observations[name]
-                    ):
+    pool = ThreadPoolExecutor(
+        max_workers = readers, thread_name_prefix = "gbi-pack"
+    )
+    try:
+        with (
+            _directory(source) as root_fd,
+            tarfile.open(
+                fileobj = output, mode = mode, format = tarfile.PAX_FORMAT,
+                bufsize = BLOCK,
+            ) as archive,
+        ):
+            _add_json(archive, MARKER, {"format": FORMAT, "version": VERSION})
+            walk      = _walk(source, reserved)
+            pending   = deque()
+            queued    = set()
+            state     = {"inflight": 0, "exhausted": False}
+
+            def admit():
+                nonlocal observation_bytes, selected_bytes
+                while (
+                    not state["exhausted"]
+                    and len(pending) < PACK_PREFETCH_ITEMS
+                    and state["inflight"] < prefetch_bytes
+                ):
+                    try:
+                        name, info, kind = next(walk)
+                    except StopIteration:
+                        state["exhausted"] = True
+                        return
+                    _relative(name)
+                    observations[name] = _observation(info)
+                    observation_bytes += len(_json([name, observations[name]]))
+                    if observation_bytes > MAX_MANIFEST:
                         raise ArchiveError(
-                            "source changed before packing; source kept"
+                            "source observation inventory exceeds the 64 MiB supported limit"
                         )
-                    reader      = _HashReader(stream)
-                    member.size = info.st_size
-                    archive.addfile(member, reader)
-                    if (
-                        stream.read(1)
-                        or _observation(os.fstat(stream.fileno()))
-                        != observations[name]
-                    ):
+                    if kind == "directory":
+                        directories[name] = info
+                        continue
+                    if not selected(name):
+                        continue
+                    if kind == "special":
+                        raise ArchiveError(
+                            f"selected source is an unsupported special file: {name!r}"
+                        )
+                    selected_bytes += info.st_size
+                    if max_bytes is not None and selected_bytes > max_bytes:
+                        raise ArchiveError(
+                            "selected source exceeds the foreground byte budget; "
+                            "source kept; retry through Slurm"
+                        )
+                    future   = None
+                    identity = (info.st_dev, info.st_ino)
+                    if kind == "file" and identity not in queued:
+                        queued.add(identity)
+                        if info.st_size <= inline_bytes:
+                            future = pool.submit(
+                                _read_entry, root_fd, name, observations[name]
+                            )
+                            state["inflight"] += info.st_size
+                    pending.append((name, info, kind, future))
+
+            admit()
+            while pending:
+                name, info, kind, future = pending.popleft()
+                path  = source / name
+                entry = {
+                    "path": name, "type": kind,
+                    "mode": stat.S_IMODE(info.st_mode) & 0o777,
+                    "mtime_ns": info.st_mtime_ns, "size": info.st_size,
+                }
+                member = tarfile.TarInfo("data/" + name)
+                member.mode  = entry["mode"]
+                member.mtime = info.st_mtime_ns / 1_000_000_000
+                member.pax_headers = {
+                    "mtime": str(info.st_mtime_ns // 1_000_000_000)
+                    + "."
+                    + f"{info.st_mtime_ns % 1_000_000_000:09d}"
+                }
+                if kind == "symlink":
+                    with _parent(root_fd, name, create = False) as (parent, leaf):
+                        target = os.readlink(leaf, dir_fd = parent)
+                    entry.update(
+                        target = target,
+                        sha256 = hashlib.sha256(os.fsencode(target)).hexdigest(),
+                    )
+                    member.type     = tarfile.SYMTYPE
+                    member.linkname = target
+                    archive.addfile(member)
+                    if _observation(path.lstat()) != observations[name]:
                         raise ArchiveError(
                             "source changed during packing; source kept"
                         )
-                    entry["sha256"] = reader.hash.hexdigest()
-                hardlinks[(info.st_dev, info.st_ino)] = entry
-            if _observation(path.lstat()) != observations[name]:
-                raise ArchiveError("source changed during packing; source kept")
-            entries.append(entry)
-            manifest_bytes += len(_json(entry)) + 1
-            if manifest_bytes > MAX_MANIFEST:
-                raise ArchiveError(
-                    "archive manifest exceeds the 64 MiB supported limit"
-                )
-        # Retain ancestors of selections and genuinely empty directories. Do
-        # not add unrelated nonempty directories when filters select nothing.
-        required = {
-            str(parent)
-            for e in entries
-            for parent in PurePosixPath(e["path"]).parents
-            if str(parent) != "."
-        }
-        nonempty = {str(PurePosixPath(name).parent) for name in observations}
-        required.update(
-            name
-            for name in directories
-            if name not in nonempty and selected(name)
-        )
-        for name in list(required):
-            required.update(
+                elif (info.st_dev, info.st_ino) in hardlinks:
+                    target = hardlinks[(info.st_dev, info.st_ino)]
+                    entry.update(
+                        type = "hardlink", target = target["path"],
+                        sha256 = target["sha256"],
+                    )
+                    member.type     = tarfile.LNKTYPE
+                    member.linkname = "data/" + target["path"]
+                    archive.addfile(member)
+                    if _observation(path.lstat()) != observations[name]:
+                        raise ArchiveError(
+                            "source changed during packing; source kept"
+                        )
+                elif future is not None:
+                    content, digest = future.result()
+                    state["inflight"] -= info.st_size
+                    member.size = len(content)
+                    archive.addfile(member, io.BytesIO(content))
+                    del content
+                    entry["sha256"] = digest
+                    hardlinks[(info.st_dev, info.st_ino)] = entry
+                else:
+                    with _parent(root_fd, name, create = False) as (parent, leaf):
+                        fd = os.open(
+                            leaf, os.O_RDONLY | os.O_NOFOLLOW, dir_fd = parent
+                        )
+                    with os.fdopen(fd, "rb") as stream:
+                        if (
+                            _observation(os.fstat(stream.fileno()))
+                            != observations[name]
+                        ):
+                            raise ArchiveError(
+                                "source changed before packing; source kept"
+                            )
+                        reader      = _HashReader(stream)
+                        member.size = info.st_size
+                        archive.addfile(member, reader)
+                        if (
+                            stream.read(1)
+                            or _observation(os.fstat(stream.fileno()))
+                            != observations[name]
+                        ):
+                            raise ArchiveError(
+                                "source changed during packing; source kept"
+                            )
+                        entry["sha256"] = reader.hash.hexdigest()
+                    hardlinks[(info.st_dev, info.st_ino)] = entry
+                    if _observation(path.lstat()) != observations[name]:
+                        raise ArchiveError(
+                            "source changed during packing; source kept"
+                        )
+                entries.append(entry)
+                manifest_bytes += len(_json(entry)) + 1
+                if manifest_bytes > MAX_MANIFEST:
+                    raise ArchiveError(
+                        "archive manifest exceeds the 64 MiB supported limit"
+                    )
+                admit()
+            # Retain ancestors of selections and genuinely empty directories. Do
+            # not add unrelated nonempty directories when filters select nothing.
+            required = {
                 str(parent)
-                for parent in PurePosixPath(name).parents
+                for e in entries
+                for parent in PurePosixPath(e["path"]).parents
                 if str(parent) != "."
+            }
+            nonempty = {str(PurePosixPath(name).parent) for name in observations}
+            required.update(
+                name
+                for name in directories
+                if name not in nonempty and selected(name)
             )
-        for name, info in directories.items():
-            if name not in required:
-                continue
-            entry = {
-                "path": name, "type": "directory",
-                "mode": stat.S_IMODE(info.st_mode) & 0o777,
-                "mtime_ns": info.st_mtime_ns, "size": 0,
-            }
-            member = tarfile.TarInfo("data/" + name)
-            member.type  = tarfile.DIRTYPE
-            member.mode  = entry["mode"]
-            member.mtime = info.st_mtime
-            member.pax_headers = {
-                "mtime": str(info.st_mtime_ns // 1_000_000_000)
-                + "."
-                + f"{info.st_mtime_ns % 1_000_000_000:09d}"
-            }
-            archive.addfile(member)
-            entries.append(entry)
-        manifest = {"format": FORMAT, "version": VERSION, "entries": entries}
-        _add_json(archive, MANIFEST, manifest)
+            for name in list(required):
+                required.update(
+                    str(parent)
+                    for parent in PurePosixPath(name).parents
+                    if str(parent) != "."
+                )
+            for name, info in directories.items():
+                if name not in required:
+                    continue
+                entry = {
+                    "path": name, "type": "directory",
+                    "mode": stat.S_IMODE(info.st_mode) & 0o777,
+                    "mtime_ns": info.st_mtime_ns, "size": 0,
+                }
+                member = tarfile.TarInfo("data/" + name)
+                member.type  = tarfile.DIRTYPE
+                member.mode  = entry["mode"]
+                member.mtime = info.st_mtime
+                member.pax_headers = {
+                    "mtime": str(info.st_mtime_ns // 1_000_000_000)
+                    + "."
+                    + f"{info.st_mtime_ns % 1_000_000_000:09d}"
+                }
+                archive.addfile(member)
+                entries.append(entry)
+            manifest = {"format": FORMAT, "version": VERSION, "entries": entries}
+            _add_json(archive, MANIFEST, manifest)
+    except BaseException:
+        pool.shutdown(wait = False, cancel_futures = True)
+        raise
+    finally:
+        pool.shutdown(wait = True)
     manifest["_source"] = {
         "root": root_before, "observations": observations,
         "reserved": list(reserved),
     }
     verify_source(source, manifest)
     return manifest
-
 
 @contextmanager
 def _reader(source):
@@ -967,12 +1093,175 @@ def _verify_source_content(
         return observation
 
 
+CLEANUP_WORKERS           = 1
+DESTINATION_CHECK_SECONDS = 30.0
+
+
+def _cleanup_workers(workers):
+    if type(workers) is not int or workers < 1:
+        raise ArchiveError("cleanup workers must be a positive integer")
+    return workers
+
+
+def _run_windowed(pool, function, items, *, window, on_tick = None, interval = None):
+    """Run ``function(item)`` for every item with bounded submission; sum results.
+
+    ``on_tick`` runs on the calling thread at least every ``interval`` seconds
+    while work is outstanding. Any failure stops further submission, lets the
+    calls already running finish, and is raised.
+    """
+    items   = iter(items)
+    pending = set()
+    total   = 0
+    last    = time.monotonic()
+
+    def submit_more():
+        while len(pending) < window:
+            try:
+                item = next(items)
+            except StopIteration:
+                return False
+            pending.add(pool.submit(function, item))
+        return True
+
+    more = submit_more()
+    try:
+        while pending:
+            timeout = (
+                None if interval is None
+                else max(0.0, interval - (time.monotonic() - last))
+            )
+            done, _ = _wait_futures(
+                pending, timeout = timeout, return_when = FIRST_EXCEPTION
+            )
+            for future in done:
+                pending.discard(future)
+                total += future.result()
+            if on_tick is not None and (
+                not done or time.monotonic() - last >= interval
+            ):
+                on_tick()
+                last = time.monotonic()
+            if more:
+                more = submit_more()
+    except BaseException:
+        for future in pending:
+            future.cancel()
+        for future in pending:
+            if not future.cancelled():
+                try:
+                    future.result()
+                except BaseException:
+                    pass
+        raise
+    return total
+
+
+def _remove_selected_directories(
+            root_fd, entries, evidence, check_destination, missing = (),
+        ):
+    """Remove emptied selected directories deepest first; keep nonempty ones."""
+    import errno
+
+    check_destination()
+    for entry in sorted(
+        (e for e in entries if e["type"] == "directory"),
+        key = lambda e: e["path"].count("/"), reverse = True,
+    ):
+        if entry["path"] in missing:
+            continue
+        with _parent(root_fd, entry["path"], create = False) as (parent, name):
+            now = os.stat(name, dir_fd = parent, follow_symlinks = False)
+            if [now.st_dev, now.st_ino, now.st_mode] != evidence[
+                entry["path"]
+            ][:3]:
+                raise ArchiveError(
+                    "selected source directory changed; directory kept"
+                )
+            try:
+                os.rmdir(name, dir_fd = parent)
+            except OSError as error:
+                if error.errno not in (errno.ENOTEMPTY, errno.EEXIST):
+                    raise
+
+
+def _unlink_groups(
+            root_fd, groups, evidence, *, fresh_entries, verified_entries,
+            removed_inodes, check_destination, on_remove, workers, interval,
+            pool,
+        ):
+    """Unlink selected entries on ``workers`` threads, one hardlink group per call.
+
+    Names of one inode are unlinked in manifest order by a single call, so the
+    ctime change that unlinking a hardlink's other name causes is tolerated
+    exactly as the sequential path tolerates it. The destination check runs on
+    the calling thread every ``interval`` seconds instead of before each unlink.
+    Returns ``(count, freed_bytes)``.
+    """
+    lock  = threading.Lock()
+    freed = [0]
+
+    def unlink_group(group):
+        key      = tuple(evidence[group[0]["path"]][:2])
+        unlinked = key in removed_inodes
+        count    = 0
+        for entry in group:
+            before = evidence[entry["path"]]
+            # Later names of one inode share the payload just verified for its
+            # first name; only their identity, size, mode and mtime are checked
+            # below, since unlinking the first name changed their ctime.
+            if not unlinked:
+                _verify_source_content(
+                    root_fd, entry, before, fresh_entries = fresh_entries,
+                    verified_entries = verified_entries,
+                )
+            with _parent(root_fd, entry["path"], create = False) as (
+                parent, name,
+            ):
+                now = os.stat(name, dir_fd = parent, follow_symlinks = False)
+                if (
+                    stat.S_ISDIR(now.st_mode)
+                    or _observation(now)[:5] != before[:5]
+                ):
+                    raise ArchiveError(
+                        "selected source changed before removal; remaining sources kept"
+                    )
+                os.unlink(name, dir_fd = parent)
+            unlinked = True
+            count   += 1
+            with lock:
+                if entry["type"] in ("file", "hardlink"):
+                    freed[0] += entry["size"]
+                if on_remove is not None:
+                    on_remove(entry)
+        return count
+
+    count = _run_windowed(
+        pool, unlink_group, groups, window = workers * 32,
+        on_tick = check_destination, interval = interval,
+    )
+    return count, freed[0]
+
+
+def _inode_groups(entries, evidence):
+    groups = {}
+    for entry in entries:
+        groups.setdefault(tuple(evidence[entry["path"]][:2]), []).append(entry)
+    return list(groups.values())
+
+
 def cleanup_source(
             source, manifest, stored_archive, destination_unchanged = None, *,
             on_remove = None, on_verified = None, verify_stored_archive = None,
             fresh_source_manifest = None, verified_archive = None,
+            workers = CLEANUP_WORKERS,
+            destination_check_interval = DESTINATION_CHECK_SECONDS,
         ):
     """Explicit move cleanup: full archive readback, stable tree, exact unlinks.
+
+    ``workers`` above one verifies and unlinks on that many threads; the
+    destination check then runs once before the first unlink, every
+    ``destination_check_interval`` seconds while unlinking, and once after.
 
     Caller must retain its normal source/destination lock and immutable receipt.
     No recursive deletion; new or unselected entries are never removed.
@@ -980,11 +1269,15 @@ def cleanup_source(
     so callers can account for a partial cleanup if a later check fails.
     ``on_verified()`` publishes the caller's receipt after full destination and
     source verification, before any unlink. A failed publication keeps sources.
-    ``verify_stored_archive()`` may wrap ``verify_archive`` in the caller's
-    bounded transport retry policy; it must perform the same complete check.
+    ``verify_stored_archive()`` is the caller's destination proof: either the
+    complete ``verify_archive`` readback under its transport retry policy, or
+    an equivalent proof the caller maintains (for example server-verified
+    upload checksums plus a pinned-identity listing of every stored object).
     ``fresh_source_manifest`` is only the current in-memory ``pack`` result;
-    journal resumes must leave it unset.
+    journal resumes must leave it unset. With it, entries whose six-field
+    observation still matches are not re-read.
     """
+    workers = _cleanup_workers(workers)
     if destination_unchanged is None:
         if isinstance(stored_archive, (str, os.PathLike)):
             destination_before = _observation(Path(stored_archive).lstat())
@@ -1046,6 +1339,40 @@ def cleanup_source(
     removed         = 0
     evidence        = manifest["_source"]["observations"]
     unlinked_inodes = set()
+    if workers > 1:
+        files = [e for e in manifest["entries"] if e["type"] != "directory"]
+        with (
+            _directory(source) as root_fd,
+            ThreadPoolExecutor(
+                max_workers = workers, thread_name_prefix = "gbi-cleanup"
+            ) as pool,
+        ):
+            # Verify EVERY selected entry before the first unlink, in parallel.
+            def verify(entry):
+                _verify_source_content(
+                    root_fd, entry, evidence[entry["path"]],
+                    fresh_entries = fresh_entries,
+                )
+                return 0
+
+            _run_windowed(pool, verify, files, window = workers * 32)
+            verify_source(source, manifest)
+            check_destination()
+            if on_verified is not None:
+                on_verified()
+            check_destination(force = True)
+            removed, _freed = _unlink_groups(
+                root_fd, _inode_groups(files, evidence), evidence,
+                fresh_entries = fresh_entries, verified_entries = None,
+                removed_inodes = set(), check_destination = check_destination,
+                on_remove = on_remove, workers = workers,
+                interval = destination_check_interval, pool = pool,
+            )
+            _remove_selected_directories(
+                root_fd, manifest["entries"], evidence, check_destination
+            )
+            check_destination(force = True)
+        return removed
     with _directory(source) as root_fd:
         # Read EVERY selected payload before the first unlink. A late corrupt
         # or changed entry cannot turn a failed preflight into a partial move.
@@ -1119,8 +1446,14 @@ def resume_cleanup_source(
             source, manifest, stored_archive, destination_unchanged = None, *,
             on_verified = None, verify_stored_archive = None,
             verified_archive = None, fresh_source_manifest = None,
+            on_remove = None, workers = CLEANUP_WORKERS,
+            destination_check_interval = DESTINATION_CHECK_SECONDS,
         ):
     """Resume exact cleanup from a verified archive journal.
+
+    ``workers`` above one verifies and unlinks on that many threads with the
+    destination check once before, periodically during, and once after the
+    unlinks; ``on_remove(entry)`` records each successful unlink.
 
     Missing entries that were selected by the original manifest are treated as
     already removed.  Every remaining source entry is revalidated; additions,
@@ -1196,6 +1529,7 @@ def resume_cleanup_source(
             )
         return current, missing
 
+    workers = _cleanup_workers(workers)
     fresh_entries = _fresh_source_entries(fresh_source_manifest) or {}
     current, missing = inventory()
     removed_inodes = {
@@ -1204,7 +1538,37 @@ def resume_cleanup_source(
         if name in selected_entries
     }
     verified_entries = {}
+    verified_lock    = threading.Lock()
+    pool = (
+        ThreadPoolExecutor(max_workers = workers, thread_name_prefix = "gbi-cleanup")
+        if workers > 1 else None
+    )
+
+    def verify_selected(root_fd, name, observation):
+        entry  = selected_entries[name]
+        before = expected[name]
+        verified_observation = _verify_source_content(
+            root_fd, entry, before,
+            allow_ctime_change = tuple(observation[:2]) in removed_inodes,
+            fresh_entries = fresh_entries,
+        )
+        if verified_observation == before:
+            with verified_lock:
+                verified_entries[name] = (entry, before)
+        return 0
+
     with _directory(source) as root_fd:
+        if pool is not None:
+            _run_windowed(
+                pool, lambda item: verify_selected(root_fd, *item),
+                (
+                    (name, observation)
+                    for name, observation in current.items()
+                    if name in selected_entries
+                    and not stat.S_ISDIR(expected[name][2])
+                ),
+                window = workers * 32,
+            )
         for name, observation in current.items():
             before = expected[name]
             if name in selected_entries:
@@ -1213,15 +1577,8 @@ def resume_cleanup_source(
                         raise ArchiveError(
                             f"source directory changed during resumed cleanup: {name}"
                         )
-                else:
-                    entry = selected_entries[name]
-                    verified_observation = _verify_source_content(
-                        root_fd, entry, before,
-                        allow_ctime_change = tuple(observation[:2])
-                        in removed_inodes, fresh_entries = fresh_entries,
-                    )
-                    if verified_observation == before:
-                        verified_entries[name] = (entry, before)
+                elif pool is None:
+                    verify_selected(root_fd, name, observation)
             elif stat.S_ISDIR(before[2]):
                 if observation[:3] != before[:3]:
                     raise ArchiveError(
@@ -1259,6 +1616,27 @@ def resume_cleanup_source(
     freed_bytes     = 0
     removed_count   = 0
     unlinked_inodes = set(removed_inodes)
+    if pool is not None:
+        remaining = [
+            entry for entry in manifest["entries"]
+            if entry["type"] != "directory" and entry["path"] not in missing
+        ]
+        with _directory(source) as root_fd, pool:
+            removed_count, freed_bytes = _unlink_groups(
+                root_fd, _inode_groups(remaining, expected), expected,
+                fresh_entries = fresh_entries, verified_entries = verified_entries,
+                removed_inodes = removed_inodes,
+                check_destination = check_destination, on_remove = on_remove,
+                workers = workers, interval = destination_check_interval,
+                pool = pool,
+            )
+            _remove_selected_directories(
+                root_fd, manifest["entries"], expected, check_destination,
+                missing = missing,
+            )
+        inventory()
+        check_destination(force = True)
+        return {"removed": removed_count, "freed_bytes": freed_bytes}
     with _directory(source) as root_fd:
         for entry in manifest["entries"]:
             if entry["type"] == "directory" or entry["path"] in missing:
@@ -1287,6 +1665,8 @@ def resume_cleanup_source(
                 removed_count += 1
                 if entry["type"] in ("file", "hardlink"):
                     freed_bytes += entry["size"]
+                if on_remove is not None:
+                    on_remove(entry)
         for entry in sorted(
             (e for e in manifest["entries"] if e["type"] == "directory"),
             key = lambda e: e["path"].count("/"), reverse = True,
