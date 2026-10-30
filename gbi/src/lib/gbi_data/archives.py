@@ -358,6 +358,38 @@ def check_metadata_budget(
             "archive source must be a directory without symlink parents"
         )
     reserved = (".gbi", ".prefect-*", "transfer-locks", *reserved_names)
+    with _directory(source) as root_fd:
+        root_before = _observation(os.fstat(root_fd))
+
+        def read_target(name):
+            with _parent(root_fd, name, create = False) as (parent, leaf):
+                return os.readlink(leaf, dir_fd = parent)
+
+        result = _metadata_budget(
+            _walk(source, reserved), selected, read_target = read_target,
+            visit = visit, max_bytes = max_bytes,
+        )
+        if (
+            _observation(os.fstat(root_fd)) != root_before
+            or _observation(source.lstat()) != root_before
+        ):
+            raise ArchiveError(
+                "source directory changed during archive preflight; source kept"
+            )
+    return result
+
+
+def _metadata_budget(
+            entries, selected, *, read_target, visit = lambda: None,
+            max_bytes = None,
+        ):
+    """Account the manifest and observation sizes of an entry stream.
+
+    ``entries`` yields ``(name, info, kind)`` in walk order, as ``_walk``
+    does; ``read_target`` returns a symlink's target. The same accounting
+    serves a live directory scan and the planner's replay of an inventory it
+    already holds, so both agree to the byte.
+    """
     directories, hardlinks = {}, {}
     required, nonempty = set(), set()
     entries_bytes     = 0
@@ -375,69 +407,59 @@ def check_metadata_budget(
                 "choose smaller source folders or use --pack-small"
             )
 
-    with _directory(source) as root_fd:
-        root_before = _observation(os.fstat(root_fd))
-        for name, info, kind in _walk(source, reserved):
-            visit()
-            _relative(name)
-            observation_bytes += len(_json([name, _observation(info)]))
-            if observation_bytes > MAX_MANIFEST:
-                raise ArchiveError(
-                    "source observation inventory exceeds the 64 MiB supported limit; "
-                    "choose smaller source folders or use --pack-small"
-                )
-            nonempty.add(str(PurePosixPath(name).parent))
-            if kind == "directory":
-                directories[name] = info
-                continue
-            if not selected(name):
-                continue
-            if kind == "special":
-                raise ArchiveError(
-                    f"selected source is an unsupported special file: {name!r}"
-                )
-            selected_bytes += info.st_size
-            if max_bytes is not None and selected_bytes > max_bytes:
-                raise ArchiveError(
-                    "selected source exceeds the foreground byte budget; "
-                    "source kept; retry through Slurm"
-                )
-            target = None
-            if kind == "symlink":
-                with _parent(root_fd, name, create = False) as (parent, leaf):
-                    target = os.readlink(leaf, dir_fd = parent)
-            elif (info.st_dev, info.st_ino) in hardlinks:
-                kind, target = "hardlink", hardlinks[(info.st_dev, info.st_ino)]
-            else:
-                hardlinks[(info.st_dev, info.st_ino)] = name
-            account(_metadata_entry(name, info, kind, target))
-            required.update(
-                str(parent)
-                for parent in PurePosixPath(name).parents
-                if str(parent) != "."
-            )
-        required.update(
-            name
-            for name in directories
-            if name not in nonempty and selected(name)
-        )
-        for name in list(required):
-            required.update(
-                str(parent)
-                for parent in PurePosixPath(name).parents
-                if str(parent) != "."
-            )
-        for name, info in directories.items():
-            visit()
-            if name in required:
-                account(_metadata_entry(name, info, "directory"))
-        if (
-            _observation(os.fstat(root_fd)) != root_before
-            or _observation(source.lstat()) != root_before
-        ):
+    for name, info, kind in entries:
+        visit()
+        _relative(name)
+        observation_bytes += len(_json([name, _observation(info)]))
+        if observation_bytes > MAX_MANIFEST:
             raise ArchiveError(
-                "source directory changed during archive preflight; source kept"
+                "source observation inventory exceeds the 64 MiB supported limit; "
+                "choose smaller source folders or use --pack-small"
             )
+        nonempty.add(str(PurePosixPath(name).parent))
+        if kind == "directory":
+            directories[name] = info
+            continue
+        if not selected(name):
+            continue
+        if kind == "special":
+            raise ArchiveError(
+                f"selected source is an unsupported special file: {name!r}"
+            )
+        selected_bytes += info.st_size
+        if max_bytes is not None and selected_bytes > max_bytes:
+            raise ArchiveError(
+                "selected source exceeds the foreground byte budget; "
+                "source kept; retry through Slurm"
+            )
+        target = None
+        if kind == "symlink":
+            target = read_target(name)
+        elif (info.st_dev, info.st_ino) in hardlinks:
+            kind, target = "hardlink", hardlinks[(info.st_dev, info.st_ino)]
+        else:
+            hardlinks[(info.st_dev, info.st_ino)] = name
+        account(_metadata_entry(name, info, kind, target))
+        required.update(
+            str(parent)
+            for parent in PurePosixPath(name).parents
+            if str(parent) != "."
+        )
+    required.update(
+        name
+        for name in directories
+        if name not in nonempty and selected(name)
+    )
+    for name in list(required):
+        required.update(
+            str(parent)
+            for parent in PurePosixPath(name).parents
+            if str(parent) != "."
+        )
+    for name, info in directories.items():
+        visit()
+        if name in required:
+            account(_metadata_entry(name, info, "directory"))
     return {
         "entries": count,
         "manifest_bytes": _manifest_size(entries_bytes, count),
