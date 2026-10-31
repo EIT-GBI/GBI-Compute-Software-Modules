@@ -222,6 +222,42 @@ metadata. Objects uploaded through Alluxio or another tool may lack it.
 Use the ordinary route to verify and reuse those destinations. Prefect
 restores still verify ordinary objects without that archive-upload metadata.
 
+## Warm the cache before a job
+
+Object Storage mounts cache a file's blocks on the storage workers the first
+time anyone reads them, so the first pass over a cold dataset runs at Object
+Storage speed and later passes at cache speed. `gbi data cache` does that first
+pass for you, ahead of the job that needs the data:
+
+```bash
+# First line of a job script, or a Slurm prolog: return when the blocks are cached.
+gbi data cache /mnt/user-data/$USER/dataset
+
+# Several paths, more readers, and a wall-time bound for a prolog.
+gbi data cache /mnt/team/my-lab/shared/reference /mnt/user-data/$USER/models \
+  --jobs 8 --timeout 900
+
+# Count what would be read without reading it.
+gbi data cache /mnt/user-data/$USER/dataset --dry-run
+```
+
+It reads every regular file below each path once, through your own mount and
+with your own permissions, using a bounded number of parallel readers (`--jobs`,
+default the site's `jobs` setting, at most 32). It needs no credential and
+writes nothing. Symbolic links are skipped, never followed; the transfer state
+folders are skipped. Running it again is cheap because warm blocks are served
+from the cache, so it is safe to repeat before every job. Paths must be inside
+an Object Storage mount: your personal root, or a team or shared mount you can
+read. Lustre and FSS paths are refused because they have no block cache.
+
+Exit codes: `0` every file was read; `1` some files could not be read (each is
+listed; the rest were still warmed); `2` the request was refused before any
+read; `3` `--timeout` stopped it before every file was read. `--json` prints
+one summary line (files, bytes, seconds, failures, skipped counts) instead of
+progress. The cache is shared and bounded: very large datasets may evict older
+blocks, and a site-wide load with capacity checks remains the Prefect route's
+job.
+
 ## Status and recovery
 
 ```bash

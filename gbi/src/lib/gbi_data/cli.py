@@ -19,7 +19,7 @@ import uuid
 from . import __version__
 from . import jobs
 from . import deadlines
-from . import prefect
+from . import cache, prefect
 from . import format_selection, packing, usage
 from .selection import entries, probe, stream_entries
 from .storage import Site, overlap
@@ -347,6 +347,45 @@ def parser(*, advanced = False):
     usage_command.add_argument(
         "--limit", type = int, default = 20,
         help = "top N folders at each level (default: 20)",
+    )
+    cache_command = verbs.add_parser(
+        "cache",
+        help = "warm the Object Storage cache for paths before a job reads them",
+        description = (
+            "Read every file below PATH once through your own Object Storage mount\n"
+            "so its blocks are cached on the storage workers before a job needs\n"
+            "them. Returns when the last read finishes; repeating it is cheap. Use it\n"
+            "as the first line of a job script or in a prolog. Paths must be inside\n"
+            "an Object Storage (Alluxio) mount: your personal root, a team or shared\n"
+            "mount. Exit codes: 0 warmed, 1 some files could not be read, 2 refused,\n"
+            "3 stopped at --timeout."
+        ),
+        epilog = (
+            "Examples:\n  gbi data cache /mnt/user-data/$USER/dataset\n"
+            "  gbi data cache /mnt/team/my-lab/shared/reference --jobs 8 --timeout 900\n"
+            "  gbi data cache PATH --dry-run"
+        ),
+        formatter_class = argparse.RawDescriptionHelpFormatter,
+    )
+    cache_command.add_argument(
+        "paths", nargs = "+", metavar = "PATH",
+        help = "file or directory inside an Object Storage mount",
+    )
+    cache_command.add_argument(
+        "--jobs", type = int, default = None, metavar = "N",
+        help = f"parallel readers, 1-{cache.MAX_JOBS} (default: the site's jobs setting)",
+    )
+    cache_command.add_argument(
+        "--timeout", type = int, default = 0, metavar = "SECONDS",
+        help = "stop starting new files after this long and exit 3 (default: no limit)",
+    )
+    cache_command.add_argument(
+        "--dry-run", action = "store_true",
+        help = "count files and bytes without reading anything",
+    )
+    cache_command.add_argument(
+        "--json", action = "store_true",
+        help = "print the summary as one JSON line instead of progress",
     )
     # Internal entrypoint used by the generated batch script.  The public
     # subparser metavar above intentionally leaves this choice undocumented.
@@ -1002,6 +1041,8 @@ def main():
                 options.depth, options.limit,
             )
             return 0
+        if options.verb == "cache":
+            return cache.main(options, site)
         if "lustre" not in site.roots or "alluxio" not in site.roots:
             raise ValueError(
                 "the gbi module needs Lustre scratch and Alluxio archive roots"
