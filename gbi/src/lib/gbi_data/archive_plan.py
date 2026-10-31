@@ -111,6 +111,18 @@ def _chunk_size(estimated_bytes, requested):
     return max(requested, math.ceil(estimated_bytes / _MAX_PLANNED_PARTS))
 
 
+def auto_chunk_size(size_bytes):
+    """The part size the automatic planner would give one file of ``size_bytes``.
+
+    The default part size, grown only so that the store stays within the
+    planner's part bound; the CLI uses it to upload a single file through the
+    Prefect chunk route without asking the user for ``--chunk-size``.
+    """
+    if type(size_bytes) is not int or size_bytes < 0:
+        raise ValueError("size_bytes must be a non-negative integer")
+    return _chunk_size(size_bytes, chunks.DEFAULT_CHUNK_SIZE)
+
+
 def _restore_name(target):
     name = (
         target[: -len(_CHUNK_SUFFIX)]

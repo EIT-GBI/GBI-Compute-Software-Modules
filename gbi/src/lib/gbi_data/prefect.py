@@ -16,7 +16,7 @@ from urllib import request as urlrequest
 from urllib.parse import urlsplit
 import uuid
 
-from . import deadlines, jobs, packing
+from . import archive_plan, deadlines, jobs, packing
 from .transfer import write_json
 
 _TOKEN         = None
@@ -136,22 +136,7 @@ def prepare(options, site):
             "restores to Lustre or FSS"
         )
     for value in (source, target):
-        if (
-            len(value.encode()) > 4096
-            or not value.isprintable()
-            or any(character in value for character in "\\*?[]{}")
-        ):
-            raise ValueError(
-                "--prefect requires plain paths without wildcard characters"
-            )
-        if any(
-            part == "transfer-locks"
-            or part.startswith((".gbi", ".prefect", "prefect-transfer-dev"))
-            for part in value.split("/")
-        ):
-            raise ValueError(
-                "transfer state and development prefixes are reserved"
-            )
+        _check_plain_path(value)
     request = {
         "version": 1, "action": "submit", "request_id": str(uuid.uuid4()),
         "operation": operation, "verb": options.verb, "source": source,
@@ -169,28 +154,39 @@ def prepare(options, site):
         request["archive_format"] = pack
     if chunk_size is not None:
         request["chunk_size"] = chunk_size
-        if not (pack or pack_small):
-            # The backend needs an exact store grant for a direct file, not a
-            # broader parent grant. Never infer that shape through symlinks.
-            path = site.roots[source_kind]
-            site.check_root(path)
-            for component in source.split("/"):
-                path = path / component
-                mode = path.lstat().st_mode
-                if stat.S_ISLNK(mode):
-                    raise ValueError(
-                        "Prefect chunk sources must not traverse symlinks"
-                    )
-            if stat.S_ISREG(mode):
-                if target.endswith(".gbi-chunks"):
-                    raise ValueError(
-                        "omit the automatic .gbi-chunks suffix from a direct file destination"
-                    )
-                request["source_is_file"] = True
-            elif not stat.S_ISDIR(mode):
+    if operation.startswith("archive-") and not (pack or pack_small):
+        # A plain or automatic archive of one regular file takes the chunk
+        # route the backend already supports for files: the exact store grant
+        # a direct file needs, never a broader parent grant, and never inferred
+        # through symlinks. Directories keep their request unchanged.
+        try:
+            mode, size = _source_shape(site, source_kind, source)
+        except FileNotFoundError:
+            # A missing source is the backend's report to make, exactly as before.
+            mode, size = stat.S_IFDIR, 0
+        if stat.S_ISREG(mode):
+            if options.include or options.exclude:
                 raise ValueError(
-                    "Prefect chunk source must be a regular file or directory"
+                    "a single-file source takes no --include or --exclude"
                 )
+            if str(options.destination).endswith("/"):
+                # A destination written as a directory receives the file by name.
+                target = target + "/" + source.rsplit("/", 1)[-1]
+                _check_plain_path(target)
+            if target.endswith(".gbi-chunks"):
+                raise ValueError(
+                    "omit the automatic .gbi-chunks suffix from a direct file destination"
+                )
+            request["destination"] = target
+            request["source_is_file"] = True
+            request.pop("archive_auto", None)
+            if chunk_size is None:
+                chunk_size = archive_plan.auto_chunk_size(size)
+                request["chunk_size"] = chunk_size
+        elif not stat.S_ISDIR(mode):
+            raise ValueError(
+                "Prefect source must be a regular file or directory"
+            )
     if pack_small:
         request["pack_small"] = True
         request["packing_policy"] = asdict(
@@ -207,6 +203,38 @@ def prepare(options, site):
     ):
         request["dry_run"] = True
     return request
+
+
+def _check_plain_path(value):
+    if (
+        len(value.encode()) > 4096
+        or not value.isprintable()
+        or any(character in value for character in "\\*?[]{}")
+    ):
+        raise ValueError(
+            "--prefect requires plain paths without wildcard characters"
+        )
+    if any(
+        part == "transfer-locks"
+        or part.startswith((".gbi", ".prefect", "prefect-transfer-dev"))
+        for part in value.split("/")
+    ):
+        raise ValueError(
+            "transfer state and development prefixes are reserved"
+        )
+
+
+def _source_shape(site, source_kind, source):
+    """The mode and size of the source, walked without following any symlink."""
+    path = site.roots[source_kind]
+    site.check_root(path)
+    info = path.lstat()
+    for component in source.split("/"):
+        path = path / component
+        info = path.lstat()
+        if stat.S_ISLNK(info.st_mode):
+            raise ValueError("Prefect sources must not traverse symlinks")
+    return info.st_mode, info.st_size
 
 
 def _validate_result(raw):
@@ -464,6 +492,10 @@ def start(options, site, home):
     if request.get("pack_small"):
         print(
             f"Small-file packing policy: {json.dumps(request['packing_policy'], sort_keys = True)}"
+        )
+    if request.get("source_is_file"):
+        print(
+            f"Single file: uploaded as one resumable chunk store at {request['destination']}.gbi-chunks/"
         )
     if "chunk_size" in request:
         print(
