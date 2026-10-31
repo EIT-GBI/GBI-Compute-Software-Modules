@@ -242,6 +242,90 @@ class Prefect(unittest.TestCase):
                 self.assertNotIn("pack_small", request)
                 self.assertNotIn("dry_run", request)
 
+    def test_a_regular_file_takes_the_chunk_route_without_chunk_size(self):
+        """A plain or --archive request for one file is the direct file store."""
+        from gbi_data import archive_plan, chunks
+
+        for source in ("lustre", "fss"):
+            for flags in ((), ("--archive",)):
+                with self.subTest(source = source, flags = flags):
+                    options = self.options(source, "alluxio", *flags)
+                    path    = Path(options.source)
+                    if path.is_dir():
+                        path.rmdir()
+                    path.write_bytes(b"payload")
+                    request = prefect.prepare(options, self.site)
+                    self.assertTrue(request["source_is_file"])
+                    self.assertEqual(
+                        request["chunk_size"], chunks.DEFAULT_CHUNK_SIZE
+                    )
+                    self.assertNotIn("archive_auto", request)
+                    self.assertEqual(request["source"], "experiment")
+                    self.assertEqual(request["destination"], "experiment")
+                    self.assertEqual(request["include"], [])
+                    path.unlink()
+                    path.mkdir()
+                    request = prefect.prepare(options, self.site)
+                    self.assertNotIn("source_is_file", request)
+                    self.assertNotIn("chunk_size", request)
+                    self.assertEqual(
+                        request.get("archive_auto"), True if flags else None
+                    )
+        self.assertEqual(
+            archive_plan.auto_chunk_size(0), chunks.DEFAULT_CHUNK_SIZE
+        )
+        self.assertEqual(
+            archive_plan.auto_chunk_size(2 ** 40),
+            max(chunks.DEFAULT_CHUNK_SIZE, -(-(2 ** 40) // 4096)),
+        )
+        with self.assertRaises(ValueError):
+            archive_plan.auto_chunk_size(-1)
+
+    def test_a_single_file_keeps_an_explicit_chunk_size_and_dry_run(self):
+        options = self.options("fss", "alluxio", "--chunk-size", "64MiB", "--dry-run")
+        path    = Path(options.source)
+        path.write_bytes(b"payload")
+        request = prefect.prepare(options, self.site)
+        self.assertEqual(request["chunk_size"], 64 * 1024 * 1024)
+        self.assertTrue(request["source_is_file"])
+        self.assertTrue(request["dry_run"])
+        options = self.options("fss", "alluxio", "--dry-run")
+        request = prefect.prepare(options, self.site)
+        self.assertTrue(request["source_is_file"])
+        self.assertTrue(
+            request["dry_run"], "an automatic single-file store is a managed dry run"
+        )
+
+    def test_a_directory_destination_receives_the_file_by_name(self):
+        options = self.options("fss", "alluxio")
+        path    = Path(options.source)
+        path.write_bytes(b"payload")
+        options.destination = str(self.site.roots["alluxio"] / "folder") + "/"
+        request = prefect.prepare(options, self.site)
+        self.assertEqual(request["destination"], "folder/experiment")
+        options.destination = str(self.site.roots["alluxio"] / "renamed")
+        request = prefect.prepare(options, self.site)
+        self.assertEqual(request["destination"], "renamed")
+        options.destination = str(self.site.roots["alluxio"] / "renamed.gbi-chunks")
+        with self.assertRaisesRegex(ValueError, "automatic"):
+            prefect.prepare(options, self.site)
+
+    def test_a_single_file_refuses_filters_symlinks_and_special_files(self):
+        options = self.options("fss", "alluxio", "--include", "*.txt")
+        path    = Path(options.source)
+        path.write_bytes(b"payload")
+        with self.assertRaisesRegex(ValueError, "single-file source"):
+            prefect.prepare(options, self.site)
+        options = self.options("fss", "alluxio")
+        path.unlink()
+        path.symlink_to(self.site.roots["fss"] / "elsewhere")
+        with self.assertRaisesRegex(ValueError, "symlinks"):
+            prefect.prepare(options, self.site)
+        path.unlink()
+        os.mkfifo(path)
+        with self.assertRaisesRegex(ValueError, "regular file or directory"):
+            prefect.prepare(options, self.site)
+
     def test_small_file_policy_matches_ordinary_site_settings(self):
         options = self.options("lustre", "alluxio", "--pack-small")
         Path(options.source).mkdir()

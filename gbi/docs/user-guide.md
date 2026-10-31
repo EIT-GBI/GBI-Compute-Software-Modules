@@ -406,7 +406,11 @@ chunk size does not increase the metadata limit.
 
 `--chunk-size 64MiB` writes verified resumable parts with a final manifest
 and completion marker. For a direct file, give the original destination name
-without `.gbi-chunks`; GBI adds that suffix. Whole-pack targets keep their
+without `.gbi-chunks`; GBI adds that suffix. With `--prefect`, one regular
+file needs no size: a plain or `--archive` request for a file is uploaded as
+that same resumable store with the automatic part size, under the destination
+you name (a destination ending in `/` keeps the file's own name inside it).
+A single file takes no `--include` or `--exclude`. Whole-pack targets keep their
 `.gbi.tar` or `.gbi.tar.gz` suffix and gain `.gbi-chunks` as well.
 An incomplete store is not restorable before its completion marker validates.
 
