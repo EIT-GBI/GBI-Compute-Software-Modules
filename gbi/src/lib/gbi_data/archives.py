@@ -98,6 +98,41 @@ def _observation(info):
     ]
 
 
+def _mountinfo_identity(text, device):
+    """The ``(fstype, source)`` of the mount that owns ``device`` in mountinfo.
+
+    ``text`` is ``/proc/self/mountinfo``; ``device`` is a ``st_dev``.  Bind
+    mounts repeat a device with the same type and source, so the first line
+    whose ``major:minor`` matches is enough.  Returns ``None`` when no line
+    matches or the file is malformed.
+    """
+    wanted = f"{os.major(device)}:{os.minor(device)}"
+    for line in text.splitlines():
+        head, separator, tail = line.partition(" - ")
+        fields = head.split()
+        rest   = tail.split()
+        if not separator or len(fields) < 5 or len(rest) < 2:
+            continue
+        if fields[2] == wanted:
+            return [rest[0], rest[1]]
+    return None
+
+
+def _filesystem_identity(info):
+    """A client-independent identity of the filesystem holding ``info``.
+
+    On Linux this is the mount's type and source (for an NFS export, for
+    example ``["nfs4", "10.1.12.97:/gbi-shared"]``), which every client of
+    the same export reports identically.  ``None`` where mountinfo is not
+    available.
+    """
+    try:
+        text = Path("/proc/self/mountinfo").read_text()
+    except OSError:
+        return None
+    return _mountinfo_identity(text, info.st_dev)
+
+
 def _rebased_evidence(evidence, root_info):
     """Return the journal's root and observations numbered for this client.
 
@@ -107,12 +142,20 @@ def _rebased_evidence(evidence, root_info):
     client; the inode, mode, size, mtime and ctime fields and the content
     hashes keep their meaning.  Observations recorded on the root's device are
     renumbered to this client's device only when the root is still the same
-    inode and mode; entries recorded on another device (a mount below the
-    source) keep their recorded number and so fail closed as before.
+    inode and mode and, when the journal recorded the filesystem identity, this
+    client reports the same one; entries recorded on another device (a mount
+    below the source) keep their recorded number and so fail closed as before.
+    A journal written before the identity was recorded relies on the root's
+    inode and mode alone.
     """
+    if "root" not in evidence or "observations" not in evidence:
+        raise ArchiveError("archive has no resumable source observations")
     recorded = evidence["root"]
     current  = _observation(root_info)
     if current[0] == recorded[0] or current[1:3] != recorded[1:3]:
+        return evidence["root"], evidence["observations"]
+    filesystem = evidence.get("filesystem")
+    if filesystem is not None and _filesystem_identity(root_info) != filesystem:
         return evidence["root"], evidence["observations"]
 
     def rebase(observation):
@@ -799,6 +842,7 @@ def pack(
     manifest["_source"] = {
         "root": root_before, "observations": observations,
         "reserved": list(reserved),
+        "filesystem": _filesystem_identity(source.lstat()),
     }
     verify_source(source, manifest)
     return manifest
@@ -1541,7 +1585,7 @@ def cleanup_source(
     verify_source(source, manifest)
     source          = Path(source)
     removed         = 0
-    evidence        = manifest["_source"]["observations"]
+    _, evidence     = _rebased_evidence(manifest["_source"], source.lstat())
     unlinked_inodes = set()
     if workers > 1:
         files = [e for e in manifest["entries"] if e["type"] != "directory"]
@@ -1702,7 +1746,7 @@ def resume_cleanup_source(
 
     source   = Path(source)
     evidence = manifest.get("_source")
-    if not evidence or "observations" not in evidence:
+    if not evidence:
         raise ArchiveError("archive has no resumable source observations")
     root_expected, expected = _rebased_evidence(evidence, source.lstat())
     selected_entries = {

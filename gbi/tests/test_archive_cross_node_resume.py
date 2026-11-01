@@ -9,9 +9,11 @@ root is still the same inode; anything else keeps failing closed.
 
 import copy
 import io
+import os
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from gbi_data import archives
 
@@ -141,6 +143,96 @@ class ArchiveCrossNodeResume(unittest.TestCase):
             )
         self.assertEqual((self.source / "a.txt").read_text(), "alpha, edited")
         self.assertTrue((self.source / "nested" / "b.txt").exists())
+
+    def test_partial_first_attempt_with_hardlinks_resumes_from_another_client(self):
+        (self.source / "nested" / "twin").hardlink_to(self.source / "nested" / "b.txt")
+        stored, manifest = self.packed()
+        other            = _renumbered(manifest)
+        # Attempt one, on the first node, unlinked a root entry and one of the
+        # two hardlink names before it stopped; the surviving name's ctime moved.
+        (self.source / "a.txt").unlink()
+        (self.source / "nested" / "twin").unlink()
+
+        result = archives.resume_cleanup_source(
+            self.source, other, stored, destination_unchanged = lambda: None,
+        )
+
+        self.assertEqual(result["removed"], 2)
+        self.assertFalse((self.source / "nested" / "b.txt").exists())
+        self.assertFalse((self.source / "nested" / "link").is_symlink())
+
+    def test_recorded_filesystem_identity_must_match_before_renumbering(self):
+        stored, manifest = self.packed()
+        export = ["nfs4", "10.1.12.97:/gbi-shared"]
+        other  = _renumbered(manifest)
+        other["_source"]["filesystem"] = export
+
+        with patch.object(archives, "_filesystem_identity", return_value = ["nfs4", "10.1.12.98:/clone"]):
+            with self.assertRaisesRegex(
+                        archives.ArchiveError,
+                        "source root changed during resumed cleanup; remaining sources kept",
+                    ):
+                archives.resume_cleanup_source(
+                    self.source, other, stored, destination_unchanged = lambda: None,
+                )
+            with self.assertRaisesRegex(archives.ArchiveError, "source changed since packing"):
+                archives.verify_source(self.source, other)
+        self.assertTrue((self.source / "a.txt").exists())
+
+        with patch.object(archives, "_filesystem_identity", return_value = None):
+            with self.assertRaisesRegex(archives.ArchiveError, "source root changed during resumed cleanup"):
+                archives.resume_cleanup_source(
+                    self.source, other, stored, destination_unchanged = lambda: None,
+                )
+        self.assertTrue((self.source / "a.txt").exists())
+
+        with patch.object(archives, "_filesystem_identity", return_value = list(export)):
+            result = archives.resume_cleanup_source(
+                self.source, other, stored, destination_unchanged = lambda: None,
+            )
+        self.assertEqual(result["removed"], 3)
+
+    def test_journal_without_identity_relies_on_the_root_inode(self):
+        stored, manifest = self.packed()
+        other            = _renumbered(manifest)
+        other["_source"].pop("filesystem", None)
+        with patch.object(archives, "_filesystem_identity", return_value = ["nfs4", "10.1.12.98:/clone"]):
+            result = archives.resume_cleanup_source(
+                self.source, other, stored, destination_unchanged = lambda: None,
+            )
+        self.assertEqual(result["removed"], 3)
+
+    def test_pack_records_the_filesystem_identity(self):
+        with patch.object(archives, "_filesystem_identity", return_value = ["nfs4", "10.1.12.97:/gbi-shared"]):
+            _, manifest = self.packed()
+        self.assertEqual(manifest["_source"]["filesystem"], ["nfs4", "10.1.12.97:/gbi-shared"])
+        with patch.object(archives, "_filesystem_identity", return_value = None):
+            _, manifest = self.packed()
+        self.assertIsNone(manifest["_source"]["filesystem"])
+
+    def test_mountinfo_parser_finds_the_owning_mount(self):
+        text = "\n".join([
+            "22 29 0:21 / /proc rw,nosuid,nodev,noexec,relatime shared:5 - proc proc rw",
+            "29 1 8:1 / / rw,relatime shared:1 - ext4 /dev/root rw",
+            "150 29 0:52 / /mnt/gbi-shared rw,relatime shared:80 - nfs4 10.1.12.97:/gbi-shared rw,vers=4.1",
+            "151 29 0:52 /home /mnt/bind rw,relatime shared:80 - nfs4 10.1.12.97:/gbi-shared rw,vers=4.1",
+            "malformed line without separator",
+        ])
+        self.assertEqual(
+            archives._mountinfo_identity(text, os.makedev(0, 52)),
+            ["nfs4", "10.1.12.97:/gbi-shared"],
+        )
+        self.assertEqual(archives._mountinfo_identity(text, os.makedev(8, 1)), ["ext4", "/dev/root"])
+        self.assertIsNone(archives._mountinfo_identity(text, os.makedev(8, 2)))
+        self.assertIsNone(archives._mountinfo_identity("", os.makedev(0, 52)))
+
+    def test_journal_without_root_is_refused_as_unresumable(self):
+        stored, manifest = self.packed()
+        del manifest["_source"]["root"]
+        with self.assertRaisesRegex(archives.ArchiveError, "no resumable source observations"):
+            archives.resume_cleanup_source(
+                self.source, manifest, stored, destination_unchanged = lambda: None,
+            )
 
 
 if __name__ == "__main__":
