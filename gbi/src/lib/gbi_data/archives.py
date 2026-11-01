@@ -98,6 +98,34 @@ def _observation(info):
     ]
 
 
+def _rebased_evidence(evidence, root_info):
+    """Return the journal's root and observations numbered for this client.
+
+    NFS gives every client its own ``st_dev`` for the same export, so a cleanup
+    resumed on another Slurm node sees a different device number for an
+    unchanged tree.  The device number identifies a filesystem only within one
+    client; the inode, mode, size, mtime and ctime fields and the content
+    hashes keep their meaning.  Observations recorded on the root's device are
+    renumbered to this client's device only when the root is still the same
+    inode and mode; entries recorded on another device (a mount below the
+    source) keep their recorded number and so fail closed as before.
+    """
+    recorded = evidence["root"]
+    current  = _observation(root_info)
+    if current[0] == recorded[0] or current[1:3] != recorded[1:3]:
+        return evidence["root"], evidence["observations"]
+
+    def rebase(observation):
+        if observation[0] == recorded[0]:
+            return [current[0], *observation[1:]]
+        return observation
+
+    return rebase(recorded), {
+        name: rebase(observation)
+        for name, observation in evidence["observations"].items()
+    }
+
+
 def _kind(info):
     for test, name in (
         (stat.S_ISREG, "file"), (stat.S_ISDIR, "directory"),
@@ -1107,13 +1135,16 @@ def verify_source(source, manifest):
     """Reconcile the complete observed source tree, without reading file payloads."""
     source   = Path(source)
     evidence = manifest.get("_source")
-    if not evidence or _observation(source.lstat()) != evidence["root"]:
+    if not evidence:
+        raise ArchiveError("source changed since packing; source kept")
+    root_expected, observations = _rebased_evidence(evidence, source.lstat())
+    if _observation(source.lstat()) != root_expected:
         raise ArchiveError("source changed since packing; source kept")
     current = {
         name: _observation(info)
         for name, info, _ in _walk(source, evidence.get("reserved", ()))
     }
-    if current != evidence["observations"]:
+    if current != observations:
         raise ArchiveError(
             "source inventory changed since packing; source kept"
         )
@@ -1673,7 +1704,7 @@ def resume_cleanup_source(
     evidence = manifest.get("_source")
     if not evidence or "observations" not in evidence:
         raise ArchiveError("archive has no resumable source observations")
-    expected = evidence["observations"]
+    root_expected, expected = _rebased_evidence(evidence, source.lstat())
     selected_entries = {
         entry["path"]: entry
         for entry in manifest["entries"]
@@ -1691,7 +1722,7 @@ def resume_cleanup_source(
             name: _observation(info)
             for name, info, _ in _walk(source, reserved)
         }
-        if _observation(source.lstat())[:3] != evidence["root"][:3]:
+        if _observation(source.lstat())[:3] != root_expected[:3]:
             raise ArchiveError(
                 "source root changed during resumed cleanup; remaining sources kept"
             )
