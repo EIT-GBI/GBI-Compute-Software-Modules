@@ -1,1 +1,0 @@
-setenv("JAVA",1)

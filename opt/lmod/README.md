@@ -36,3 +36,15 @@ index f9a44cc..95ee8bb 100644
 ```
 
 in order to include `string.h` on mac builds.
+
+## Pruned upstream directories
+
+`github.com/TACC/Lmod` is a vendored copy of upstream Lmod with these
+directories removed, because `configure && make install` never reads them:
+
+- `my_docs/` (conference talks and slides)
+- `rt/` (regression tests)
+- `embed/` (experimental TCL embedding code)
+- `contrib/Presentations/` (slides)
+
+Remove them again when updating the vendored Lmod.

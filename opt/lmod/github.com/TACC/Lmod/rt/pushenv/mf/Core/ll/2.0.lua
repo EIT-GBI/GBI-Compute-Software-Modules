@@ -1,2 +1,0 @@
-pushenv("RTM"," ")
-pushenv("LEWIS","")

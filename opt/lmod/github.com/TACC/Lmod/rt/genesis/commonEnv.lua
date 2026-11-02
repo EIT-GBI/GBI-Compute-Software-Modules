@@ -1,1 +1,0 @@
-CPUTYPE=os.getenv("CPUTYPE")
