@@ -122,7 +122,7 @@ def _filesystem_identity(info):
     """A client-independent identity of the filesystem holding ``info``.
 
     On Linux this is the mount's type and source (for an NFS export, for
-    example ``["nfs4", "10.1.12.97:/gbi-shared"]``), which every client of
+    example ``["nfs4", "198.51.100.8:/gbi-shared"]``), which every client of
     the same export reports identically.  ``None`` where mountinfo is not
     available.
     """
