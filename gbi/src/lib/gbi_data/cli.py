@@ -357,12 +357,15 @@ def parser(*, advanced = False):
             "them. Returns when the last read finishes; repeating it is cheap. Use it\n"
             "as the first line of a job script or in a prolog. Paths must be inside\n"
             "an Object Storage (Alluxio) mount: your personal root, a team or shared\n"
-            "mount. Exit codes: 0 warmed, 1 some files could not be read, 2 refused,\n"
-            "3 stopped at --timeout."
+            "mount, or sequencing data under /mnt/instrument-data (name an\n"
+            "instrument or one of its run folders). --include keeps only files whose\n"
+            "name matches a pattern. Exit codes: 0 warmed, 1 some files could not be\n"
+            "read, 2 refused, 3 stopped at --timeout."
         ),
         epilog = (
             "Examples:\n  gbi data cache /mnt/user-data/$USER/dataset\n"
             "  gbi data cache /mnt/team/my-lab/shared/reference --jobs 8 --timeout 900\n"
+            "  gbi data cache /mnt/instrument-data/illumina_nextseq_1/RUN --include '*.fastq.gz,*.bam'\n"
             "  gbi data cache PATH --dry-run"
         ),
         formatter_class = argparse.RawDescriptionHelpFormatter,
@@ -378,6 +381,13 @@ def parser(*, advanced = False):
     cache_command.add_argument(
         "--timeout", type = int, default = 0, metavar = "SECONDS",
         help = "stop starting new files after this long and exit 3 (default: no limit)",
+    )
+    cache_command.add_argument(
+        "--include", action = "append", default = None, metavar = "PATTERN",
+        help = (
+            "only files whose name matches this glob; repeatable, and a "
+            "comma-separated list is accepted, e.g. --include '*.fastq.gz,*.bam'"
+        ),
     )
     cache_command.add_argument(
         "--dry-run", action = "store_true",

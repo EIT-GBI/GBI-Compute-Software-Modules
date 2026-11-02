@@ -60,9 +60,9 @@ class Cache(unittest.TestCase):
         seen = []
         original = cache.read_file
 
-        def recording(path):
+        def recording(path, advance = None):
             seen.append(Path(path))
-            return original(path)
+            return original(path, advance)
 
         with patch.object(cache, "read_file", recording):
             summary = cache.warm(self.site, [str(data)], jobs = 3)
@@ -92,12 +92,15 @@ class Cache(unittest.TestCase):
     def test_refuses_paths_outside_object_storage_missing_symlinked_or_reserved(self):
         data, _files = self.tree()
         (self.lustre / "scratch").mkdir()
+        (self.base / "outward").symlink_to(self.lustre / "scratch")
+        (self.base / "dangling").symlink_to(self.base / "gone")
         for raw, message in (
             (self.lustre / "scratch", "not inside an Object Storage mount"),
             (data / "absent", "does not exist"),
-            (data / "link", "symbolic link"),
+            (self.base / "outward", "not inside an Object Storage mount"),
+            (self.base / "dangling", "cannot be resolved"),
             (data / ".gbi", "reserved"),
-            (self.base / "elsewhere", "not inside an Object Storage mount"),
+            (self.base / "elsewhere", "does not exist"),
         ):
             with self.subTest(raw = raw):
                 with self.assertRaisesRegex(cache.CacheError, message):
@@ -125,9 +128,9 @@ class Cache(unittest.TestCase):
         data, _files = self.tree()
         original = cache.read_file
 
-        def slow(path):
+        def slow(path, advance = None):
             time.sleep(0.15)
-            return original(path)
+            return original(path, advance)
 
         with patch.object(cache, "read_file", slow):
             summary = cache.warm(self.site, [str(data)], jobs = 1, timeout = 1)
@@ -146,10 +149,10 @@ class Cache(unittest.TestCase):
         data, files = self.tree()
         original = cache.read_file
 
-        def failing(path):
+        def failing(path, advance = None):
             if Path(path).name == "one.bin":
                 raise OSError(5, "simulated input/output error")
-            return original(path)
+            return original(path, advance)
 
         with patch.object(cache, "read_file", failing):
             summary = cache.warm(self.site, [str(data)], jobs = 2)
@@ -201,6 +204,85 @@ class Cache(unittest.TestCase):
                 )
         self.assertEqual(code, cache.EXIT_PARTIAL)
 
+    def test_named_symlinks_are_followed_once_and_links_below_still_skipped(self):
+        data, files = self.tree()
+        farm = self.base / "instrument-data"
+        farm.mkdir()
+        (farm / "nextseq").symlink_to(data)
+        summary = cache.warm(self.site, [str(farm / "nextseq")], jobs = 2)
+        self.assertEqual(summary["read_files"], 4)
+        self.assertEqual(summary["paths"], [str(data)])
+        self.assertEqual(summary["skipped"]["symlinks"], 1)
+        below = cache.warm(self.site, [str(farm / "nextseq" / "a")], jobs = 1)
+        self.assertEqual(below["files"], 2)
+        single = cache.warm(self.site, [str(data / "link")], jobs = 1)
+        self.assertEqual((single["files"], single["read_bytes"]), (1, 11))
+        self.assertEqual(single["paths"], [str(data / "three.bin")])
+
+    def test_include_patterns_select_files_by_name(self):
+        data, files = self.tree()
+        summary = cache.warm(
+            self.site, [str(data)], jobs = 2, include = ("one.*", "*three*")
+        )
+        self.assertEqual(summary["files"], 2)
+        self.assertEqual(summary["read_bytes"], 3000 + 11)
+        self.assertEqual(summary["skipped"]["excluded"], 2)
+        self.assertEqual(summary["include"], ["one.*", "*three*"])
+        single = cache.warm(
+            self.site, [str(data / "three.bin")], jobs = 1, include = ("*.bam",),
+            dry_run = True,
+        )
+        self.assertEqual((single["files"], single["skipped"]["excluded"]), (0, 1))
+        for bad in (("",), (3,)):
+            with self.assertRaisesRegex(cache.CacheError, "--include"):
+                cache.warm(self.site, [str(data)], jobs = 1, include = bad, dry_run = True)
+        out = io.StringIO()
+        with redirect_stdout(out):
+            code = cache.main(
+                self.options(str(data), "--include", "*.bin,", "--include", "nothing", "--json"),
+                self.site,
+            )
+        self.assertEqual(code, cache.EXIT_OK)
+        summary = json.loads(out.getvalue().strip().splitlines()[-1])
+        self.assertEqual(summary["include"], ["*.bin", "nothing"])
+        self.assertEqual(summary["read_files"], 4)
+        out = io.StringIO()
+        with redirect_stdout(out):
+            code = cache.main(self.options(str(data), "--include", "*.bam", "--dry-run"), self.site)
+        self.assertEqual(code, cache.EXIT_OK)
+        self.assertIn("Patterns *.bam: 4 files excluded.", out.getvalue())
+
+    def test_scans_and_reads_report_progress_to_the_supervisor(self):
+        data, files = self.tree()
+        events   = []
+        original = cache.read_file
+
+        def slow(path, advance = None):
+            time.sleep(0.05)
+            return original(path, advance)
+
+        def record(phase = None, path = None, **details):
+            events.append((phase, str(path), details))
+
+        with patch.object(cache.deadlines, "event", record), \
+                patch.object(cache, "HEARTBEAT_SECONDS", 0.01), \
+                patch.object(cache, "read_file", slow):
+            summary = cache.warm(self.site, [str(data)], jobs = 2)
+        self.assertEqual(summary["read_files"], 4)
+        scans = sorted(path for phase, path, _ in events if phase == "scanning for files")
+        self.assertEqual(
+            scans, sorted(str(d) for d in (data, data / "a", data / "a" / "deep"))
+        )
+        beats = [details for phase, _, details in events if phase == "warming the cache"]
+        self.assertGreaterEqual(len(beats), 2)
+        self.assertEqual(beats[0]["counters"]["bytes"], 0)
+        self.assertEqual(beats[-1]["counters"]["bytes"], summary["read_bytes"])
+        # Nothing is reported for a dry run beyond the scan itself.
+        events.clear()
+        with patch.object(cache.deadlines, "event", record):
+            cache.warm(self.site, [str(data)], jobs = 1, dry_run = True)
+        self.assertEqual({phase for phase, _, _ in events}, {"scanning for files"})
+
     def test_help_lists_the_verb(self):
         out = io.StringIO()
         with redirect_stdout(out), self.assertRaises(SystemExit):
@@ -208,6 +290,8 @@ class Cache(unittest.TestCase):
         text = out.getvalue().lower().replace("\n", " ")
         self.assertIn("object storage mount", text)
         self.assertIn("--timeout", text)
+        self.assertIn("--include", text)
+        self.assertIn("instrument-data", text)
         self.assertIn("exit codes: 0 warmed", text)
 
 
