@@ -1,40 +1,38 @@
-"""Warm the Object Storage cache for paths a job is about to read.
+"""Load paths into the Object Storage cache with the native Alluxio load.
 
-Every Alluxio-backed mount on the cluster caches a block on its workers the
-first time a client reads it (``alluxio.user.file.readtype.default=CACHE``).
-``gbi data cache`` therefore needs no credential and no service: it reads
-every regular file below the paths you name, once, through your own mount,
-with a bounded number of parallel readers, and returns when the last read has
-finished. A second run re-reads warm blocks at cache speed, so the command is
-safe to repeat, for example as the first line of a job script or a prolog.
+``gbi data cache PATH`` resolves each path on this node and hands it to the
+site's identity-binding broker. The broker maps the mount to an Alluxio
+cluster and namespace path and submits one native load, which every storage
+worker serves in parallel, so the data lands in the cache faster than any
+single reader could pull it. The command waits until the blocks are cached and
+returns one line per path. Nothing is read through this node and nothing is
+written. Repeating the command is cheap: resident blocks are not loaded again.
 """
 
-import fnmatch
 import json
 import os
-import stat
 import sys
-import threading
 import time
-from collections import deque
-from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
+import uuid
 from pathlib import Path
 
-from . import deadlines
+from . import deadlines, jobs, prefect
+from .transfer import write_json
 
-BLOCK             = 1024 * 1024
-MAX_JOBS          = 32
-PROGRESS_SECONDS  = 2.0
-HEARTBEAT_SECONDS = 5.0
+POLL_SECONDS      = 3
+HEARTBEAT_SECONDS = 60
+RETRY_HINT        = "run the same command again"
 
 EXIT_OK      = 0
 EXIT_FAILED  = 1
 EXIT_REFUSED = 2
 EXIT_PARTIAL = 3
 
+FAILED_STATES = {"FAILED", "CRASHED", "CANCELLED", "NOT_SUBMITTED"}
+
 
 class CacheError(ValueError):
-    """A refused request: nothing was read."""
+    """A refused request: nothing was submitted."""
 
 
 def resolve(site, raw):
@@ -43,7 +41,7 @@ def resolve(site, raw):
     The path you name may itself be a symbolic link, or lie below one, as the
     ``/mnt/instrument-data`` entries do (each is a link to a sequencing
     mount): it is followed here, once, and must land inside an Object Storage
-    mount.  Links met below it during the walk are skipped, never followed.
+    mount. The broker checks the resolved path against the site's mount map.
     """
     named = Path(raw).expanduser().absolute()
     if not os.path.lexists(named):
@@ -64,221 +62,6 @@ def resolve(site, raw):
     return located, root
 
 
-def _selected(name, include):
-    return not include or any(
-        fnmatch.fnmatchcase(name, pattern) for pattern in include
-    )
-
-
-def walk(site, located, root, skipped, include = ()):
-    """Regular files below ``located`` in a stable order, never through a symlink.
-
-    Every directory listed is reported to the CLI supervisor, so a long scan
-    of a large mount is not mistaken for a stalled mount wait.
-    """
-    info = located.lstat()
-    if stat.S_ISREG(info.st_mode):
-        if _selected(located.name, include):
-            yield located, info.st_size
-        else:
-            skipped["excluded"] += 1
-        return
-    if not stat.S_ISDIR(info.st_mode):
-        skipped["special"] += 1
-        return
-    stack = [located]
-    while stack:
-        directory = stack.pop()
-        deadlines.event("scanning for files", directory)
-        try:
-            with os.scandir(directory) as entries:
-                children = sorted(entries, key = lambda entry: entry.name)
-        except OSError as error:
-            skipped["unreadable_directories"].append(
-                {"path": str(directory), "error": str(error)}
-            )
-            continue
-        for entry in children:
-            path = Path(entry.path)
-            if site.is_reserved(path, root):
-                skipped["reserved"] += 1
-                continue
-            try:
-                entry_info = entry.stat(follow_symlinks = False)
-            except OSError as error:
-                skipped["unreadable_directories"].append(
-                    {"path": str(path), "error": str(error)}
-                )
-                continue
-            mode = entry_info.st_mode
-            if stat.S_ISLNK(mode):
-                skipped["symlinks"] += 1
-            elif stat.S_ISDIR(mode):
-                stack.append(path)
-            elif stat.S_ISREG(mode):
-                if _selected(entry.name, include):
-                    yield path, entry_info.st_size
-                else:
-                    skipped["excluded"] += 1
-            else:
-                skipped["special"] += 1
-
-
-def read_file(path, advance = None):
-    """Read the whole file through the mount; return the bytes read.
-
-    ``advance`` hears about every block as it arrives, so the heartbeat can
-    show the mount still delivering in the middle of a long file.
-    """
-    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0))
-    total = 0
-    try:
-        while True:
-            block = os.read(fd, BLOCK)
-            if not block:
-                return total
-            total += len(block)
-            if advance is not None:
-                advance(len(block))
-    finally:
-        os.close(fd)
-
-
-def warm(
-            site, paths, *, jobs, timeout = 0, dry_run = False, include = (),
-            progress = None, clock = None,
-        ):
-    """Read every file below ``paths`` once; return the summary dictionary."""
-    clock = clock if clock is not None else time.monotonic
-    if type(jobs) is not int or not 1 <= jobs <= MAX_JOBS:
-        raise CacheError(f"--jobs must be between 1 and {MAX_JOBS}")
-    if type(timeout) is not int or timeout < 0:
-        raise CacheError("--timeout must be a non-negative number of seconds")
-    include = tuple(include)
-    if any(type(pattern) is not str or not pattern for pattern in include):
-        raise CacheError("--include patterns must be non-empty file names or globs")
-    skipped = {
-        "symlinks": 0, "special": 0, "reserved": 0, "excluded": 0,
-        "unreadable_directories": [],
-    }
-    located = [resolve(site, raw) for raw in paths]
-    files = []
-    for path, root in located:
-        files.extend(walk(site, path, root, skipped, include))
-    summary = {
-        "paths": [str(path) for path, _root in located],
-        "files": len(files), "bytes": sum(size for _path, size in files),
-        "skipped": skipped, "read_files": 0, "read_bytes": 0,
-        "failed": [], "seconds": 0.0, "timed_out": False, "dry_run": dry_run,
-        "jobs": jobs, "include": list(include),
-    }
-    if dry_run:
-        return summary
-    started   = clock()
-    deadline  = started + timeout if timeout else None
-    lock      = threading.Lock()
-    reported  = [started]
-    delivered = [0]
-
-    def report(force = False):
-        if progress is None:
-            return
-        now = clock()
-        if not force and now - reported[0] < PROGRESS_SECONDS:
-            return
-        reported[0] = now
-        elapsed = max(now - started, 1e-9)
-        progress(
-            {
-                "read_files": summary["read_files"], "files": summary["files"],
-                "read_bytes": summary["read_bytes"], "bytes": summary["bytes"],
-                "seconds": round(elapsed, 1),
-                "bytes_per_second": int(summary["read_bytes"] / elapsed),
-            }
-        )
-
-    def advance(count):
-        with lock:
-            delivered[0] += count
-
-    def one(path, size):
-        try:
-            count = read_file(path, advance)
-        except OSError as error:
-            return path, size, None, str(error)
-        return path, size, count, None
-
-    # The CLI supervisor bounds every phase by the site's mount timeout, and a
-    # warm legitimately runs for hours. Report the bytes delivered while they
-    # keep arriving, so the supervisor steps in only when the mount stops.
-    first = located[0][0]
-
-    def beat():
-        with lock:
-            seen = delivered[0]
-        deadlines.event("warming the cache", first, counters = {"bytes": seen})
-        return seen
-
-    stop = threading.Event()
-
-    def heartbeat():
-        last = beat()
-        while not stop.wait(HEARTBEAT_SECONDS):
-            with lock:
-                seen = delivered[0]
-            if seen != last:
-                last = beat()
-
-    pulse = threading.Thread(
-        target = heartbeat, name = "gbi-cache-heartbeat", daemon = True
-    )
-    pulse.start()
-    pending = deque(files)
-    try:
-        with ThreadPoolExecutor(max_workers = jobs) as pool:
-            running = set()
-            while pending or running:
-                while pending and len(running) < jobs * 2:
-                    if deadline is not None and clock() >= deadline:
-                        summary["timed_out"] = True
-                        pending.clear()
-                        break
-                    running.add(pool.submit(one, *pending.popleft()))
-                if not running:
-                    break
-                done, running = wait(running, return_when = FIRST_COMPLETED)
-                for future in done:
-                    path, size, count, error = future.result()
-                    with lock:
-                        if error is not None:
-                            summary["failed"].append({"path": str(path), "error": error})
-                        else:
-                            summary["read_files"] += 1
-                            summary["read_bytes"] += count
-                    report()
-    finally:
-        stop.set()
-        pulse.join()
-        beat()
-    summary["seconds"] = round(clock() - started, 2)
-    report(force = True)
-    return summary
-
-
-def _mib(value):
-    return f"{value / (1024 * 1024):.1f} MiB"
-
-
-def print_progress(detail):
-    print(
-        f"{time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())} warming: "
-        f"{detail['read_files']}/{detail['files']} files  "
-        f"{_mib(detail['read_bytes'])} of {_mib(detail['bytes'])}  "
-        f"{_mib(detail['bytes_per_second'])}/s",
-        flush = True,
-    )
-
-
 def _patterns(values):
     """``--include`` values, each possibly a comma-separated list."""
     patterns = []
@@ -287,54 +70,222 @@ def _patterns(values):
             pattern = pattern.strip()
             if pattern:
                 patterns.append(pattern)
-    return tuple(patterns)
+    if len(patterns) > 100 or any(
+        len(pattern.encode()) > 255
+        or not pattern.isprintable()
+        or any(character in pattern for character in "/\\{}")
+        for pattern in patterns
+    ):
+        raise CacheError(
+            "--include takes quoted file-name globs without '/' (at most 100)"
+        )
+    return patterns
 
 
-def _pattern_note(summary):
-    if not summary["include"]:
-        return ""
-    return (
-        f" Patterns {', '.join(summary['include'])}: "
-        f"{summary['skipped']['excluded']} files excluded."
+def request(site, raw, include):
+    """The broker request for one named path."""
+    located, _root = resolve(site, raw)
+    return located, {
+        "version": 1, "action": "submit", "request_id": str(uuid.uuid4()),
+        "operation": "cache", "path": str(located), "include": list(include),
+    }
+
+
+def record(site, body):
+    """Save the request so ``gbi data status ID --watch`` can reconnect."""
+    root = site.roots.get("lustre")
+    if root is None:
+        return None
+    try:
+        site.check_root(root)
+    except ValueError:
+        return None
+    run_dir = root / ".gbi" / "runs" / (
+        time.strftime("%Y%m%dT%H%M%SZ", time.gmtime()) + "-" + uuid.uuid4().hex[:12]
+    )
+    run_dir.mkdir(parents = True, mode = 0o700)
+    write_json(
+        run_dir / "request.json",
+        {"execution": "prefect", "uid": os.getuid(), "broker_request": body},
+    )
+    return run_dir
+
+
+def show(run, result):
+    label = run["run_dir"].name if run["run_dir"] else run["path"]
+    print(
+        f"{jobs.timestamp()} Prefect {result['state']} · cache {label}"
+        + (f" · run {result['run_id']}" if result.get("run_id") else ""),
+        flush = True,
     )
 
 
-def main(options, site):
-    jobs    = options.jobs if options.jobs is not None else int(site.values["jobs"])
-    timeout = options.timeout if options.timeout is not None else 0
+def follow(
+            site, runs, *, wait = True, timeout = 0, clock = None, sleep = None,
+            as_json = False,
+        ):
+    """Poll every submission until it ends; return the exit code.
+
+    Each run dictionary carries ``path``, ``request_id``, ``run_dir`` and the
+    broker's last ``result`` (None when it still has to be fetched).
+    """
+    clock = clock if clock is not None else time.monotonic
+    sleep = sleep if sleep is not None else time.sleep
+    started   = clock()
+    shown     = {}
+    heartbeat = started
+    timed_out = False
     try:
-        summary = warm(
-            site, options.paths, jobs = jobs, timeout = timeout,
-            dry_run = options.dry_run,
-            include = _patterns(getattr(options, "include", None)),
-            progress = None if options.json else print_progress,
+        while True:
+            now = clock()
+            for run in runs:
+                if run.get("done"):
+                    continue
+                result = run.get("result")
+                if result is None:
+                    try:
+                        result = prefect.exchange(
+                            site,
+                            {
+                                "version": 1, "action": "status",
+                                "request_id": run["request_id"],
+                            },
+                            retry_hint = RETRY_HINT,
+                        )
+                    except ValueError as error:
+                        run.update(done = True, error = str(error))
+                        print(f"gbi data cache: {run['path']}: {error}", file = sys.stderr)
+                        continue
+                    run["result"] = result
+                if run["run_dir"] is not None:
+                    write_json(run["run_dir"] / "prefect.json", result)
+                if shown.get(run["request_id"]) != result["state"] and not as_json:
+                    show(run, result)
+                    shown[run["request_id"]] = result["state"]
+                if result.get("terminal") or result["state"] == "NOT_SUBMITTED":
+                    run["done"] = True
+                    if not as_json:
+                        if result.get("message"):
+                            print(f"  {result['message']}", flush = True)
+                        if result["state"] == "NOT_SUBMITTED":
+                            print(f"  no submitted load found; {RETRY_HINT}", flush = True)
+                else:
+                    run["result"] = None
+            if all(run.get("done") for run in runs) or not wait:
+                break
+            deadlines.event(
+                "waiting for the cache load", runs[0]["path"],
+                counters = {"seconds": int(now - started)},
+            )
+            if timeout and now - started >= timeout:
+                timed_out = True
+                break
+            if now - heartbeat >= HEARTBEAT_SECONDS and not as_json:
+                heartbeat = now
+                active = sum(1 for run in runs if not run.get("done"))
+                print(
+                    f"{jobs.timestamp()} still loading: {active} path(s), "
+                    f"{int(now - started)} s elapsed",
+                    flush = True,
+                )
+            sleep(POLL_SECONDS)
+    except KeyboardInterrupt:
+        print("\nDetached. The load continues on the storage workers." + _reconnect(runs))
+        return EXIT_OK
+    if as_json:
+        print(json.dumps(_summary(runs, timed_out), sort_keys = True), flush = True)
+    elif timed_out:
+        print(
+            f"Stopped waiting at --timeout; the load continues on the storage workers."
+            + _reconnect(runs)
         )
+    if timed_out:
+        return EXIT_PARTIAL
+    if any(
+        run.get("error") or (run.get("result") or {}).get("state") in FAILED_STATES
+        for run in runs
+    ):
+        return EXIT_FAILED
+    return EXIT_OK
+
+
+def _reconnect(runs):
+    ids = [run["run_dir"].name for run in runs if run["run_dir"] is not None and not run.get("done")]
+    if not ids:
+        return ""
+    return " Reconnect: " + "; ".join(f"gbi data status {name} --watch" for name in ids)
+
+
+def _summary(runs, timed_out):
+    return {
+        "timed_out": timed_out,
+        "paths": [
+            {
+                "path": run["path"],
+                "request_id": run["request_id"],
+                "transfer_id": run["run_dir"].name if run["run_dir"] else None,
+                "run_id": (run.get("result") or {}).get("run_id"),
+                "state": (run.get("result") or {}).get("state"),
+                "message": (run.get("result") or {}).get("message"),
+                "error": run.get("error"),
+            }
+            for run in runs
+        ],
+    }
+
+
+def status(run_dir, site, watch):
+    """``gbi data status ID [--watch]`` for a saved cache request."""
+    body = prefect.stored_request(run_dir)
+    runs = [
+        {
+            "path": body["path"], "request_id": body["request_id"],
+            "run_dir": run_dir, "result": None,
+        }
+    ]
+    return follow(site, runs, wait = watch)
+
+
+def main(options, site):
+    try:
+        include = _patterns(getattr(options, "include", None))
+        targets = [request(site, raw, include) for raw in options.paths]
+        if type(options.timeout) is not int or options.timeout < 0:
+            raise CacheError("--timeout must be a non-negative number of seconds")
     except CacheError as error:
         print(f"gbi data cache: {error}", file = sys.stderr)
         return EXIT_REFUSED
-    if options.json:
-        print(json.dumps(summary, sort_keys = True), flush = True)
-    elif summary["dry_run"]:
-        print(
-            f"Dry run: {summary['files']} files, {_mib(summary['bytes'])} below "
-            f"{len(summary['paths'])} path(s); nothing read." + _pattern_note(summary)
+    selection = f" (files matching {', '.join(include)})" if include else ""
+    if options.dry_run:
+        for located, _body in targets:
+            print(f"Would load {located}{selection} into the cache.")
+        print("Dry run: nothing submitted.")
+        return EXIT_OK
+    runs = []
+    for located, body in targets:
+        print(f"Loading {located}{selection} into the cache.", flush = True)
+        run_dir = record(site, body)
+        try:
+            result = prefect.exchange(site, body, retry_hint = RETRY_HINT)
+        except ValueError as error:
+            print(f"gbi data cache: {located}: {error}", file = sys.stderr)
+            return EXIT_REFUSED if not runs else EXIT_FAILED
+        if run_dir is not None:
+            print(
+                f"Transfer {run_dir.name}. Reconnect: gbi data status {run_dir.name} --watch",
+                flush = True,
+            )
+        runs.append(
+            {
+                "path": str(located), "request_id": body["request_id"],
+                "run_dir": run_dir, "result": result,
+            }
         )
-    else:
-        rate = summary["read_bytes"] / max(summary["seconds"], 1e-9)
-        print(
-            f"Warmed {summary['read_files']}/{summary['files']} files, "
-            f"{_mib(summary['read_bytes'])} in {summary['seconds']} s "
-            f"({_mib(rate)}/s); failed {len(summary['failed'])}; "
-            f"skipped {summary['skipped']['symlinks']} symlinks, "
-            f"{summary['skipped']['special']} special, "
-            f"{summary['skipped']['reserved']} reserved." + _pattern_note(summary)
-        )
-        for failure in summary["failed"][:20]:
-            print(f"  failed: {failure['path']}: {failure['error']}")
-        if summary["timed_out"]:
-            print("Stopped at --timeout before every file was read.")
-    if summary["failed"]:
-        return EXIT_FAILED
-    if summary["timed_out"]:
-        return EXIT_PARTIAL
-    return EXIT_OK
+    if options.detach:
+        for run in runs:
+            if not options.json:
+                show(run, run["result"])
+        if options.json:
+            print(json.dumps(_summary(runs, False), sort_keys = True), flush = True)
+        return EXIT_OK
+    return follow(site, runs, timeout = options.timeout, as_json = options.json)
