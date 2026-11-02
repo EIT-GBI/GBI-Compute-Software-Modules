@@ -239,13 +239,23 @@ gbi data cache /mnt/team/my-lab/shared/reference /mnt/user-data/$USER/models \
 
 # Count what would be read without reading it.
 gbi data cache /mnt/user-data/$USER/dataset --dry-run
+
+# Sequencing data: an instrument, or one run folder, and only the files you need.
+gbi data cache /mnt/instrument-data/illumina_nextseq_1/RUN --include '*.fastq.gz,*.bam'
+gbi data cache /mnt/instrument-data/illumina_nextseq_1 --dry-run
 ```
 
 It reads every regular file below each path once, through your own mount and
 with your own permissions, using a bounded number of parallel readers (`--jobs`,
 default the site's `jobs` setting, at most 32). It needs no credential and
-writes nothing. Symbolic links are skipped, never followed; the transfer state
-folders are skipped. Running it again is cheap because warm blocks are served
+writes nothing. The path you name may be a symbolic link (the
+`/mnt/instrument-data/<instrument>` entries are links to the sequencing mounts);
+it is followed once and must land inside an Object Storage mount. Links met
+below it are skipped, never followed; the transfer state folders are skipped.
+`--include` keeps only files whose name matches a glob (repeatable, or one
+comma-separated list). A warm may run for hours: progress is reported to the
+CLI's watchdog, which only steps in when the mount stops delivering for the
+site's mount timeout. Running it again is cheap because warm blocks are served
 from the cache, so it is safe to repeat before every job. Paths must be inside
 an Object Storage mount: your personal root, or a team or shared mount you can
 read. Lustre and FSS paths are refused because they have no block cache.

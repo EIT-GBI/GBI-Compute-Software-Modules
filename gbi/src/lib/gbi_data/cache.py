@@ -9,6 +9,7 @@ finished. A second run re-reads warm blocks at cache speed, so the command is
 safe to repeat, for example as the first line of a job script or a prolog.
 """
 
+import fnmatch
 import json
 import os
 import stat
@@ -19,9 +20,12 @@ from collections import deque
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from pathlib import Path
 
-BLOCK            = 1024 * 1024
-MAX_JOBS         = 32
-PROGRESS_SECONDS = 2.0
+from . import deadlines
+
+BLOCK             = 1024 * 1024
+MAX_JOBS          = 32
+PROGRESS_SECONDS  = 2.0
+HEARTBEAT_SECONDS = 5.0
 
 EXIT_OK      = 0
 EXIT_FAILED  = 1
@@ -34,8 +38,20 @@ class CacheError(ValueError):
 
 
 def resolve(site, raw):
-    """One named path: inside an Object Storage mount, present, not a symlink."""
-    path = Path(raw).expanduser().absolute()
+    """One named path: present, and inside an Object Storage mount.
+
+    The path you name may itself be a symbolic link, or lie below one, as the
+    ``/mnt/instrument-data`` entries do (each is a link to a sequencing
+    mount): it is followed here, once, and must land inside an Object Storage
+    mount.  Links met below it during the walk are skipped, never followed.
+    """
+    named = Path(raw).expanduser().absolute()
+    if not os.path.lexists(named):
+        raise CacheError(f"{raw}: does not exist")
+    try:
+        path = named.resolve(strict = True)
+    except (OSError, RuntimeError) as error:
+        raise CacheError(f"{raw}: cannot be resolved: {error}") from None
     try:
         located, kind, root = site.classify(path)
     except ValueError as error:
@@ -45,18 +61,27 @@ def resolve(site, raw):
             f"{raw}: not inside an Object Storage mount; the cache applies to "
             "Alluxio-backed paths only"
         )
-    if not os.path.lexists(located):
-        raise CacheError(f"{raw}: does not exist")
-    if located.is_symlink():
-        raise CacheError(f"{raw}: is a symbolic link; name the real path")
     return located, root
 
 
-def walk(site, located, root, skipped):
-    """Regular files below ``located`` in a stable order, never through a symlink."""
+def _selected(name, include):
+    return not include or any(
+        fnmatch.fnmatchcase(name, pattern) for pattern in include
+    )
+
+
+def walk(site, located, root, skipped, include = ()):
+    """Regular files below ``located`` in a stable order, never through a symlink.
+
+    Every directory listed is reported to the CLI supervisor, so a long scan
+    of a large mount is not mistaken for a stalled mount wait.
+    """
     info = located.lstat()
     if stat.S_ISREG(info.st_mode):
-        yield located, info.st_size
+        if _selected(located.name, include):
+            yield located, info.st_size
+        else:
+            skipped["excluded"] += 1
         return
     if not stat.S_ISDIR(info.st_mode):
         skipped["special"] += 1
@@ -64,6 +89,7 @@ def walk(site, located, root, skipped):
     stack = [located]
     while stack:
         directory = stack.pop()
+        deadlines.event("scanning for files", directory)
         try:
             with os.scandir(directory) as entries:
                 children = sorted(entries, key = lambda entry: entry.name)
@@ -90,13 +116,20 @@ def walk(site, located, root, skipped):
             elif stat.S_ISDIR(mode):
                 stack.append(path)
             elif stat.S_ISREG(mode):
-                yield path, entry_info.st_size
+                if _selected(entry.name, include):
+                    yield path, entry_info.st_size
+                else:
+                    skipped["excluded"] += 1
             else:
                 skipped["special"] += 1
 
 
-def read_file(path):
-    """Read the whole file through the mount; return the bytes read."""
+def read_file(path, advance = None):
+    """Read the whole file through the mount; return the bytes read.
+
+    ``advance`` hears about every block as it arrives, so the heartbeat can
+    show the mount still delivering in the middle of a long file.
+    """
     fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0))
     total = 0
     try:
@@ -105,12 +138,14 @@ def read_file(path):
             if not block:
                 return total
             total += len(block)
+            if advance is not None:
+                advance(len(block))
     finally:
         os.close(fd)
 
 
 def warm(
-            site, paths, *, jobs, timeout = 0, dry_run = False,
+            site, paths, *, jobs, timeout = 0, dry_run = False, include = (),
             progress = None, clock = None,
         ):
     """Read every file below ``paths`` once; return the summary dictionary."""
@@ -119,27 +154,31 @@ def warm(
         raise CacheError(f"--jobs must be between 1 and {MAX_JOBS}")
     if type(timeout) is not int or timeout < 0:
         raise CacheError("--timeout must be a non-negative number of seconds")
+    include = tuple(include)
+    if any(type(pattern) is not str or not pattern for pattern in include):
+        raise CacheError("--include patterns must be non-empty file names or globs")
     skipped = {
-        "symlinks": 0, "special": 0, "reserved": 0,
+        "symlinks": 0, "special": 0, "reserved": 0, "excluded": 0,
         "unreadable_directories": [],
     }
     located = [resolve(site, raw) for raw in paths]
     files = []
     for path, root in located:
-        files.extend(walk(site, path, root, skipped))
+        files.extend(walk(site, path, root, skipped, include))
     summary = {
         "paths": [str(path) for path, _root in located],
         "files": len(files), "bytes": sum(size for _path, size in files),
         "skipped": skipped, "read_files": 0, "read_bytes": 0,
         "failed": [], "seconds": 0.0, "timed_out": False, "dry_run": dry_run,
-        "jobs": jobs,
+        "jobs": jobs, "include": list(include),
     }
     if dry_run:
         return summary
-    started  = clock()
-    deadline = started + timeout if timeout else None
-    lock     = threading.Lock()
-    reported = [started]
+    started   = clock()
+    deadline  = started + timeout if timeout else None
+    lock      = threading.Lock()
+    reported  = [started]
+    delivered = [0]
 
     def report(force = False):
         if progress is None:
@@ -158,35 +197,69 @@ def warm(
             }
         )
 
+    def advance(count):
+        with lock:
+            delivered[0] += count
+
     def one(path, size):
         try:
-            count = read_file(path)
+            count = read_file(path, advance)
         except OSError as error:
             return path, size, None, str(error)
         return path, size, count, None
 
+    # The CLI supervisor bounds every phase by the site's mount timeout, and a
+    # warm legitimately runs for hours. Report the bytes delivered while they
+    # keep arriving, so the supervisor steps in only when the mount stops.
+    first = located[0][0]
+
+    def beat():
+        with lock:
+            seen = delivered[0]
+        deadlines.event("warming the cache", first, counters = {"bytes": seen})
+        return seen
+
+    stop = threading.Event()
+
+    def heartbeat():
+        last = beat()
+        while not stop.wait(HEARTBEAT_SECONDS):
+            with lock:
+                seen = delivered[0]
+            if seen != last:
+                last = beat()
+
+    pulse = threading.Thread(
+        target = heartbeat, name = "gbi-cache-heartbeat", daemon = True
+    )
+    pulse.start()
     pending = deque(files)
-    with ThreadPoolExecutor(max_workers = jobs) as pool:
-        running = set()
-        while pending or running:
-            while pending and len(running) < jobs * 2:
-                if deadline is not None and clock() >= deadline:
-                    summary["timed_out"] = True
-                    pending.clear()
+    try:
+        with ThreadPoolExecutor(max_workers = jobs) as pool:
+            running = set()
+            while pending or running:
+                while pending and len(running) < jobs * 2:
+                    if deadline is not None and clock() >= deadline:
+                        summary["timed_out"] = True
+                        pending.clear()
+                        break
+                    running.add(pool.submit(one, *pending.popleft()))
+                if not running:
                     break
-                running.add(pool.submit(one, *pending.popleft()))
-            if not running:
-                break
-            done, running = wait(running, return_when = FIRST_COMPLETED)
-            for future in done:
-                path, size, count, error = future.result()
-                with lock:
-                    if error is not None:
-                        summary["failed"].append({"path": str(path), "error": error})
-                    else:
-                        summary["read_files"] += 1
-                        summary["read_bytes"] += count
-                report()
+                done, running = wait(running, return_when = FIRST_COMPLETED)
+                for future in done:
+                    path, size, count, error = future.result()
+                    with lock:
+                        if error is not None:
+                            summary["failed"].append({"path": str(path), "error": error})
+                        else:
+                            summary["read_files"] += 1
+                            summary["read_bytes"] += count
+                    report()
+    finally:
+        stop.set()
+        pulse.join()
+        beat()
     summary["seconds"] = round(clock() - started, 2)
     report(force = True)
     return summary
@@ -206,6 +279,26 @@ def print_progress(detail):
     )
 
 
+def _patterns(values):
+    """``--include`` values, each possibly a comma-separated list."""
+    patterns = []
+    for value in values or ():
+        for pattern in value.split(","):
+            pattern = pattern.strip()
+            if pattern:
+                patterns.append(pattern)
+    return tuple(patterns)
+
+
+def _pattern_note(summary):
+    if not summary["include"]:
+        return ""
+    return (
+        f" Patterns {', '.join(summary['include'])}: "
+        f"{summary['skipped']['excluded']} files excluded."
+    )
+
+
 def main(options, site):
     jobs    = options.jobs if options.jobs is not None else int(site.values["jobs"])
     timeout = options.timeout if options.timeout is not None else 0
@@ -213,6 +306,7 @@ def main(options, site):
         summary = warm(
             site, options.paths, jobs = jobs, timeout = timeout,
             dry_run = options.dry_run,
+            include = _patterns(getattr(options, "include", None)),
             progress = None if options.json else print_progress,
         )
     except CacheError as error:
@@ -223,7 +317,7 @@ def main(options, site):
     elif summary["dry_run"]:
         print(
             f"Dry run: {summary['files']} files, {_mib(summary['bytes'])} below "
-            f"{len(summary['paths'])} path(s); nothing read."
+            f"{len(summary['paths'])} path(s); nothing read." + _pattern_note(summary)
         )
     else:
         rate = summary["read_bytes"] / max(summary["seconds"], 1e-9)
@@ -233,7 +327,7 @@ def main(options, site):
             f"({_mib(rate)}/s); failed {len(summary['failed'])}; "
             f"skipped {summary['skipped']['symlinks']} symlinks, "
             f"{summary['skipped']['special']} special, "
-            f"{summary['skipped']['reserved']} reserved."
+            f"{summary['skipped']['reserved']} reserved." + _pattern_note(summary)
         )
         for failure in summary["failed"][:20]:
             print(f"  failed: {failure['path']}: {failure['error']}")
