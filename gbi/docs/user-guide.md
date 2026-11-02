@@ -276,8 +276,10 @@ stopped, inspect its receipts and retained sources, then rerun the same
 command with the same source, destination and selection. A saved automatic
 archive plan preserves completed units and the original layout. Interrupted
 packed cleanup uses its saved original manifest, rechecks the destination,
-and removes only unchanged selected entries still present. Do not delete
-locks, journals, partial output or verification receipts to force a retry.
+and removes only unchanged selected entries still present; that packed
+cleanup can be resumed from a different node than the original job. Do not
+delete locks, journals, partial output or verification receipts to force a
+retry.
 
 The retry command has a narrower meaning:
 
