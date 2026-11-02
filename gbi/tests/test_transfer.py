@@ -876,10 +876,14 @@ class Interface(unittest.TestCase):
             capture_output = True, text = True, timeout = 10,
         )
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(
-            result.stdout,
-            "".join(f"{kind:8} {alias}\n" for kind, alias in aliases.items()),
+        # Lustre and FSS print their aliases; the archive root prints the
+        # resolved folder and names the alias it is also reachable as.
+        for kind in ("lustre", "fss"):
+            self.assertIn(f"{kind:8} {aliases[kind]}\n", result.stdout)
+        self.assertIn(
+            f"alluxio  {self.base / 'physical-alluxio-root'}\n", result.stdout
         )
+        self.assertIn(f"also reachable as {aliases['alluxio']}\n", result.stdout)
         for kind, alias in aliases.items():
             physical = self.base / f"physical-{kind}-root"
             self.assertEqual(site.classify(alias), (physical, kind, physical))
