@@ -222,51 +222,55 @@ metadata. Objects uploaded through Alluxio or another tool may lack it.
 Use the ordinary route to verify and reuse those destinations. Prefect
 restores still verify ordinary objects without that archive-upload metadata.
 
-## Warm the cache before a job
+## Load data into the cache before a job
 
-Object Storage mounts cache a file's blocks on the storage workers the first
-time anyone reads them, so the first pass over a cold dataset runs at Object
-Storage speed and later passes at cache speed. `gbi data cache` does that first
-pass for you, ahead of the job that needs the data:
+Object Storage mounts serve a file's blocks from the storage workers' cache
+once they are resident, so a job that reads warm blocks runs at cache speed
+instead of pulling cold data from Object Storage. `gbi data cache` makes a
+path resident ahead of the job that needs it:
 
 ```bash
 # First line of a job script, or a Slurm prolog: return when the blocks are cached.
-gbi data cache /mnt/user-data/$USER/dataset
+gbi data cache /mnt/team/my-lab/members/$USER/dataset
 
-# Several paths, more readers, and a wall-time bound for a prolog.
-gbi data cache /mnt/team/my-lab/shared/reference /mnt/user-data/$USER/models \
-  --jobs 8 --timeout 900
+# A shared reference, with a wall-time bound for a prolog (the load itself continues).
+gbi data cache /mnt/team/my-lab/shared/reference --timeout 900
 
-# Count what would be read without reading it.
-gbi data cache /mnt/user-data/$USER/dataset --dry-run
-
-# Sequencing data: an instrument, or one run folder, and only the files you need.
+# Sequencing data: a run folder, and only the files you need.
 gbi data cache /mnt/instrument-data/illumina_nextseq_1/RUN --include '*.fastq.gz,*.bam'
-gbi data cache /mnt/instrument-data/illumina_nextseq_1 --dry-run
+
+# Submit and come back later.
+gbi data cache /mnt/instrument-data/oxford_nanopore_promethion_1 --detach
+gbi data status TRANSFER_ID --watch
 ```
 
-It reads every regular file below each path once, through your own mount and
-with your own permissions, using a bounded number of parallel readers (`--jobs`,
-default the site's `jobs` setting, at most 32). It needs no credential and
-writes nothing. The path you name may be a symbolic link (the
-`/mnt/instrument-data/<instrument>` entries are links to the sequencing mounts);
-it is followed once and must land inside an Object Storage mount. Links met
-below it are skipped, never followed; the transfer state folders are skipped.
-`--include` keeps only files whose name matches a glob (repeatable, or one
-comma-separated list). A warm may run for hours: progress is reported to the
-CLI's watchdog, which only steps in when the mount stops delivering for the
-site's mount timeout. Running it again is cheap because warm blocks are served
-from the cache, so it is safe to repeat before every job. Paths must be inside
-an Object Storage mount: your personal root, or a team or shared mount you can
-read. Lustre and FSS paths are refused because they have no block cache.
+Nothing is read on your node. The command resolves the path, the site's broker
+maps it to the storage cluster behind the mount, and one native load is
+submitted: every storage worker loads blocks in parallel, so the data lands in
+the cache faster than any single reader could pull it. The load applies the
+same permissions as your mount, from the top of the mount down: you can load
+what you can read, and nothing else. A folder is loaded whole when every file
+in it is yours to read and is in Object Storage; otherwise, and with
+`--include`, the readable matching files are loaded one by one. The path you
+name may be a symbolic link (the `/mnt/instrument-data/<instrument>` entries are
+links to the sequencing mounts); it is followed once and must land inside an
+Object Storage mount. Lustre and FSS paths are refused because they have no
+block cache. Running it again is cheap: resident blocks are not loaded again.
 
-Exit codes: `0` every file was read; `1` some files could not be read (each is
-listed; the rest were still warmed); `2` the request was refused before any
-read; `3` `--timeout` stopped it before every file was read. `--json` prints
-one summary line (files, bytes, seconds, failures, skipped counts) instead of
-progress. The cache is shared and bounded: very large datasets may evict older
-blocks, and a site-wide load with capacity checks remains the Prefect route's
-job.
+The command prints the Prefect state as it changes and, when the load ends, one
+line: files, bytes, the percentage resident, seconds, and any files skipped
+because you cannot read them or because they are still being written. Each
+path gets a transfer ID; `gbi data status TRANSFER_ID --watch` reconnects after
+`--detach`, a dropped session or `--timeout`. Ctrl-C only detaches; the load
+continues on the storage workers.
+
+Exit codes: `0` the blocks are cached; `1` the load failed (the line says why,
+for example `refused: ... is not readable by ...`); `2` the request was refused
+before anything was submitted; `3` `--timeout` stopped the wait while the load
+continued. `--json` prints one summary line per command instead of progress.
+The cache is shared and evicts the least recently used blocks on its own, so a
+load is never refused for space; a very large dataset may tier older blocks
+down.
 
 ## Status and recovery
 

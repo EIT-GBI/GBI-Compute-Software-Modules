@@ -1,4 +1,4 @@
-"""gbi data cache reads every file once through an Object Storage mount."""
+"""gbi data cache submits native loads through the broker and waits for them."""
 
 import io
 import json
@@ -6,13 +6,66 @@ import os
 from pathlib import Path
 import pwd
 import tempfile
-import time
+import time as real_time
 import unittest
 from unittest.mock import patch
 from contextlib import redirect_stdout, redirect_stderr
 
 from gbi_data import cache, cli
 from gbi_data.storage import Site
+
+
+class FakeTime:
+    """A clock that only advances when the code sleeps."""
+
+    def __init__(self):
+        self.now = 1000.0
+        self.slept = []
+
+    def monotonic(self):
+        return self.now
+
+    def sleep(self, seconds):
+        self.slept.append(seconds)
+        self.now += seconds
+
+    def strftime(self, fmt, when = None):
+        return real_time.strftime(fmt, when if when is not None else self.gmtime())
+
+    def gmtime(self, *args):
+        return real_time.gmtime(1700000000 + int(self.now))
+
+
+class Broker:
+    """A scripted broker: records requests, answers submit and status."""
+
+    def __init__(self, states = ("RUNNING", "COMPLETED"), message = None, refuse = None):
+        self.requests = []
+        self.states = list(states)
+        self.message = message
+        self.refuse = refuse
+        self.polls = {}
+
+    def __call__(self, site, request, retry_hint = None):
+        self.requests.append((request, retry_hint))
+        if self.refuse is not None:
+            raise ValueError(self.refuse)
+        if request["action"] == "submit":
+            return {
+                "version": 1, "state": "SCHEDULED", "terminal": False,
+                "run_id": "11111111-2222-3333-4444-555555555555",
+            }
+        count = self.polls.get(request["request_id"], 0)
+        self.polls[request["request_id"]] = count + 1
+        state = self.states[min(count, len(self.states) - 1)]
+        result = {
+            "version": 1, "state": state,
+            "terminal": state in {"COMPLETED", "FAILED", "CANCELLED", "CRASHED"},
+            "run_id": "11111111-2222-3333-4444-555555555555",
+        }
+        if result["terminal"] and self.message:
+            result["message"] = self.message
+        return result
 
 
 class Cache(unittest.TestCase):
@@ -29,270 +82,147 @@ class Cache(unittest.TestCase):
                 f"{name}_root = {self.base / name}\n"
                 for name in ("lustre", "fss", "bucket")
             )
-            + "jobs = 3\n"
         )
         self.site    = Site(config)
         self.alluxio = self.site.roots["alluxio"]
         self.lustre  = self.site.roots["lustre"]
-
-    def tree(self):
-        data = self.alluxio / "dataset"
-        (data / "a" / "deep").mkdir(parents = True)
-        (data / ".gbi").mkdir()
-        files = {
-            data / "a" / "one.bin": b"1" * 3000,
-            data / "a" / "deep" / "two.bin": b"2" * 70000,
-            data / "three.bin": b"3" * 11,
-            data / "empty.bin": b"",
-        }
-        for path, content in files.items():
-            path.write_bytes(content)
-        (data / ".gbi" / "state.json").write_bytes(b"{}")
-        (data / "link").symlink_to(data / "three.bin")
-        os.mkfifo(data / "fifo")
-        return data, files
+        self.data    = self.alluxio / "dataset"
+        (self.data / "a").mkdir(parents = True)
+        (self.data / "a" / "one.bin").write_bytes(b"1")
+        self.time = FakeTime()
 
     def options(self, *arguments):
         return cli.parser().parse_args(["data", "cache", *arguments])
 
-    def test_reads_every_regular_file_once_and_skips_links_reserved_and_special(self):
-        data, files = self.tree()
-        seen = []
-        original = cache.read_file
-
-        def recording(path, advance = None):
-            seen.append(Path(path))
-            return original(path, advance)
-
-        with patch.object(cache, "read_file", recording):
-            summary = cache.warm(self.site, [str(data)], jobs = 3)
-        self.assertEqual(sorted(seen), sorted(files))
-        self.assertEqual(len(seen), len(set(seen)))
-        self.assertEqual(summary["files"], 4)
-        self.assertEqual(summary["read_files"], 4)
-        self.assertEqual(summary["read_bytes"], sum(map(len, files.values())))
-        self.assertEqual(summary["bytes"], summary["read_bytes"])
-        self.assertEqual(summary["failed"], [])
-        self.assertFalse(summary["timed_out"])
-        self.assertEqual(summary["skipped"]["symlinks"], 1)
-        self.assertEqual(summary["skipped"]["special"], 1)
-        self.assertEqual(summary["skipped"]["reserved"], 1)
-        self.assertEqual(summary["paths"], [str(data)])
-
-    def test_one_file_and_several_paths(self):
-        data, files = self.tree()
-        single = cache.warm(self.site, [str(data / "three.bin")], jobs = 1)
-        self.assertEqual((single["files"], single["read_bytes"]), (1, 11))
-        both = cache.warm(
-            self.site, [str(data / "a"), str(data / "three.bin")], jobs = 2
-        )
-        self.assertEqual(both["files"], 3)
-        self.assertEqual(both["read_bytes"], 3000 + 70000 + 11)
-
-    def test_refuses_paths_outside_object_storage_missing_symlinked_or_reserved(self):
-        data, _files = self.tree()
-        (self.lustre / "scratch").mkdir()
-        (self.base / "outward").symlink_to(self.lustre / "scratch")
-        (self.base / "dangling").symlink_to(self.base / "gone")
-        for raw, message in (
-            (self.lustre / "scratch", "not inside an Object Storage mount"),
-            (data / "absent", "does not exist"),
-            (self.base / "outward", "not inside an Object Storage mount"),
-            (self.base / "dangling", "cannot be resolved"),
-            (data / ".gbi", "reserved"),
-            (self.base / "elsewhere", "does not exist"),
+    def run_cache(self, broker, *arguments):
+        out, err = io.StringIO(), io.StringIO()
+        with (
+            patch("gbi_data.prefect.exchange", broker),
+            patch("gbi_data.cache.time", self.time),
+            redirect_stdout(out), redirect_stderr(err),
         ):
-            with self.subTest(raw = raw):
-                with self.assertRaisesRegex(cache.CacheError, message):
-                    cache.warm(self.site, [str(raw)], jobs = 1)
-        # One bad path refuses the whole request before anything is read.
-        with patch.object(cache, "read_file", side_effect = AssertionError("read")):
+            code = cache.main(self.options(*arguments), self.site)
+        return code, out.getvalue(), err.getvalue()
+
+    def runs(self):
+        return sorted((self.lustre / ".gbi" / "runs").glob("*"))
+
+    def test_resolves_a_symlinked_path_once_and_refuses_lustre_and_fss(self):
+        link = self.base / "instrument-data"
+        link.symlink_to(self.data)
+        located, root = cache.resolve(self.site, str(link / "a"))
+        self.assertEqual(located, self.data / "a")
+        self.assertEqual(root, self.alluxio)
+        for raw in (self.lustre, self.site.roots["fss"], self.base / "missing"):
             with self.assertRaises(cache.CacheError):
-                cache.warm(self.site, [str(data), str(data / "absent")], jobs = 1)
+                cache.resolve(self.site, str(raw))
 
-    def test_dry_run_reads_nothing_and_bounds_are_checked(self):
-        data, files = self.tree()
-        with patch.object(cache, "read_file", side_effect = AssertionError("read")):
-            summary = cache.warm(self.site, [str(data)], jobs = 2, dry_run = True)
-        self.assertTrue(summary["dry_run"])
-        self.assertEqual(summary["files"], 4)
-        self.assertEqual(summary["bytes"], sum(map(len, files.values())))
-        self.assertEqual(summary["read_files"], 0)
-        for jobs in (0, cache.MAX_JOBS + 1, "2", 1.5):
-            with self.assertRaisesRegex(cache.CacheError, "--jobs"):
-                cache.warm(self.site, [str(data)], jobs = jobs, dry_run = True)
-        with self.assertRaisesRegex(cache.CacheError, "--timeout"):
-            cache.warm(self.site, [str(data)], jobs = 1, timeout = -1, dry_run = True)
-
-    def test_timeout_stops_starting_files_and_reports_partial(self):
-        data, _files = self.tree()
-        original = cache.read_file
-
-        def slow(path, advance = None):
-            time.sleep(0.15)
-            return original(path, advance)
-
-        with patch.object(cache, "read_file", slow):
-            summary = cache.warm(self.site, [str(data)], jobs = 1, timeout = 1)
-            self.assertFalse(summary["timed_out"])
-            self.assertEqual(summary["read_files"], 4)
-            ticks = iter([0.0, 0.0, 10.0, 10.0, 10.0, 10.0, 10.0, 10.0, 10.0, 10.0])
-            summary = cache.warm(
-                self.site, [str(data)], jobs = 1, timeout = 5,
-                clock = lambda: next(ticks),
-            )
-        self.assertTrue(summary["timed_out"])
-        self.assertLess(summary["read_files"], 4)
-        self.assertGreaterEqual(summary["read_files"], 1)
-
-    def test_read_failures_are_reported_and_do_not_stop_the_rest(self):
-        data, files = self.tree()
-        original = cache.read_file
-
-        def failing(path, advance = None):
-            if Path(path).name == "one.bin":
-                raise OSError(5, "simulated input/output error")
-            return original(path, advance)
-
-        with patch.object(cache, "read_file", failing):
-            summary = cache.warm(self.site, [str(data)], jobs = 2)
-        self.assertEqual(summary["read_files"], 3)
-        self.assertEqual(len(summary["failed"]), 1)
-        self.assertTrue(summary["failed"][0]["path"].endswith("one.bin"))
-        self.assertIn("input/output", summary["failed"][0]["error"])
-
-    def test_cli_wiring_progress_json_and_exit_codes(self):
-        data, files = self.tree()
-        options = self.options(str(data), "--jobs", "2", "--json")
-        self.assertEqual(options.verb, "cache")
-        out = io.StringIO()
-        with redirect_stdout(out):
-            code = cache.main(options, self.site)
-        self.assertEqual(code, cache.EXIT_OK)
-        summary = json.loads(out.getvalue().strip().splitlines()[-1])
-        self.assertEqual(summary["read_files"], 4)
-        self.assertEqual(summary["jobs"], 2)
-        # Default jobs come from the site; human output names the totals.
-        out = io.StringIO()
-        with redirect_stdout(out):
-            code = cache.main(self.options(str(data)), self.site)
-        self.assertEqual(code, cache.EXIT_OK)
-        self.assertIn("Warmed 4/4 files", out.getvalue())
-        with redirect_stdout(io.StringIO()):
-            self.assertEqual(
-                cache.main(self.options(str(data), "--dry-run"), self.site),
-                cache.EXIT_OK,
-            )
-        err = io.StringIO()
-        with redirect_stdout(io.StringIO()), redirect_stderr(err):
-            code = cache.main(self.options(str(self.lustre)), self.site)
-        self.assertEqual(code, cache.EXIT_REFUSED)
-        self.assertIn("not inside an Object Storage mount", err.getvalue())
-        with redirect_stdout(io.StringIO()), redirect_stderr(err):
-            code = cache.main(self.options(str(data), "--jobs", "0"), self.site)
-        self.assertEqual(code, cache.EXIT_REFUSED)
-        with patch.object(cache, "read_file", side_effect = OSError(5, "boom")):
-            with redirect_stdout(io.StringIO()):
-                code = cache.main(self.options(str(data)), self.site)
-        self.assertEqual(code, cache.EXIT_FAILED)
-        ticks = iter([0.0] * 2 + [10.0] * 20)
-        with patch.object(cache.time, "monotonic", lambda: next(ticks)):
-            with redirect_stdout(io.StringIO()):
-                code = cache.main(
-                    self.options(str(data), "--jobs", "1", "--timeout", "5"),
-                    self.site,
-                )
-        self.assertEqual(code, cache.EXIT_PARTIAL)
-
-    def test_named_symlinks_are_followed_once_and_links_below_still_skipped(self):
-        data, files = self.tree()
-        farm = self.base / "instrument-data"
-        farm.mkdir()
-        (farm / "nextseq").symlink_to(data)
-        summary = cache.warm(self.site, [str(farm / "nextseq")], jobs = 2)
-        self.assertEqual(summary["read_files"], 4)
-        self.assertEqual(summary["paths"], [str(data)])
-        self.assertEqual(summary["skipped"]["symlinks"], 1)
-        below = cache.warm(self.site, [str(farm / "nextseq" / "a")], jobs = 1)
-        self.assertEqual(below["files"], 2)
-        single = cache.warm(self.site, [str(data / "link")], jobs = 1)
-        self.assertEqual((single["files"], single["read_bytes"]), (1, 11))
-        self.assertEqual(single["paths"], [str(data / "three.bin")])
-
-    def test_include_patterns_select_files_by_name(self):
-        data, files = self.tree()
-        summary = cache.warm(
-            self.site, [str(data)], jobs = 2, include = ("one.*", "*three*")
+    def test_submits_one_request_per_path_with_the_resolved_path_and_patterns(self):
+        broker = Broker(message = "cached 1 files, 0.00 GiB, 100% resident after 4 s")
+        code, out, err = self.run_cache(
+            broker, str(self.data), str(self.data / "a"),
+            "--include", "*.fastq.gz,*.bam", "--include", "*.bin",
         )
-        self.assertEqual(summary["files"], 2)
-        self.assertEqual(summary["read_bytes"], 3000 + 11)
-        self.assertEqual(summary["skipped"]["excluded"], 2)
-        self.assertEqual(summary["include"], ["one.*", "*three*"])
-        single = cache.warm(
-            self.site, [str(data / "three.bin")], jobs = 1, include = ("*.bam",),
-            dry_run = True,
-        )
-        self.assertEqual((single["files"], single["skipped"]["excluded"]), (0, 1))
-        for bad in (("",), (3,)):
-            with self.assertRaisesRegex(cache.CacheError, "--include"):
-                cache.warm(self.site, [str(data)], jobs = 1, include = bad, dry_run = True)
-        out = io.StringIO()
-        with redirect_stdout(out):
-            code = cache.main(
-                self.options(str(data), "--include", "*.bin,", "--include", "nothing", "--json"),
-                self.site,
-            )
-        self.assertEqual(code, cache.EXIT_OK)
-        summary = json.loads(out.getvalue().strip().splitlines()[-1])
-        self.assertEqual(summary["include"], ["*.bin", "nothing"])
-        self.assertEqual(summary["read_files"], 4)
-        out = io.StringIO()
-        with redirect_stdout(out):
-            code = cache.main(self.options(str(data), "--include", "*.bam", "--dry-run"), self.site)
-        self.assertEqual(code, cache.EXIT_OK)
-        self.assertIn("Patterns *.bam: 4 files excluded.", out.getvalue())
-
-    def test_scans_and_reads_report_progress_to_the_supervisor(self):
-        data, files = self.tree()
-        events   = []
-        original = cache.read_file
-
-        def slow(path, advance = None):
-            time.sleep(0.05)
-            return original(path, advance)
-
-        def record(phase = None, path = None, **details):
-            events.append((phase, str(path), details))
-
-        with patch.object(cache.deadlines, "event", record), \
-                patch.object(cache, "HEARTBEAT_SECONDS", 0.01), \
-                patch.object(cache, "read_file", slow):
-            summary = cache.warm(self.site, [str(data)], jobs = 2)
-        self.assertEqual(summary["read_files"], 4)
-        scans = sorted(path for phase, path, _ in events if phase == "scanning for files")
+        self.assertEqual((code, err), (0, ""))
+        submits = [request for request, _hint in broker.requests if request["action"] == "submit"]
+        self.assertEqual([request["path"] for request in submits], [str(self.data), str(self.data / "a")])
+        self.assertEqual(submits[0]["include"], ["*.fastq.gz", "*.bam", "*.bin"])
+        self.assertEqual(submits[0]["operation"], "cache")
+        self.assertEqual({hint for _request, hint in broker.requests}, {cache.RETRY_HINT})
+        self.assertEqual(len(self.runs()), 2)
+        saved = {
+            json.loads((run / "request.json").read_text())["broker_request"]["path"]: run
+            for run in self.runs()
+        }
+        record = json.loads((saved[str(self.data)] / "request.json").read_text())
+        self.assertEqual(record["broker_request"], submits[0])
+        self.assertEqual(record["execution"], "prefect")
+        self.assertIn("Prefect COMPLETED · cache", out)
+        self.assertIn("  cached 1 files, 0.00 GiB, 100% resident after 4 s", out)
+        self.assertIn("Reconnect: gbi data status", out)
         self.assertEqual(
-            scans, sorted(str(d) for d in (data, data / "a", data / "a" / "deep"))
+            json.loads((saved[str(self.data)] / "prefect.json").read_text())["state"], "COMPLETED"
         )
-        beats = [details for phase, _, details in events if phase == "warming the cache"]
-        self.assertGreaterEqual(len(beats), 2)
-        self.assertEqual(beats[0]["counters"]["bytes"], 0)
-        self.assertEqual(beats[-1]["counters"]["bytes"], summary["read_bytes"])
-        # Nothing is reported for a dry run beyond the scan itself.
-        events.clear()
-        with patch.object(cache.deadlines, "event", record):
-            cache.warm(self.site, [str(data)], jobs = 1, dry_run = True)
-        self.assertEqual({phase for phase, _, _ in events}, {"scanning for files"})
 
-    def test_help_lists_the_verb(self):
+    def test_a_failed_load_exits_1_with_the_flow_message(self):
+        broker = Broker(states = ("RUNNING", "FAILED"), message = "refused: /x is not readable by me")
+        code, out, _err = self.run_cache(broker, str(self.data))
+        self.assertEqual(code, 1)
+        self.assertIn("Prefect FAILED · cache", out)
+        self.assertIn("refused: /x is not readable by me", out)
+
+    def test_timeout_stops_waiting_and_exits_3_with_a_reconnect_hint(self):
+        broker = Broker(states = ("RUNNING",))
+        code, out, _err = self.run_cache(broker, str(self.data), "--timeout", "10")
+        self.assertEqual(code, 3)
+        self.assertIn("Stopped waiting at --timeout", out)
+        self.assertIn("Reconnect: gbi data status", out)
+        self.assertLessEqual(len(self.time.slept), 5)
+
+    def test_a_refusal_exits_2_and_waits_for_nothing(self):
+        broker = Broker(refuse = "Prefect request not confirmed: path is not inside an Object Storage mount that can be cached. Use status or run the same command again")
+        code, _out, err = self.run_cache(broker, str(self.data))
+        self.assertEqual(code, 2)
+        self.assertIn("not inside an Object Storage mount that can be cached", err)
+        self.assertEqual(len(broker.requests), 1)
+
+    def test_detach_returns_after_submission_and_status_reconnects(self):
+        broker = Broker(message = "cached 1 files, 0.00 GiB, 100% resident after 2 s")
+        code, out, _err = self.run_cache(broker, str(self.data), "--detach")
+        self.assertEqual(code, 0)
+        self.assertIn("Prefect SCHEDULED · cache", out)
+        self.assertEqual(len(broker.requests), 1)
+        run_dir, = self.runs()
         out = io.StringIO()
-        with redirect_stdout(out), self.assertRaises(SystemExit):
-            cli.parser().parse_args(["data", "cache", "--help"])
-        text = out.getvalue().lower().replace("\n", " ")
-        self.assertIn("object storage mount", text)
-        self.assertIn("--timeout", text)
-        self.assertIn("--include", text)
-        self.assertIn("instrument-data", text)
-        self.assertIn("exit codes: 0 warmed", text)
+        with (
+            patch("gbi_data.prefect.exchange", broker),
+            patch("gbi_data.cache.time", self.time),
+            patch("sys.argv", ["gbi", "data", "status", run_dir.name, "--watch"]),
+            patch.dict(os.environ, {"GBI_DATA_SITE_CONF": str(self.site.path)}),
+            redirect_stdout(out),
+        ):
+            self.assertEqual(cli.main(), 0)
+        self.assertIn("Prefect COMPLETED · cache " + run_dir.name, out.getvalue())
+        self.assertIn("100% resident", out.getvalue())
+        self.assertTrue(all(r["action"] == "status" for r, _ in broker.requests[1:]))
+
+    def test_dry_run_and_invalid_arguments_submit_nothing(self):
+        broker = Broker()
+        code, out, _err = self.run_cache(broker, str(self.data), "--include", "*.bam", "--dry-run")
+        self.assertEqual(code, 0)
+        self.assertIn(f"Would load {self.data} (files matching *.bam)", out)
+        self.assertEqual(broker.requests, [])
+        self.assertEqual(self.runs(), [])
+        for arguments in (
+            (str(self.data), "--include", "a/b"),
+            (str(self.data), "--timeout", "-1"),
+            (str(self.lustre),),
+        ):
+            code, _out, err = self.run_cache(broker, *arguments)
+            self.assertEqual(code, 2, arguments)
+            self.assertTrue(err.startswith("gbi data cache: "), err)
+        self.assertEqual(broker.requests, [])
+
+    def test_json_summary_lists_every_path(self):
+        broker = Broker(message = "cached 1 files, 0.00 GiB, 100% resident after 1 s")
+        code, out, _err = self.run_cache(broker, str(self.data), "--json")
+        self.assertEqual(code, 0)
+        summary = json.loads(out.strip().splitlines()[-1])
+        self.assertFalse(summary["timed_out"])
+        entry, = summary["paths"]
+        self.assertEqual(entry["path"], str(self.data))
+        self.assertEqual(entry["state"], "COMPLETED")
+        self.assertEqual(entry["message"], "cached 1 files, 0.00 GiB, 100% resident after 1 s")
+        self.assertEqual(entry["transfer_id"], self.runs()[0].name)
+
+    def test_waiting_reports_to_the_supervisor_and_heartbeats(self):
+        broker = Broker(states = ("RUNNING",) * 30 + ("COMPLETED",))
+        with patch("gbi_data.cache.deadlines.event") as event:
+            code, out, _err = self.run_cache(broker, str(self.data))
+        self.assertEqual(code, 0)
+        self.assertGreaterEqual(event.call_count, 30)
+        self.assertEqual(event.call_args[0][0], "waiting for the cache load")
+        self.assertIn("still loading: 1 path(s)", out)
 
 
 if __name__ == "__main__":

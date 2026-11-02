@@ -262,6 +262,13 @@ def _validate_result(raw):
     result["terminal"] = result["state"] in {
         "COMPLETED", "FAILED", "CANCELLED", "CRASHED",
     }
+    message = result.get("message")
+    if message is not None and (
+        not isinstance(message, str)
+        or not message.isprintable()
+        or len(message) > 1024
+    ):
+        del result["message"]
     return result
 
 
@@ -370,7 +377,7 @@ def _exchange_https(url, request):
         raise ValueError("Prefect HTTPS response was invalid") from None
 
 
-def exchange(site, request):
+def exchange(site, request, retry_hint = "retry with the same transfer ID"):
     path = site.values["prefect_socket"]
     deadlines.event("contacting Prefect migration broker", path)
     try:
@@ -380,8 +387,7 @@ def exchange(site, request):
         if not url:
             raise ValueError(
                 "Prefect broker unavailable on this node. Run this command on the login node "
-                "or contact cluster support. No request was sent; retry with "
-                "the same transfer ID"
+                f"or contact cluster support. No request was sent; {retry_hint}"
             ) from error
         deadlines.event(
             "local Prefect broker unavailable; using HTTPS transport", url
@@ -391,11 +397,11 @@ def exchange(site, request):
         except (OSError, ValueError, TypeError, AttributeError) as https_error:
             raise ValueError(
             f"Prefect request not confirmed: {https_error}. "
-            "Use status or retry with the same transfer ID"
+            f"Use status or {retry_hint}"
             ) from https_error
     except (OSError, ValueError, TypeError, AttributeError) as error:
         raise ValueError(
-            f"Prefect request not confirmed: {error}. Use status or retry with the same transfer ID"
+            f"Prefect request not confirmed: {error}. Use status or {retry_hint}"
         ) from error
 
 
