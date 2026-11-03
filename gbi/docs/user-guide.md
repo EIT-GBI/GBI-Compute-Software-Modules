@@ -32,10 +32,10 @@ gbi data roots
 
 `roots` prints your Lustre scratch, FSS home and Object Storage roots with a
 line on what belongs in each, the team folders you are a member of and the
-read-only collections every user can read. The Object Storage root is your
-member folder in your team's bucket; older accounts also reach it through
-their `/mnt/user-data` path. Replace the placeholder paths below with paths
-printed by `roots`.
+read-only collections you can open. The Object Storage root is your member
+folder in your team's bucket; accounts from before team folders also reach it
+through their `/mnt/user-data` path, and `roots` names that path when you have
+it. Replace the placeholder paths below with paths printed by `roots`.
 
 ```bash
 # Copy files and keep the originals.

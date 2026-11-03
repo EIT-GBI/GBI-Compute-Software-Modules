@@ -2,7 +2,10 @@
 
 Everything printed is derived on the host: the three personal roots from the
 site configuration, team folders from the directories the caller can open
-under ``team_root``, and the read-only collections from the paths that exist.
+under ``team_root``, and the read-only collections from the ones the caller
+can open. The printed Object Storage root is always a public path: the member
+folder, or the ``/mnt/user-data`` path of an account that still has its own
+backend, never the mount a link resolves to.
 Operational notes that change on a schedule (expiry rules, quotas) come from
 the site configuration so they can be edited without a release.
 """
@@ -29,8 +32,8 @@ ALLUXIO_NOTES = (
     "warm before a job: gbi data cache PATH --include '*.fastq.gz'",
 )
 READ_NOTE = (
-    "readable by every HPC user; a shared collection is written by the team"
-    " that owns it"
+    "what you can read; shared collections are written by the team that owns"
+    " them, archives are read-only"
 )
 FOOTER = "bulk moves between roots: gbi data move SRC DEST --prefect"
 
@@ -40,6 +43,15 @@ def _accessible_directory(path):
         return path.is_dir()
     except OSError:
         return False
+
+
+def _openable(path):
+    """Whether the caller can list ``path``: the test a job's read would face."""
+    try:
+        os.scandir(path).close()
+    except OSError:
+        return False
+    return True
 
 
 def teams(site):
@@ -74,19 +86,33 @@ def teams(site):
 
 
 def readable_roots(site):
-    """Configured read-only collection roots that exist, with ``/*`` for families."""
+    """Configured read-only collection roots the caller can open.
+
+    A family root (a directory of collections) prints as ``ROOT/*`` when every
+    collection in it opens for the caller and otherwise as the collections
+    that do; a collection the caller cannot open is left out, as is a path
+    that does not exist.
+    """
     result = []
     for value in site.values["readonly_roots"].split():
         path = Path(value).expanduser().absolute()
         try:
             if not path.exists():
                 continue
-            family = not path.is_symlink() and any(
-                child.is_dir() for child in path.iterdir()
+            collections = [] if path.is_symlink() else sorted(
+                child for child in path.iterdir() if child.is_dir()
             )
         except OSError:
-            family = False
-        result.append(f"{path}/*" if family else str(path))
+            collections = []
+        if not collections:
+            if _openable(path):
+                result.append(str(path))
+            continue
+        openable = [child for child in collections if _openable(child)]
+        if len(openable) == len(collections):
+            result.append(f"{path}/*")
+        else:
+            result.extend(str(child) for child in openable)
     return result
 
 
@@ -115,14 +141,23 @@ def lines(site):
     members = [team for team in teams(site) if team[1] is not None]
     if "alluxio" in aliases:
         alias, resolved = aliases["alluxio"], site.roots["alluxio"]
-        if not os.path.lexists(alias) and members:
-            # No personal path: the member folder is the user's archive root.
-            resolved, alias = members[0][1], None
+        team_root = Path(site.values["team_root"]).expanduser().absolute()
         notes = list(ALLUXIO_NOTES)
-        if alias is not None and resolved != alias:
-            notes.insert(0, f"also reachable as {alias}")
+        if not os.path.lexists(alias):
+            # No personal path: the member folder is the user's archive root.
+            root = members[0][1] if members else alias
+        elif team_root in resolved.parents:
+            # The personal path is a link into the team folder: print the
+            # folder and name the older path that still reaches it.
+            root = resolved
+            if resolved != alias:
+                notes.insert(0, f"also reachable as {alias}")
+        else:
+            # A personal path still on its own backend: print the path the
+            # user knows, never the mount it resolves to.
+            root = alias
         report.extend(_block(
-            "alluxio", resolved, notes, site.values["alluxio_note"]
+            "alluxio", root, notes, site.values["alluxio_note"]
         ))
         report.append("")
     shared = [(name, path) for name, _, path in teams(site) if path is not None]
