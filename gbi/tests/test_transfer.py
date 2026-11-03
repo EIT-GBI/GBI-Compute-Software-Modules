@@ -901,14 +901,13 @@ class Interface(unittest.TestCase):
             capture_output = True, text = True, timeout = 10,
         )
         self.assertEqual(result.returncode, 0, result.stderr)
-        # Lustre and FSS print their aliases; the archive root prints the
-        # resolved folder and names the alias it is also reachable as.
-        for kind in ("lustre", "fss"):
+        # Every root prints its alias. An archive alias that resolves outside
+        # the team root is a personal path on its own backend: the mount it
+        # resolves to is never printed and no "also reachable as" is claimed.
+        for kind in ("lustre", "fss", "alluxio"):
             self.assertIn(f"{kind:8} {aliases[kind]}\n", result.stdout)
-        self.assertIn(
-            f"alluxio  {self.base / 'physical-alluxio-root'}\n", result.stdout
-        )
-        self.assertIn(f"also reachable as {aliases['alluxio']}\n", result.stdout)
+        self.assertNotIn("physical-alluxio-root", result.stdout)
+        self.assertNotIn("also reachable as", result.stdout)
         for kind, alias in aliases.items():
             physical = self.base / f"physical-{kind}-root"
             self.assertEqual(site.classify(alias), (physical, kind, physical))

@@ -71,6 +71,18 @@ class RootsReportTest(unittest.TestCase):
         self.assertIn(f"alluxio  {folder / 'members' / self.user}", text)
         self.assertNotIn("also reachable as", text)
 
+    def test_legacy_personal_path_on_its_own_backend_prints_the_path(self):
+        backend = self.base / ".alluxio-personal" / "personal-shard-4" / self.user
+        backend.mkdir(parents = True)
+        alias = self.base / "user-data" / self.user
+        alias.symlink_to(backend)
+        folder = self.join_team("pellock-lab")
+        text = "\n".join(roots.lines(self.site()))
+        self.assertIn(f"alluxio  {alias}", text)
+        self.assertNotIn(".alluxio-personal", text)
+        self.assertNotIn("also reachable as", text)
+        self.assertIn(f"team     {folder / 'shared'}", text)
+
     def test_no_team_membership_is_stated(self):
         (self.base / "user-data" / self.user).mkdir()
         self.join_team("other-lab", member = False)
@@ -101,6 +113,34 @@ class RootsReportTest(unittest.TestCase):
         )
         self.assertNotIn("missing", text)
         self.assertIn(roots.READ_NOTE, text)
+
+    @unittest.skipIf(os.geteuid() == 0, "root opens every directory")
+    def test_unreadable_collection_is_left_out_and_the_rest_named(self):
+        archive = self.base / "archive"
+        closed  = archive / "parts-lab-sanger"
+        open_   = archive / "open-collection"
+        for path in (closed, open_, self.base / "shared" / "results"):
+            path.mkdir(parents = True)
+        closed.chmod(0)
+        (self.base / "user-data" / self.user).mkdir()
+        site = self.site(readonly_roots = f"{archive} {self.base / 'shared'}")
+        try:
+            text = "\n".join(roots.lines(site))
+        finally:
+            closed.chmod(0o700)
+        self.assertIn(f"read     {open_}  {self.base / 'shared'}/*", text)
+        self.assertNotIn("parts-lab-sanger", text)
+        self.assertNotIn(f"{archive}/*", text)
+        self.assertIn(roots.READ_NOTE, text)
+
+    def test_fully_readable_family_keeps_the_star_form(self):
+        archive = self.base / "archive"
+        for name in ("one", "two"):
+            (archive / name).mkdir(parents = True)
+        (self.base / "user-data" / self.user).mkdir()
+        text = "\n".join(roots.lines(self.site(readonly_roots = str(archive))))
+        self.assertIn(f"read     {archive}/*", text)
+        self.assertNotIn(f"{archive / 'one'}", text)
 
     def test_site_notes_are_printed_and_editable(self):
         (self.base / "user-data" / self.user).mkdir()

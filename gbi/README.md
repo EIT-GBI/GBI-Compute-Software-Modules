@@ -34,6 +34,14 @@ unchanged. Object Storage originals and versions remain retained. A published
 module or image alone does not establish runtime acceptance; unsupported
 requests fail rather than silently changing the operation.
 
+**0.4.35** corrects two `gbi data roots` lines (Scientific-Computing-Infrastructure#112, GBI CLI enhancements).
+The Object Storage root is always a public path: a `/mnt/user-data` entry that
+still points at its own backend is printed as that entry, never as the mount it
+resolves to, and gets no "also reachable as" line. The read line lists only the
+collections the caller can open: a family prints as `ROOT/*` only when every
+collection in it opens, otherwise as the ones that do, so an archive restricted
+to one team appears for that team alone. Nothing else changes.
+
 **0.4.34** makes `gbi data roots` explain each storage root and find your team
 folders (GBI-Compute-Software-Modules#122). Each root gets one line on what
 belongs there and what does not: Lustre scratch, FSS home, Object Storage
