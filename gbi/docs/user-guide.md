@@ -7,17 +7,18 @@ FSS and Object Storage. It runs with your Unix permissions and verifies the
 destination before removing an eligible filesystem source. Object Storage is
 the durable store: normal moves and restores always retain its originals.
 
-This guide describes the **0.4.33 release**. GBI is much faster than in
-September: a large `--prefect` archive now runs at about 260 MB/s, against about
-10 MB/s before, and a folder of small files at about 270 files a second instead
-of 6. `gbi data cache` loads a dataset into the storage cache before your job
-reads it; a 279 GiB sequencing run took 71 seconds. A single file can also go
-through `--prefect` with no extra flags. Every file is still checked on write
-and on readback before an original is removed, and existing commands, scripts
-and archives work as before. The 0.4.11 transfer behaviour was accepted for
-ordinary users on 28 September 2026. Check `gbi --version` and the
-[README](../README.md) before using new options. The managed `--prefect`
-route is live for copies, moves, archives and restores.
+This guide describes the **0.4.34 release**. Moving and archiving data is now
+many times faster: a large `--prefect` archive runs at about 260 MB/s, against
+about 10 MB/s before, and a folder of small files at about 270 files a second
+instead of 6. The new `gbi data cache` command moves data into the Alluxio cache
+before a job reads it: a 279 GiB sequencing run loaded in 71 seconds, and in
+sequencing workflow tests cached data read as fast as Lustre. `gbi data roots`
+now says what each storage root is for and lists your team folders. Every file
+is still checked on write and on readback before an original is removed, and
+existing commands, scripts and archives work as before. The 0.4.11 transfer
+behaviour was accepted for ordinary users on 28 September 2026. Check
+`gbi --version` and the [README](../README.md) before using new options. The
+managed `--prefect` route is live for copies, moves, archives and restores.
 
 ## Start here
 
