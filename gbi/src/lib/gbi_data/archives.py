@@ -2008,24 +2008,34 @@ def _hash_fd(fd):
 
 def restore(
             source, destination, includes = (), exclusions = (), phase = None,
-            *, selection_mode = "basename",
+            *, selection_mode = "basename", manifest = None,
         ):
-    """Verify all members, restore selected entries, then independently verify.
+    """Verify all members, restore selected entries, then check what was written.
 
     Native POSIX destinations only (Lustre/FSS), not Alluxio extraction. Existing
     files are reused only when content and representable metadata agree.
     Existing directory permissions are kept. No overwrite or archive deletion.
     A partial/interrupted
     restore keeps its archive and completed entries for an identical retry.
+
+    ``manifest`` is the result of an earlier ``inspect_archive`` of the same
+    source. With it the archive is read once: every member is checked against
+    that manifest as it is extracted. Without it the archive is read twice,
+    once to verify and once to extract. Files written by this call are hashed
+    from the bytes handed to the writer and are not read back; only a file
+    that already existed is re-read to prove it matches.
     """
     select = _selection(includes, exclusions, selection_mode)
-    if phase:
-        phase("verifying archive")
-    manifest = inspect_archive(source)
     if manifest is None:
-        raise ArchiveError(
-            "ordinary unmarked archives are not automatically extracted"
-        )
+        if phase:
+            phase("verifying archive")
+        manifest = inspect_archive(source)
+        if manifest is None:
+            raise ArchiveError(
+                "ordinary unmarked archives are not automatically extracted"
+            )
+    elif not isinstance(manifest, dict) or manifest.get("format") != FORMAT:
+        raise ArchiveError("restore manifest is not an inspected GBI manifest")
     all_entries = {entry["path"]: entry for entry in manifest["entries"]}
     selected    = {name for name, entry in all_entries.items() if select(name)}
     for name in list(selected):
@@ -2047,6 +2057,7 @@ def restore(
         destination.mkdir(mode = 0o700)
     with _directory(destination) as root_fd:
         reused_directories = set()
+        written = {}  # entries this call linked into place, by observation
         for name in selected:
             if all_entries[name]["type"] != "directory":
                 continue
@@ -2069,6 +2080,7 @@ def restore(
                     os.O_CREAT | os.O_EXCL | os.O_RDWR | os.O_NOFOLLOW,
                     0o600, dir_fd = parent,
                 )
+                removed = False
                 try:
                     with os.fdopen(os.dup(fd), "wb") as out:
                         while True:
@@ -2078,7 +2090,9 @@ def restore(
                             out.write(data)
                         out.flush()
                         os.fsync(out.fileno())
-                    if _hash_fd(fd) != entry["sha256"]:
+                    # The scan's reader hashed every byte handed to the
+                    # writer; the written file is not read back.
+                    if reader.hash.hexdigest() != entry["sha256"]:
                         raise ArchiveError(
                             "restored content checksum mismatch; archive kept"
                         )
@@ -2091,9 +2105,14 @@ def restore(
                         )
                     except FileExistsError:
                         _verify_entry(root_fd, name, entry)
+                    else:
+                        os.unlink(temporary, dir_fd = parent)
+                        removed = True
+                        written[name] = _observation(os.fstat(fd))
                 finally:
                     os.close(fd)
-                    os.unlink(temporary, dir_fd = parent)
+                    if not removed:
+                        os.unlink(temporary, dir_fd = parent)
 
         def consume(item, reader):
             name   = item["path"]
@@ -2111,6 +2130,18 @@ def restore(
                 regular(targets[0], reader, all_entries[targets[0]])
                 for alias in targets[1:]:
                     _link(root_fd, targets[0], alias, all_entries[alias])
+                if targets[1:] and targets[0] in written:
+                    # Linking changes the inode's ctime and link count; the
+                    # aliases share that inode, so one fresh observation
+                    # stands for every name written here.
+                    with _parent(root_fd, targets[0], create = False) as (
+                        parent, leaf,
+                    ):
+                        shared = _observation(
+                            os.stat(leaf, dir_fd = parent, follow_symlinks = False)
+                        )
+                    for target in targets:
+                        written[target] = shared
             elif wanted and item["type"] == "directory":
                 with _parent(root_fd, name) as (parent, leaf):
                     try:
@@ -2158,6 +2189,7 @@ def restore(
             _verify_entry(
                 root_fd, name, entry,
                 preserve_directory = name in reused_directories,
+                written = written.get(name),
             )
     return {
         "selected": len(selected), "total": len(all_entries), "verified": True,
@@ -2199,7 +2231,16 @@ def _link(root_fd, target, alias, entry):
                     )
 
 
-def _verify_entry(root_fd, name, entry, preserve_directory = False):
+def _verify_entry(
+            root_fd, name, entry, preserve_directory = False, written = None,
+        ):
+    """Check one restored entry.
+
+    ``written`` is the observation taken when this restore linked the file
+    into place: the file is then proved by identity (same inode, size, mode
+    and times) rather than read back. A file this restore did not write is
+    read and hashed.
+    """
     with _parent(root_fd, name, create = False) as (parent, leaf):
         info = os.stat(leaf, dir_fd = parent, follow_symlinks = False)
         kind = entry["type"]
@@ -2214,7 +2255,9 @@ def _verify_entry(root_fd, name, entry, preserve_directory = False):
                 return
         else:
             okay = stat.S_ISREG(info.st_mode) and info.st_size == entry["size"]
-            if okay:
+            if okay and written is not None:
+                okay = _observation(info) == written
+            elif okay:
                 fd = os.open(leaf, os.O_RDONLY | os.O_NOFOLLOW, dir_fd = parent)
                 try:
                     okay = _hash_fd(fd) == entry["sha256"] and _observation(

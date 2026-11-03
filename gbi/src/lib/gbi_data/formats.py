@@ -575,12 +575,16 @@ def _restore_chunk_file(task, source, target, journal_path, journal, report):
                 output.write(data)
                 total += len(data)
                 report("restoring chunks", total, manifest["size"])
+            # The chunk reader checks every part and the whole stream as it
+            # is read; the bytes it handed over are the bytes written.
+            verified = reader.raw.verified
         output.flush()
         os.fsync(output.fileno())
     report("verifying restored file", 0, manifest["size"])
     if (
-        _identity(target) != journal["owned"]
-        or digest(target) != manifest["sha256"]
+        not verified
+        or total != manifest["size"]
+        or _identity(target) != journal["owned"]
     ):
         raise ValueError(
             "restored file identity or checksum differs; source retained"

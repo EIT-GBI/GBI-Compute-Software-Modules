@@ -605,20 +605,19 @@ def restore_chunks(store, target, *, progress = None):
                         )
                 output.flush()
                 os.fsync(output.fileno())
-            target_before = fingerprint(target)
-            with os.fdopen(_regular(target), "rb") as result:
-                digest, size = _hash(result)
+            # Every part and the whole stream were checked as they were
+            # read; the written file is proved by size and identity, not
+            # read back.
             if (
-                digest != source.manifest["sha256"]
+                not source.raw.verified
                 or size != source.manifest["size"]
                 or _identity(target.lstat()) != created_identity
-                or fingerprint(target) != target_before
             ):
                 raise ValueError("restored file checksum or identity differs")
             return {
-                "bytes": size, "sha256": digest,
+                "bytes": size, "sha256": source.manifest["sha256"],
                 "parts": len(source.manifest["parts"]),
-                "target_fingerprint": target_before,
+                "target_fingerprint": fingerprint(target),
             }
     except BaseException:
         if (
