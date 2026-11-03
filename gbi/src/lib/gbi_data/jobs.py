@@ -262,15 +262,65 @@ def terminal_display(progress):
     )
 
 
+def compact_bar(progress):
+    total = progress.get("discovered_bytes", 0)
+    if (
+        not progress.get("discovery_complete")
+        or not progress.get("totals_known", True)
+    ):
+        return None
+
+    if total:
+        copied = progress.get("bytes", 0) + progress.get("active_bytes", 0)
+        percent = min(100.0, 100.0 * copied / total)
+    else:
+        percent = 100.0 if progress["phase"] == "complete" else 0.0
+
+    # all bytes may be copied before verification and deletion finish.
+    if progress["phase"] != "complete":
+        percent = min(percent, 99.9)
+
+    width = max(10, min(36, shutil.get_terminal_size().columns - 36))
+    filled = int(width * percent / 100)
+    return f"[{'=' * filled}{' ' * (width - filled)}] {percent:.1f}%"
+
+
 class ProgressDisplay:
     """Use the same compact progress display in the foreground and job viewer."""
 
-    def __init__(self):
+    def __init__(self, *, compact_verb = None):
         self.terminal   = sys.stdout.isatty()
         self.last_line  = ""
         self.last_print = 0.0
+        self.compact_verb = compact_verb if self.terminal else None
+        self.stage = None
 
     def update(self, progress):
+        if self.compact_verb:
+            bar = compact_bar(progress)
+
+            if self.stage is None:
+                print("Discovering files…", end = "", flush = True)
+                self.stage = "discovering"
+
+            if bar is None:
+                return
+
+            if self.stage != "transferring":
+                label = (
+                    "Moving files…"
+                    if self.compact_verb == "move"
+                    else "Copying files…"
+                )
+                print(f"\n{label}", flush = True)
+                print(bar, end = "", flush = True)
+                self.stage = "transferring"
+            elif bar != self.last_line:
+                print("\r\033[2K" + bar, end = "", flush = True)
+
+            self.last_line = bar
+            return
+
         line = (
             terminal_display(progress) if self.terminal else display(progress)
         )
@@ -284,7 +334,15 @@ class ProgressDisplay:
             self.last_print = time.monotonic()
         self.last_line = line
 
+
     def finish(self):
+        if self.compact_verb:
+            if self.stage is not None:
+                print(flush = True)
+            self.stage = None
+            self.last_line = ""
+            return
+
         if self.terminal and self.last_line:
             print(flush = True)
         self.last_line = ""

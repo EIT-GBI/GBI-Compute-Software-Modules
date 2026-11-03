@@ -141,7 +141,7 @@ def copy_stream(
                 output.write(block)
                 result.update(block)
                 total += len(block)
-                if time.monotonic() - last >= 2:
+                if time.monotonic() - last >= 0.5:
                     detail = {
                         "bytes": total, "phase": "copying", "path": str(source),
                     }

@@ -642,7 +642,7 @@ def _run(run_dir, site, home):
     stopped = threading.Event()
     for signum in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
         signal.signal(signum, lambda *_: stopped.set())
-    started, last_publish, discovery_wait = time.monotonic(), 0.0, 0.0
+    started, last_publish, last_display, discovery_wait = time.monotonic(), 0.0, 0.0, 0.0
     discovery_progress = None
     progress = {
         "phase": "running", "files": 0, "bytes": 0, "freed": 0, "failed": 0,
@@ -677,7 +677,7 @@ def _run(run_dir, site, home):
     counted_bytes = {}
     unknown_sizes = set()
     width         = int(site.values["jobs"])
-    output        = jobs.ProgressDisplay()
+    output        = jobs.ProgressDisplay(compact_verb = specification["verb"])
 
     def record_failure(path, error):
         progress["failed"] += 1
@@ -858,8 +858,14 @@ def _run(run_dir, site, home):
                             f"{path} bytes={outcome['bytes']}",
                                 flush = True,
                             )
-                if time.monotonic() - last_publish >= 2:
-                    progress["elapsed"] = time.monotonic() - started
+                now = time.monotonic()
+                publish_due = now - last_publish >= 2
+                display_due = (
+                    bool(output.compact_verb)
+                    and now - last_display >= 0.5
+                )
+                if publish_due or display_due:
+                    progress["elapsed"] = now - started
                     progress["active"] = len(pending)
                     progress["totals_known"] = not unknown_sizes
                     progress["active_bytes"] = 0
@@ -883,16 +889,20 @@ def _run(run_dir, site, home):
                             )
                         except (OSError, ValueError, KeyError):
                             pass
-                    deadlines.event(
-                        "publishing progress", run_dir, counters = progress
-                    )
-                    write_json(run_dir / "progress.json", progress)
+
+                    if publish_due:
+                        deadlines.event(
+                            "publishing progress", run_dir, counters = progress
+                        )
+                        write_json(run_dir / "progress.json", progress)
+                        last_publish = now
+
                     output.update(progress)
+                    last_display = now
                     deadlines.event(
                         "transferring" if pending else "discovering",
                         source, counters = progress,
                     )
-                    last_publish = time.monotonic()
     except (OSError, ValueError) as error:
         stopped.set()
         progress["failed"] += 1
@@ -911,17 +921,38 @@ def _run(run_dir, site, home):
     progress["totals_known"] = not unknown_sizes
     progress["active_bytes"] = 0
     progress["phases"] = {}
+
+    if output.compact_verb:
+        output.update(progress)  # Show the completed bar before the summary.
     output.finish()
     print(
         f"Data phase: {progress['phase']}. Receipts: {run_dir / 'receipts.jsonl'}",
         flush = True,
     )
+    if output.compact_verb:
+        speed = progress["bytes"] / max(progress["elapsed"], 1)
+        print(
+            f"Verified {progress['files']:,} files · "
+            f"{jobs.human_bytes(progress['bytes'])} · "
+            f"{jobs.human_bytes(speed)}/s",
+            flush = True,
+        )
+        if specification["verb"] == "move":
+            print(
+                f"Source removed {jobs.human_bytes(progress['freed'])} · "
+                f"failed {progress['failed']}",
+                flush = True,
+            )
+
     deadlines.event("publishing final progress", run_dir, counters = progress)
     write_json(
         run_dir / "progress.json", {**progress, "phase": "saving history"}
     )
-    output.update({**progress, "phase": "saving history"})
-    output.finish()
+    if output.compact_verb:
+        print("Saving history", flush = True)
+    else:
+        output.update({**progress, "phase": "saving history"})
+        output.finish()
     try:
         deadlines.event(
             "saving history", site.roots["alluxio"], counters = progress
@@ -956,7 +987,7 @@ def _run(run_dir, site, home):
             f"History saved; temporary records could not be removed: {run_dir}: {error}",
             flush = True,
         )
-    print(f"{progress['phase'].capitalize()}. History: {history}", flush = True)
+    print(f"{progress['phase'].capitalize()}.", flush = True)
     return 0 if progress["phase"] == "complete" else 1
 
 
