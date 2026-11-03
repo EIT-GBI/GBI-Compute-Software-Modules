@@ -85,13 +85,26 @@ def _manifest_digest(manifest):
     ).hexdigest()
 
 
+# Plain archive moves unlink on this many threads: the parallel cleanup path
+# verifies and removes per directory group with the destination checked before
+# the first unlink, every DESTINATION_CHECK_SECONDS while unlinking, and after.
+CLEANUP_WORKERS = 8
+
+
 class _Output:
+    """The pack sink: counts and hashes every byte as it is written.
+
+    The SHA-256 of the staged archive is therefore known when packing ends,
+    so the stage is never read back just to learn it.
+    """
+
     def __init__(self, stream, report, limit = None):
         self.stream = stream
         self.report = report
         self.limit  = limit
         self.bytes = 0
         self.last  = 0
+        self.sha256 = hashlib.sha256()
 
     def write(self, data):
         if self.limit is not None and self.bytes + len(data) > self.limit:
@@ -99,6 +112,7 @@ class _Output:
                 "archive exceeded its bounded staging reservation; source and stage kept"
             )
         count      = len(data) if self.stream is None else self.stream.write(data)
+        self.sha256.update(data[:count] if count != len(data) else data)
         self.bytes += count
         if time.monotonic() - self.last >= 2:
             self.report("packing", self.bytes)
@@ -264,11 +278,9 @@ def _stage_archive(task, source, target, state, key, report):
                     "source content changed since staging; stage retained; "
                     "choose a new destination"
                 )
-            archives.verify_archive(payload, current)
-            if digest(payload) != saved["sha256"]:
-                raise ValueError(
-                    "staged archive checksum changed; stage retained"
-                )
+            # The stage is not read here: its inode is the owned one checked
+            # above, and the one proof of the bytes is the full readback of
+            # the stored archive through the mount before any receipt.
             return payload, current, saved, journal_path
         else:
             raise ValueError(
@@ -327,14 +339,17 @@ def _stage_archive(task, source, target, state, key, report):
     }
     with os.fdopen(fd, "wb") as output:
         write_json(journal_path, saved)
-        manifest = archives.pack(
-            source, _Output(output, report, required), **options
-        )
+        sink     = _Output(output, report, required)
+        manifest = archives.pack(source, sink, **options)
         output.flush()
         os.fsync(output.fileno())
-    report("verifying staged archive")
-    archives.verify_archive(payload, manifest)
-    saved.update(phase = "complete", manifest = manifest, sha256 = digest(payload))
+    # One source read (the pack) and no stage read: the SHA-256 recorded here
+    # was taken from the bytes as they were written. The stored archive is
+    # read back in full through the mount before any receipt; that readback
+    # is the proof of these bytes, and of their upload.
+    saved.update(
+        phase = "complete", manifest = manifest, sha256 = sink.sha256.hexdigest()
+    )
     write_json(journal_path, saved)
     return payload, manifest, saved, journal_path
 
@@ -800,6 +815,12 @@ def transfer(task):
                             payload, saved, stage_journal,
                             _identity(stage_journal), _identity(payload.parent),
                         )
+                        # The stage is read twice: once to plan the parts and
+                        # once to write them. The per-part readbacks through
+                        # the mount and the full verify_archive(stored) below
+                        # (or before cleanup on a move) are the proof, so the
+                        # store's own final pass over the stage and parts is
+                        # not run for a packed archive.
                         chunks.write_chunks(
                             payload, target, state = state,
                             chunk_size = task["chunk_size"],
@@ -808,6 +829,7 @@ def transfer(task):
                                 f"verified archive parts {p['parts']}/{p['total_parts']}",
                                 p["bytes"], p["total_bytes"],
                             ),
+                            final_pass = False,
                         )
                         if not task.get("delete"):
                             report("verifying archive")
@@ -955,6 +977,9 @@ def transfer(task):
                         _readback(verify_once, settle)
 
                     cleanup = (
+                        # A resumed cleanup stays on one thread: it re-hashes
+                        # the remaining sources against the journal manifest
+                        # and its freed-bytes accounting is per unlink.
                         archives.resume_cleanup_source(
                             source, manifest, stored,
                             destination_unchanged = destination_unchanged,
@@ -969,6 +994,7 @@ def transfer(task):
                                 on_verified = record_verified,
                                 verify_stored_archive = verify_stored_archive,
                                 fresh_source_manifest = manifest,
+                                workers = CLEANUP_WORKERS,
                             ), "freed_bytes": _source_bytes(manifest),
                         }
                     )
@@ -1083,10 +1109,8 @@ def transfer(task):
                 payload, saved, stage_journal, stage_journal_identity,
                 stage_directory_identity,
             ) = staging
-            if digest(payload) != saved["sha256"]:
-                raise ValueError(
-                    "accepted archive stage changed; stage retained for inspection"
-                )
+            # The stage was just streamed into the store and the stored
+            # archive read back in full; only the owned inode is removed.
             _owned_remove(payload, saved["owned"], state)
             _owned_remove(stage_journal, stage_journal_identity, state)
             try:

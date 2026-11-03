@@ -89,7 +89,12 @@ the complete source container, including unselected members.
 ## Verification and recovery
 
 Ordinary movement remains source stream → independent destination SHA-256
-readback → source recheck when deleting → durable receipt → guarded unlink.
+readback → source identity recheck when deleting → durable receipt → guarded
+unlink. The source bytes are read once. A packed chunked move reads the source
+once and the Lustre stage twice (plan, write); the stored archive's full
+readback through the mount is the proof, and the stage is never read back on
+its own. Plain packed moves unlink on a pool with the destination checked per
+directory group.
 `copy` retains sources. `move` removes only verified, unchanged filesystem
 sources. Object Storage originals and versions are always retained; the retired
 `--delete-source` option and SDK `delete_source=True` are rejected on all routes.

@@ -328,9 +328,13 @@ def _part_digest(path, part, combined = None):
 
 def write_chunks(
             source, store, *, state, chunk_size = DEFAULT_CHUNK_SIZE,
-            progress = None, settle_seconds = 0,
+            progress = None, settle_seconds = 0, final_pass = True,
         ):
     """Write/resume one unchanged regular file; report verified part progress.
+
+    ``final_pass`` re-reads the source and every stored part once more before
+    the completion marker. A caller whose own full readback of the stored
+    archive is the proof passes ``False`` and the source is read exactly twice.
 
     ``progress`` receives ``parts``, ``bytes``, ``total_parts``, ``total_bytes``
     and ``reused`` after each independently read-back part. One part at a time.
@@ -438,17 +442,23 @@ def write_chunks(
                         "total_bytes": manifest["size"], "reused": reused,
                     }
                 )
-        input_file.seek(0)
-        final_digest, final_size = _hash(input_file)
-        if (
-            fingerprint(source) != before
-            or final_digest != digest
-            or final_size != before[3]
-            or combined.hexdigest() != digest
-        ):
+        # ``combined`` was built from the readback of every part through the
+        # mount, so it already proves the store reconstructs the planned
+        # digest. The final pass below re-reads the source and every part once
+        # more; a caller whose own full readback of the stored archive is the
+        # proof (a packed archive) turns it off, so the stage is read exactly
+        # twice: once to plan and once to write.
+        if fingerprint(source) != before or combined.hexdigest() != digest:
             raise ValueError(
                 "source changed or full chunk checksum differs; source retained"
             )
+        if final_pass:
+            input_file.seek(0)
+            final_digest, final_size = _hash(input_file)
+            if final_digest != digest or final_size != before[3]:
+                raise ValueError(
+                    "source changed or full chunk checksum differs; source retained"
+                )
 
         def recheck(item):
             path, identity, part = item
@@ -466,13 +476,14 @@ def write_chunks(
 
         # Each check streams one part in 1 MiB blocks. Submit bounded windows so
         # even a 100,000-part store has at most four checks and buffers in flight.
-        with ThreadPoolExecutor(max_workers = VERIFY_WORKERS) as pool:
-            for start in range(0, len(verified_parts), VERIFY_WORKERS):
-                list(
-                    pool.map(
-                        recheck, verified_parts[start : start + VERIFY_WORKERS]
+        if final_pass:
+            with ThreadPoolExecutor(max_workers = VERIFY_WORKERS) as pool:
+                for start in range(0, len(verified_parts), VERIFY_WORKERS):
+                    list(
+                        pool.map(
+                            recheck, verified_parts[start : start + VERIFY_WORKERS]
+                        )
                     )
-                )
         _remote_json(
             marker, _completion(manifest, encoded), journal, journal_path,
             settle_seconds,

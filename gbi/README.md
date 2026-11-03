@@ -34,6 +34,30 @@ unchanged. Object Storage originals and versions remain retained. A published
 module or image alone does not establish runtime acceptance; unsupported
 requests fail rather than silently changing the operation.
 
+**0.4.34** makes `gbi data roots` explain each storage root and find your team
+folders (GBI-Compute-Software-Modules#122). Each root gets one line on what
+belongs there and what does not: Lustre scratch, FSS home, Object Storage
+archive. The Object Storage root is printed as your member folder in your
+team's bucket, with the older `/mnt/user-data` alias named on the next line
+when it exists. The team folders you can open under `/mnt/team` and the
+read-only collection roots follow. `gbi data usage` now says why the live
+Lustre quota can differ from the folder breakdown. Site operators set the
+per-root notes (`lustre_note`, `fss_note`, `alluxio_note`), `team_root` and
+`readonly_roots` in site.conf, all with defaults, so no existing site.conf
+needs a change. Transfers, formats, receipts and journals are unchanged.
+
+**0.4.33** makes the direct route read each byte the minimum number of times
+(GBI-Compute-Software-Modules#114). A packed chunked move reads the source once
+and the Lustre stage twice: the pack sink hashes what it writes, so the stage is
+not scanned or digested after packing, and the chunk writer's final pass over
+the stage and every part is off for packed archives, whose proof is the full
+readback of the stored archive through the mount before any receipt. Plain
+packed moves unlink on a pool of 8. Per-file moves no longer re-read the source
+before the receipt (identity is the inode, size and nanosecond mtime, checked
+after the readback and before the unlink); progress files are no longer
+fsynced, journals and receipts still are. Formats, receipts and journals are
+unchanged.
+
 **0.4.17** removes a duplicate full destination archive read from ordinary
 archive moves, including resumed cleanup. The complete archive content and
 source checks now precede verified receipt publication in the cleanup path;

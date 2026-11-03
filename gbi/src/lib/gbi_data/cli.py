@@ -354,23 +354,25 @@ def parser(*, advanced = False):
     )
     cache_command = verbs.add_parser(
         "cache",
-        help = "warm the Object Storage cache for paths before a job reads them",
+        help = "load paths into the Object Storage cache before a job reads them",
         description = (
-            "Read every file below PATH once through your own Object Storage mount\n"
-            "so its blocks are cached on the storage workers before a job needs\n"
-            "them. Returns when the last read finishes; repeating it is cheap. Use it\n"
+            "Load every file below PATH into the Object Storage cache so a job\n"
+            "reads warm blocks. The site's broker submits one native load and every\n"
+            "storage worker serves it in parallel, so the data lands in the cache\n"
+            "faster than any single reader could pull it; nothing is read on this\n"
+            "node. Returns when the blocks are cached; repeating it is cheap. Use it\n"
             "as the first line of a job script or in a prolog. Paths must be inside\n"
-            "an Object Storage (Alluxio) mount: your personal root, a team or shared\n"
-            "mount, or sequencing data under /mnt/instrument-data (name an\n"
-            "instrument or one of its run folders). --include keeps only files whose\n"
-            "name matches a pattern. Exit codes: 0 warmed, 1 some files could not be\n"
-            "read, 2 refused, 3 stopped at --timeout."
+            "an Object Storage (Alluxio) mount you can read: your member folder, a\n"
+            "team or shared mount, or sequencing data under /mnt/instrument-data.\n"
+            "--include keeps only files whose name matches a pattern. Exit codes:\n"
+            "0 cached, 1 the load failed, 2 refused, 3 stopped waiting at --timeout\n"
+            "(the load itself continues)."
         ),
         epilog = (
-            "Examples:\n  gbi data cache /mnt/user-data/$USER/dataset\n"
-            "  gbi data cache /mnt/team/my-lab/shared/reference --jobs 8 --timeout 900\n"
+            "Examples:\n  gbi data cache /mnt/team/my-lab/members/$USER/dataset\n"
+            "  gbi data cache /mnt/team/my-lab/shared/reference --timeout 900\n"
             "  gbi data cache /mnt/instrument-data/illumina_nextseq_1/RUN --include '*.fastq.gz,*.bam'\n"
-            "  gbi data cache PATH --dry-run"
+            "  gbi data cache PATH --detach   # then: gbi data status TRANSFER_ID --watch"
         ),
         formatter_class = argparse.RawDescriptionHelpFormatter,
     )
@@ -379,12 +381,8 @@ def parser(*, advanced = False):
         help = "file or directory inside an Object Storage mount",
     )
     cache_command.add_argument(
-        "--jobs", type = int, default = None, metavar = "N",
-        help = f"parallel readers, 1-{cache.MAX_JOBS} (default: the site's jobs setting)",
-    )
-    cache_command.add_argument(
         "--timeout", type = int, default = 0, metavar = "SECONDS",
-        help = "stop starting new files after this long and exit 3 (default: no limit)",
+        help = "stop waiting after this long and exit 3; the load continues (default: wait)",
     )
     cache_command.add_argument(
         "--include", action = "append", default = None, metavar = "PATTERN",
@@ -395,11 +393,15 @@ def parser(*, advanced = False):
     )
     cache_command.add_argument(
         "--dry-run", action = "store_true",
-        help = "count files and bytes without reading anything",
+        help = "show what would be loaded without submitting anything",
+    )
+    cache_command.add_argument(
+        "--detach", action = "store_true",
+        help = "return after submission; reconnect with gbi data status TRANSFER_ID --watch",
     )
     cache_command.add_argument(
         "--json", action = "store_true",
-        help = "print the summary as one JSON line instead of progress",
+        help = "print one JSON summary line instead of progress",
     )
     # Internal entrypoint used by the generated batch script.  The public
     # subparser metavar above intentionally leaves this choice undocumented.
@@ -1071,11 +1073,10 @@ def main():
                     run_dir, site, options.wait or sys.stdout.isatty()
                 )
             request = run_dir / "request.json"
-            if (
-                request.is_file()
-                and json.loads(request.read_text()).get("execution")
-                == "prefect"
-            ):
+            record = json.loads(request.read_text()) if request.is_file() else {}
+            if record.get("execution") == "prefect":
+                if record.get("broker_request", {}).get("operation") == "cache":
+                    return cache.status(run_dir, site, options.watch)
                 return prefect.follow(run_dir, site, options.watch)
             return jobs.watch(
                 run_dir, options.job_id, options.watch, site.roots["alluxio"]

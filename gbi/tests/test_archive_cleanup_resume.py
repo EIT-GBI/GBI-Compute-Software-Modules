@@ -231,16 +231,18 @@ class ArchiveCleanupResume(unittest.TestCase):
         task = self.task(include = ["*.txt"])
         with self.fail_after_first_unlink(), self.assertRaises(ValueError):
             formats.transfer(task)
+        # The fresh cleanup unlinks on a pool, so other names may already be
+        # gone when the injected failure stops it; the resume frees whatever
+        # the first run left, which is what its receipt must say.
+        sizes = {"a.txt": 5, "b.txt": 4, "nested/one.txt": 4, "nested/two.txt": 4}
+        self.assertFalse((self.source / self.first_removed).exists())
+        remaining = sum(
+            size for name, size in sizes.items() if (self.source / name).exists()
+        )
         result = formats.transfer(task)
         self.assertEqual(result["bytes"], 17)
-        self.assertEqual(
-            result["freed_bytes"],
-            17
-            - {
-                "a.txt": 5, "b.txt": 4, "nested/one.txt": 4,
-                "nested/two.txt": 4,
-            }[self.first_removed],
-        )
+        self.assertEqual(result["freed_bytes"], remaining)
+        self.assertLess(remaining, 17)
         self.assertTrue((self.source / "keep.bin").exists())
         self.assertFalse(nested.exists())
 
