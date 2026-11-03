@@ -198,9 +198,11 @@ printed transfer ID. Automatic thresholds are not completion-time promises.
 
 Use `--prefect` for direct personal Object Storage transfers through the
 site's identity-bound broker. No Prefect UI or cloud credentials are needed
-in your script. One endpoint must be your personal Lustre or FSS path and
-the other your personal Object Storage path. Ordinary transfers instead use
-mounted paths available through your Unix permissions.
+in your script. One endpoint must be inside your Lustre or FSS root and the
+other inside your Object Storage root, the paths `gbi data roots` prints:
+your team member folder, or your `/mnt/user-data` path if your account still
+has one. Ordinary transfers instead use mounted paths available through your
+Unix permissions.
 
 ```bash
 gbi data copy /your/fss/experiment /your/object/saved-experiment --prefect --wait
