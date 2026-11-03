@@ -290,20 +290,45 @@ class Transfers(unittest.TestCase):
         self.source.chmod(0o600)
         self.assertEqual(fingerprint(self.source), before)
 
-    def test_same_size_same_timestamp_source_edit_retains_source(self):
+    def test_same_size_source_edit_after_the_copy_retains_source(self):
         def change(*args):
             original = self.source.stat()
             value    = copy_stream(*args)
             self.source.write_bytes(b"x" * original.st_size)
-            os.utime(
-                self.source, ns = (original.st_atime_ns, original.st_mtime_ns)
-            )
             return value
 
         with patch("gbi_data.transfer.copy_stream", side_effect = change):
-            with self.assertRaisesRegex(ValueError, "source content changed"):
+            with self.assertRaisesRegex(ValueError, "source changed during transfer"):
                 transfer(self.task)
         self.assertTrue(self.source.exists())
+
+    def test_a_move_reads_the_source_once_and_fsyncs_only_evidence(self):
+        reads = []
+        original_digest = transfer_digest
+
+        def counting_digest(path, *args, **kwargs):
+            reads.append(Path(path))
+            return original_digest(path, *args, **kwargs)
+
+        fsyncs = []
+        original_fsync = os.fsync
+
+        def counting_fsync(fd):
+            fsyncs.append(fd)
+            return original_fsync(fd)
+
+        with (
+            patch("gbi_data.transfer.digest", side_effect = counting_digest),
+            patch("gbi_data.transfer.os.fsync", side_effect = counting_fsync),
+        ):
+            result = transfer(self.task)
+        self.assertTrue(result["deleted"])
+        # The copy hashes the source as it streams; only the target is digested.
+        self.assertNotIn(self.source, reads)
+        self.assertEqual(reads.count(self.target), 1)
+        # The data file, the journal (writing, verified) and two receipts are
+        # fsynced; the progress updates are not.
+        self.assertEqual(len(fsyncs), 5)
 
     def test_no_receipt_means_no_deletion(self):
         with patch(
