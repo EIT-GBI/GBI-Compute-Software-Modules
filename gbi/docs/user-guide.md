@@ -7,18 +7,17 @@ FSS and Object Storage. It runs with your Unix permissions and verifies the
 destination before removing an eligible filesystem source. Object Storage is
 the durable store: normal moves and restores always retain its originals.
 
-This guide describes the **0.4.18 release**. Archive moves reuse freshly computed
-source hashes while file identity and metadata remain unchanged. It also retains
-0.4.17's single destination archive check and parallel final chunk verification.
-Full destination verification and verified receipts still precede ordinary source
-removal. Journal-only resumes hash each remaining source file once per
-invocation, then reuse that verified observation before unlink; persisted journal
-digests alone are never reused, and a hardlink ctime change forces a rehash.
-The 0.4.11 transfer behaviour was accepted for ordinary
-users on 28 September 2026. Check `gbi --version` and the
-[README](../README.md) before using new options. Its matching typed broker and
-production FSS/Lustre archive and restore flows are deployed and accepted,
-including automatic `--archive --prefect`.
+This guide describes the **0.4.33 release**. GBI is much faster than in
+September: a large `--prefect` archive now runs at about 260 MB/s, against about
+10 MB/s before, and a folder of small files at about 270 files a second instead
+of 6. `gbi data cache` loads a dataset into the storage cache before your job
+reads it; a 279 GiB sequencing run took 71 seconds. A single file can also go
+through `--prefect` with no extra flags. Every file is still checked on write
+and on readback before an original is removed, and existing commands, scripts
+and archives work as before. The 0.4.11 transfer behaviour was accepted for
+ordinary users on 28 September 2026. Check `gbi --version` and the
+[README](../README.md) before using new options. The managed `--prefect`
+route is live for copies, moves, archives and restores.
 
 ## Start here
 
@@ -196,6 +195,10 @@ site's identity-bound broker. No Prefect UI or cloud credentials are needed
 in your script. One endpoint must be your personal Lustre or FSS path and
 the other your personal Object Storage path. Ordinary transfers instead use
 mounted paths available through your Unix permissions.
+
+It is the faster choice for tens of GB or more: each job uploads at 100 to
+260 MB/s, while writing through your mount from a compute node runs at about
+15 to 20 MB/s.
 
 ```bash
 gbi data copy /your/fss/experiment /your/object/saved-experiment --prefect --wait
