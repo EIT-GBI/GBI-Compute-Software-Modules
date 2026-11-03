@@ -29,7 +29,12 @@ gbi --version
 gbi data roots
 ```
 
-Replace the placeholder paths below with paths printed by `roots`.
+`roots` prints your Lustre scratch, FSS home and Object Storage roots with a
+line on what belongs in each, the team folders you are a member of and the
+read-only collections every user can read. The Object Storage root is your
+member folder in your team's bucket; older accounts also reach it through
+their `/mnt/user-data` path. Replace the placeholder paths below with paths
+printed by `roots`.
 
 ```bash
 # Copy files and keep the originals.
@@ -400,7 +405,11 @@ code           4.0 GiB      876
 Where the numbers come from:
 
 - **Lustre** is your live UID quota from the Lustre client (`lfs`), for the
-  whole filesystem. It is read every time you run the command.
+  whole filesystem. It is read every time you run the command. It counts the
+  space allocated to your UID anywhere on Lustre, so it can be larger than the
+  folder breakdown when you own files outside your root or Lustre has not yet
+  freed deleted data, and smaller when your files are sparse (a file that
+  reports 8 GiB but occupies no blocks is common in test fixtures).
 - **FSS** is OCI's per-UID accounting for the shared FSS file system: logical
   data bytes you own, excluding snapshots, with no file count. The site
   records it when it publishes your snapshot, so its age is shown. It reads
