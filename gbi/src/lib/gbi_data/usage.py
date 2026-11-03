@@ -351,4 +351,7 @@ def print_report(result, depth, limit):
     _table(("Folder", "Apparent size", "Entries"), rows, right = {1, 2})
     print(
         "\nApparent sizes include directory and symlink entries; they are not allocated space."
+        "\nThe Lustre row above is the space allocated to your UID anywhere on Lustre, live;"
+        "\nthe breakdown is the size each file reports inside your home at the snapshot."
+        "\nSparse files, files outside your home and space not yet freed make the two differ."
     )

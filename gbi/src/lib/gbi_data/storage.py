@@ -18,6 +18,18 @@ DEFAULTS = {
     "prefect_socket": "/run/gbi-data/prefect.sock",
     "prefect_url": "", "pack_small_bytes": "65536", "pack_min_files": "40",
     "pack_max_bytes": "1073741824",
+    # `gbi data roots`: team folders live under team_root as
+    # <team>/members/<user> and <team>/shared; readonly_roots lists the
+    # collection roots every user may read. The notes are operational
+    # statements that change on a schedule; edit them in site.conf.
+    "team_root": "/mnt/team",
+    "readonly_roots": "/mnt/instrument-data /mnt/lmb-data /mnt/shared /mnt/archive",
+    "lustre_note": (
+        "lifecycle rules will expire untouched files soon:"
+        " move data you want to keep to alluxio"
+    ),
+    "fss_note": "a 100 GB quota will be enforced soon",
+    "alluxio_note": "",
 }
 
 

@@ -20,7 +20,7 @@ from . import __version__
 from . import jobs
 from . import deadlines
 from . import cache, prefect
-from . import format_selection, packing, usage
+from . import format_selection, packing, roots, usage
 from .selection import entries, probe, stream_entries
 from .storage import Site, overlap
 from .transfer import (
@@ -315,8 +315,12 @@ def parser(*, advanced = False):
     )
     verbs.add_parser(
         "roots",
-        help = "show your available personal storage roots",
-        description = "Print the configured personal Lustre, FSS, and Object Storage roots.",
+        help = "show your storage roots and what each one is for",
+        description = (
+            "Print your Lustre scratch, FSS home and Object Storage roots, the\n"
+            "team folders you belong to and the read-only collections, with a\n"
+            "line on what belongs where."
+        ),
         epilog = "Example:\n  gbi data roots",
         formatter_class = argparse.RawDescriptionHelpFormatter,
     )
@@ -1061,9 +1065,7 @@ def main():
             )
         home = site.roots["lustre"] / ".gbi"
         if options.verb == "roots":
-            for name, root in site.root_aliases.items():
-                print(f"{name:8} {root}")
-            return 0
+            return roots.print_report(site)
         if options.verb in ("status", "retry"):
             run_dir = jobs.locate(home, options.job_id, site.roots["alluxio"])
             if options.verb == "retry":
