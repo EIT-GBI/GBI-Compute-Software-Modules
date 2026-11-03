@@ -187,6 +187,71 @@ class Formats(unittest.TestCase):
             [r["event"] for r in self.records()], ["verified", "deleted"]
         )
 
+    def test_chunked_move_reads_the_source_once_and_the_stage_twice(self):
+        task = self.task(
+            delete = True, chunk_size = 4096,
+            format_target = str(self.target_root / "bundle.gbi.tar.gbi-chunks"),
+        )
+        stage_verifies, stage_digests, final_hashes, packs = [], [], [], []
+        original_verify, original_digest = archives.verify_archive, formats.digest
+        original_hash, original_pack = chunks._hash, archives.pack
+
+        def verify(stored, manifest):
+            if not callable(stored):
+                stage_verifies.append(Path(stored))
+            return original_verify(stored, manifest)
+
+        def digest(path, *args, **kwargs):
+            stage_digests.append(Path(path))
+            return original_digest(path, *args, **kwargs)
+
+        def hashing(source, limit = None, combined = None):
+            # Per-part readbacks fold into a combined digest; the final pass
+            # over the whole stage, and the recheck of every part, do not.
+            # JSON readbacks hash the small marker files, never the stage.
+            name = str(getattr(source, "name", ""))
+            if limit is None and combined is None and name.endswith(".gbi.tar"):
+                final_hashes.append(name)
+            return original_hash(source, limit, combined)
+
+        def pack(source, output, **options):
+            packs.append(output.stream is not None)
+            return original_pack(source, output, **options)
+
+        with (
+            patch.object(archives, "verify_archive", side_effect = verify),
+            patch.object(formats, "digest", side_effect = digest),
+            patch.object(chunks, "_hash", side_effect = hashing),
+            patch.object(archives, "pack", side_effect = pack),
+        ):
+            self.assertTrue(transfer(task)["deleted"])
+        self.assertEqual(packs, [True])
+        self.assertEqual(stage_verifies, [])
+        self.assertEqual(
+            [path for path in stage_digests if path.name.endswith(".gbi.tar")], []
+        )
+        self.assertEqual(final_hashes, [])
+        self.assertEqual(
+            [r["event"] for r in self.records()], ["verified", "deleted"]
+        )
+        self.assertFalse(
+            any((self.base / "state" / "format-staging").rglob("*.gbi.tar"))
+        )
+
+    def test_plain_pack_move_unlinks_on_a_pool(self):
+        task = self.task(delete = True)
+        seen = {}
+        original = archives.cleanup_source
+
+        def cleanup(*args, **kwargs):
+            seen["workers"] = kwargs.get("workers")
+            return original(*args, **kwargs)
+
+        with patch.object(archives, "cleanup_source", side_effect = cleanup):
+            self.assertTrue(transfer(task)["deleted"])
+        self.assertEqual(seen["workers"], formats.CLEANUP_WORKERS)
+        self.assertGreater(formats.CLEANUP_WORKERS, 1)
+
     def test_move_retries_a_successful_stale_guard_snapshot(self):
         task     = self.task(delete = True, settle_seconds = 2)
         original = formats._StoredArchiveGuard

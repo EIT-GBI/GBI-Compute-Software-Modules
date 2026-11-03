@@ -258,10 +258,12 @@ class PlainPackCleanupCost(ChunkedPackCleanupCost):
             [row["event"] for row in rows], ["verified", "deleted"]
         )
         self.assertEqual(len(guards), 1)
-        # First call, the final call and at most one interval-driven recheck for 40 entries.
-        self.assertLessEqual(guards[0].complete_checks, 3)
+        # The pooled cleanup checks the destination before the first unlink,
+        # per directory group and at the end, and once more from ``final``:
+        # a bounded number of complete checks, not one call per entry.
+        self.assertLessEqual(guards[0].complete_checks, 4)
         self.assertGreaterEqual(guards[0].complete_checks, 2)
-        self.assertGreaterEqual(guards[0].cheap_checks, 39)
+        self.assertLessEqual(guards[0].cheap_checks, 40)
 
 
 class LockStripes(unittest.TestCase):

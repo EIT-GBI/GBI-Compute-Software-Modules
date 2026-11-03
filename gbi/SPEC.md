@@ -79,8 +79,10 @@ the complete encoded source.
 ## Verification, source removal and retries
 
 Ordinary move is stream/hash → independently reopen/hash destination →
-recheck source content/identity → fsynced verification receipt → guarded
-unlink. A reader's successful exit alone never authorizes deletion.
+recheck source identity (inode, size, nanosecond mtime; the bytes are read
+once) → fsynced verification receipt → guarded unlink. A reader's successful
+exit alone never authorizes deletion. Progress files are atomic but not
+fsynced; journals and receipts are.
 Alluxio output uses exclusive final-name creation, without large-object rename
 or truncation. Accepted write-through persistence and cross-node lock semantics
 are deployment prerequisites; mount readback is not a direct Object Storage GET.

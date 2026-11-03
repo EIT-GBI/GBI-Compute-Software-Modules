@@ -35,13 +35,19 @@ def validate_source_retention(task, storage_roots = ()):
         )
 
 
-def write_json(path, value):
+def write_json(path, value, durable = True):
     temporary = path.with_name(path.name + f".{os.getpid()}.tmp")
     with temporary.open("x") as stream:
         json.dump(value, stream)
         stream.flush()
-        os.fsync(stream.fileno())
+        if durable:
+            os.fsync(stream.fileno())
     os.replace(temporary, path)
+
+
+def _progress(task, value):
+    """A progress update is a display, not evidence: atomic, never fsynced."""
+    write_json(Path(task["progress"]), value, durable = False)
 
 
 def receipt(path, record):
@@ -141,7 +147,7 @@ def copy_stream(
                     }
                     if source_size is not None:
                         detail["source_size"] = source_size
-                    write_json(progress, detail)
+                    write_json(progress, detail, durable = False)
                     last = time.monotonic()
             output.flush()
             if target_kind != "alluxio":
@@ -150,7 +156,7 @@ def copy_stream(
             detail = {"bytes": total, "phase": "closing", "path": str(source)}
             if source_size is not None:
                 detail["source_size"] = source_size
-            write_json(progress, detail)
+            write_json(progress, detail, durable = False)
             closing = time.monotonic()
         timings["close"] = time.monotonic() - closing
         if child and child.wait():
@@ -163,7 +169,7 @@ def copy_stream(
     detail = {"bytes": total, "phase": "verifying", "path": str(source)}
     if source_size is not None:
         detail["source_size"] = source_size
-    write_json(progress, detail)
+    write_json(progress, detail, durable = False)
     return result.hexdigest(), total
 
 
@@ -253,8 +259,7 @@ def transfer(task):
         before = fingerprint(source)
         if before != initial:
             raise ValueError("source changed during preparation; source kept")
-        write_json(
-            Path(task["progress"]),
+        _progress(task,
             {
                 "bytes": 0, "source_size": before[3], "phase": "preparing",
                 "path": str(source),
@@ -455,22 +460,10 @@ def transfer(task):
                     "destination changed while preserving metadata; source kept"
                 )
             target_before = after_metadata
-        # Coarse filesystem timestamps can hide a same-size, same-second edit.
-        # A move therefore rechecks source content before writing its receipt.
-        if task["delete"] and not link:
-            write_json(
-                Path(task["progress"]),
-                {
-                    "bytes": before[3], "source_size": before[3],
-                    "phase": "source recheck", "path": str(source),
-                },
-            )
-            rechecking = time.monotonic()
-            if digest(source) != expected:
-                raise ValueError(
-                    "source content changed during transfer; source kept"
-                )
-            timings["source_recheck"] = time.monotonic() - rechecking
+        # The source is read once, during the copy. Its identity (inode, size,
+        # nanosecond mtime) was checked after the readback above and is checked
+        # again before the unlink; the bytes are not read a second time.
+        timings["source_recheck"] = 0.0
         record = {
             "source": str(source), "destination": str(target),
             "bytes": before[3], "sha256": expected, "fingerprint": before,
@@ -501,8 +494,8 @@ def transfer(task):
             )
             parent   = source.parent
             boundary = Path(task["selection_root"])
+            check_parent(target, target_root)
             while parent != boundary and boundary in parent.parents:
-                check_parent(target, target_root)
                 if fingerprint(target) != target_before:
                     raise ValueError(
                         "destination changed during directory cleanup; "
