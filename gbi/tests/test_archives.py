@@ -287,6 +287,67 @@ class Archives(unittest.TestCase):
             archives.restore(factory, self.base / "changed")
         self.assertFalse((self.base / "changed" / "a").exists())
 
+    def test_restore_hashes_while_writing_and_reads_back_only_reused_files(self):
+        (self.source / "a").write_text("alpha")
+        (self.source / "b").write_text("beta")
+        stream, manifest = self.packed()
+        fresh = self.base / "fresh"
+        with patch.object(
+            archives, "_hash_fd", wraps = archives._hash_fd
+        ) as hashed:
+            result = archives.restore(
+                lambda: io.BytesIO(stream.getvalue()), fresh
+            )
+        self.assertEqual(result["selected"], 2)
+        self.assertEqual(hashed.call_count, 0)
+        self.assertEqual((fresh / "a").read_text(), "alpha")
+        # A second restore over identical existing files reads them to prove
+        # they match; nothing written this time, so nothing else is hashed.
+        with patch.object(
+            archives, "_hash_fd", wraps = archives._hash_fd
+        ) as hashed:
+            archives.restore(lambda: io.BytesIO(stream.getvalue()), fresh)
+        self.assertEqual(hashed.call_count, 4)  # link conflict + final check
+
+    def test_restore_with_inspected_manifest_reads_the_archive_once(self):
+        (self.source / "a").write_text("alpha")
+        stream, _ = self.packed()
+        opens = 0
+
+        def factory():
+            nonlocal opens
+            opens += 1
+            return io.BytesIO(stream.getvalue())
+
+        manifest = archives.inspect_archive(factory)
+        self.assertEqual(opens, 1)
+        result = archives.restore(factory, self.base / "once", manifest = manifest)
+        self.assertEqual(opens, 2)
+        self.assertEqual(result["selected"], 1)
+        self.assertEqual((self.base / "once" / "a").read_text(), "alpha")
+        with self.assertRaisesRegex(archives.ArchiveError, "inspected"):
+            archives.restore(factory, self.base / "bad", manifest = {"x": 1})
+
+    def test_tampered_content_is_refused_before_linking(self):
+        (self.source / "a").write_text("source")
+        stream, _ = self.packed()
+        raw = stream.getvalue()
+        tampered = raw.replace(b"source", b"sourcf", 1)
+        self.assertNotEqual(raw, tampered)
+        calls = 0
+
+        def factory():
+            nonlocal calls
+            calls += 1
+            return io.BytesIO(raw if calls == 1 else tampered)
+
+        with self.assertRaisesRegex(archives.ArchiveError, "checksum mismatch"):
+            archives.restore(factory, self.base / "tampered")
+        self.assertFalse((self.base / "tampered" / "a").exists())
+        self.assertEqual(
+            [p.name for p in (self.base / "tampered").iterdir()], []
+        )
+
     def test_cleanup_rehashes_all_before_any_unlink(self):
         (self.source / "a").write_text("a")
         (self.source / "b").write_text("b")

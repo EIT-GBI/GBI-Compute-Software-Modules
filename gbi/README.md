@@ -34,6 +34,17 @@ unchanged. Object Storage originals and versions remain retained. A published
 module or image alone does not establish runtime acceptance; unsupported
 requests fail rather than silently changing the operation.
 
+**0.4.37** stops restores reading what they just wrote
+(gbi-data-platform-tracking#44, pooled single-read restores). A file extracted
+from a packed archive is proved by the hash of the bytes handed to the writer
+and by its identity afterwards; it is no longer read back twice. A chunked file
+is proved by the chunk reader's per-part and whole-stream checks as it streams,
+not by a hash of the written file. `archives.restore` takes an optional
+`manifest` from an earlier `inspect_archive`, so a caller that has already
+verified the archive extracts it in one further read instead of two; the
+Prefect restore flows use it. Files that already existed at the destination are
+still read to prove they match. Formats, receipts and journals are unchanged.
+
 **0.4.36** lets `--prefect` take the Object Storage root that `gbi data roots`
 prints (Scientific-Computing-Infrastructure#112, GBI CLI enhancements). A team
 member whose account has no `/mnt/user-data` entry names their member folder,

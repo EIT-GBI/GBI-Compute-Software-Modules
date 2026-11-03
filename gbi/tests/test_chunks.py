@@ -424,19 +424,46 @@ class Chunks(unittest.TestCase):
             chunks.restore_chunks(self.store, self.target)
         self.assertEqual(self.target.read_bytes(), b"keep this")
 
-    def test_output_readback_detects_corruption(self):
+    def test_restored_file_is_proved_while_writing_and_never_read_back(self):
         self.write()
         real_regular = chunks._regular
+        opened = []
 
-        def corrupt_before_read(path, flags = os.O_RDONLY):
-            if Path(path) == self.target:
-                self.target.write_bytes(b"corruption")
+        def record(path, flags = os.O_RDONLY):
+            opened.append(Path(path))
             return real_regular(path, flags)
 
-        with patch.object(chunks, "_regular", side_effect = corrupt_before_read):
-            with self.assertRaisesRegex(ValueError, "restored file checksum"):
+        with patch.object(chunks, "_regular", side_effect = record):
+            result = chunks.restore_chunks(self.store, self.target)
+        self.assertNotIn(self.target, opened)
+        self.assertEqual(self.target.read_bytes(), self.source.read_bytes())
+        self.assertEqual(result["sha256"], chunks.read_manifest(self.store)["sha256"])
+
+    def test_short_stream_is_refused_without_a_readback(self):
+        self.write()
+        manifest = chunks.read_manifest(self.store)
+        real_open = chunks.open_chunks
+
+        class Short:
+            def __init__(self, reader):
+                self.reader = reader
+                self.manifest = reader.manifest
+                self.raw = reader.raw
+
+            def read(self, size = -1):
+                data = self.reader.read(size)
+                return data[:-1] if data and self.reader.peek(1) == b"" else data
+
+        @contextmanager
+        def short_chunks(store):
+            with real_open(store) as reader:
+                yield Short(reader)
+
+        with patch.object(chunks, "open_chunks", short_chunks):
+            with self.assertRaisesRegex(ValueError, "checksum or identity"):
                 chunks.restore_chunks(self.store, self.target)
         self.assertFalse(self.target.exists())
+        self.assertEqual(manifest, chunks.read_manifest(self.store))
 
     def test_source_changed_during_write_cannot_publish_completion(self):
         def change_source(_):
