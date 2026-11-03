@@ -34,6 +34,15 @@ unchanged. Object Storage originals and versions remain retained. A published
 module or image alone does not establish runtime acceptance; unsupported
 requests fail rather than silently changing the operation.
 
+**0.4.36** lets `--prefect` take the Object Storage root that `gbi data roots`
+prints (Scientific-Computing-Infrastructure#112, GBI CLI enhancements). A team
+member whose account has no `/mnt/user-data` entry names their member folder,
+`/mnt/team/TEAM/members/USER`, and the request goes to the broker with the same
+relative path as before; accounts with the entry are unchanged. The broker and
+the Prefect route still decide whether that account may transfer. The help and
+the guide say "the roots that gbi data roots prints" instead of "personal
+storage roots".
+
 **0.4.35** corrects two `gbi data roots` lines (Scientific-Computing-Infrastructure#112, GBI CLI enhancements).
 The Object Storage root is always a public path: a `/mnt/user-data` entry that
 still points at its own backend is printed as that entry, never as the mount it

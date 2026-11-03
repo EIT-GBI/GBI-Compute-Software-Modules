@@ -16,7 +16,7 @@ from urllib import request as urlrequest
 from urllib.parse import urlsplit
 import uuid
 
-from . import archive_plan, deadlines, jobs, packing
+from . import archive_plan, deadlines, jobs, packing, roots
 from .transfer import write_json
 
 _TOKEN         = None
@@ -56,11 +56,20 @@ def prepare(options, site):
                 f"Prefect --{name} requires quoted file-name globs (at most 100 patterns)"
             )
 
+    def candidates(name):
+        # The roots `gbi data roots` prints: the configured alias, what it
+        # resolves to and, for Object Storage, the team member folder of an
+        # account that has no /mnt/user-data entry.
+        found = [site.root_aliases.get(name), site.roots.get(name)]
+        if name == "alluxio":
+            found.append(roots.archive_root(site)[0])
+        return [root for root in dict.fromkeys(found) if root is not None]
+
     def personal(path):
         path = Path(path).expanduser().absolute()
         for name in ("lustre", "fss", "alluxio"):
-            for root in (site.root_aliases.get(name), site.roots.get(name)):
-                if root is not None and root in path.parents:
+            for root in candidates(name):
+                if root in path.parents:
                     relative = path.relative_to(root).as_posix()
                     if any(
                         part in ("", ".", "..") or part != part.strip()
@@ -75,8 +84,8 @@ def prepare(options, site):
                         )
                     return name, relative
         raise ValueError(
-            "--prefect supports paths inside your personal Lustre, FSS and "
-            "Object Storage roots only"
+            "--prefect supports paths inside the Lustre, FSS and Object "
+            "Storage roots that gbi data roots prints"
         )
 
     source_kind, source = personal(options.source)

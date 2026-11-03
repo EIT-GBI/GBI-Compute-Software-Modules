@@ -116,6 +116,33 @@ def readable_roots(site):
     return result
 
 
+def archive_root(site):
+    """The caller's Object Storage root and the older path that also reaches it.
+
+    Returns ``(root, alias)``: the member folder and the ``/mnt/user-data``
+    entry when that entry links into the team folder; the member folder and
+    ``None`` when there is no entry; the entry itself and ``None`` when it
+    still points at its own backend or when the caller is in no team. The
+    same choice drives ``gbi data roots`` and the ``--prefect`` path check.
+    """
+    alias = site.root_aliases.get("alluxio")
+    if alias is None:
+        return None, None
+    resolved = site.roots["alluxio"]
+    team_root = Path(site.values["team_root"]).expanduser().absolute()
+    members = [team for team in teams(site) if team[1] is not None]
+    if not os.path.lexists(alias):
+        # No personal path: the member folder is the user's archive root.
+        return (members[0][1] if members else alias), None
+    if team_root in resolved.parents:
+        # The personal path is a link into the team folder: print the
+        # folder and name the older path that still reaches it.
+        return resolved, (alias if resolved != alias else None)
+    # A personal path still on its own backend: print the path the user
+    # knows, never the mount it resolves to.
+    return alias, None
+
+
 def _block(name, path, notes, site_note):
     lines = [f"{name:8} {path}"]
     lines.extend(f"{INDENT}{note}" for note in notes)
@@ -138,24 +165,11 @@ def lines(site):
             "fss", aliases["fss"], FSS_NOTES, site.values["fss_note"]
         ))
         report.append("")
-    members = [team for team in teams(site) if team[1] is not None]
     if "alluxio" in aliases:
-        alias, resolved = aliases["alluxio"], site.roots["alluxio"]
-        team_root = Path(site.values["team_root"]).expanduser().absolute()
+        root, alias = archive_root(site)
         notes = list(ALLUXIO_NOTES)
-        if not os.path.lexists(alias):
-            # No personal path: the member folder is the user's archive root.
-            root = members[0][1] if members else alias
-        elif team_root in resolved.parents:
-            # The personal path is a link into the team folder: print the
-            # folder and name the older path that still reaches it.
-            root = resolved
-            if resolved != alias:
-                notes.insert(0, f"also reachable as {alias}")
-        else:
-            # A personal path still on its own backend: print the path the
-            # user knows, never the mount it resolves to.
-            root = alias
+        if alias is not None:
+            notes.insert(0, f"also reachable as {alias}")
         report.extend(_block(
             "alluxio", root, notes, site.values["alluxio_note"]
         ))

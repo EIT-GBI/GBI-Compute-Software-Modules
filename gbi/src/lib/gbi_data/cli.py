@@ -114,7 +114,8 @@ def parser(*, advanced = False):
             "For a command's usage and examples,\n"
             "use e.g. `gbi data copy --help` or `gbi data usage --help`.\n"
             "Ordinary transfers use site classification and normal Unix permissions;\n"
-            "--prefect additionally requires both paths to be personal storage roots."
+            "--prefect additionally requires both paths to be inside the roots that\n"
+            "`gbi data roots` prints."
         ),
         formatter_class = argparse.RawDescriptionHelpFormatter,
     )

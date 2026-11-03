@@ -74,6 +74,50 @@ class Prefect(unittest.TestCase):
             cli.parser().parse_args(["data", "copy", "a", "b"]).prefect
         )
 
+    def test_team_member_folder_is_the_object_root_without_a_personal_entry(self):
+        user   = pwd.getpwuid(os.getuid()).pw_name
+        member = self.base / "team" / "liu-lab" / "members" / user
+        member.mkdir(parents = True)
+        (self.base / "team" / "liu-lab" / "shared").mkdir()
+        (self.base / "bucket" / user).rmdir()  # no /mnt/user-data entry at all
+        config = self.base / "site.conf"
+        config.write_text(config.read_text() + f"team_root = {self.base / 'team'}\n")
+        site = Site(config)
+        options = cli.parser().parse_args([
+            "data", "copy", str(site.roots["lustre"] / "experiment"),
+            str(member / "results" / "run-1"), "--prefect",
+        ])
+        request = prefect.prepare(options, site)
+        self.assertEqual(request["operation"], "archive-lustre")
+        self.assertEqual(request["destination"], "results/run-1")
+        restore = cli.parser().parse_args([
+            "data", "copy", str(member / "results"),
+            str(site.roots["fss"] / "back"), "--prefect",
+        ])
+        self.assertEqual(prefect.prepare(restore, site)["operation"], "stage-fss")
+        with self.assertRaisesRegex(ValueError, "roots that gbi data roots prints"):
+            prefect.prepare(cli.parser().parse_args([
+                "data", "copy", str(site.roots["lustre"] / "x"),
+                str(self.base / "team" / "liu-lab" / "shared" / "x"), "--prefect",
+            ]), site)
+
+    def test_legacy_personal_entry_on_its_own_backend_is_still_the_object_root(self):
+        user    = pwd.getpwuid(os.getuid()).pw_name
+        backend = self.base / ".alluxio-personal" / "personal-shard-4" / user
+        backend.mkdir(parents = True)
+        entry = self.base / "bucket" / user
+        entry.rmdir()
+        entry.symlink_to(backend)
+        (self.base / "team" / "pellock-lab" / "members" / user).mkdir(parents = True)
+        config = self.base / "site.conf"
+        config.write_text(config.read_text() + f"team_root = {self.base / 'team'}\n")
+        site = Site(config)
+        options = cli.parser().parse_args([
+            "data", "copy", str(site.roots["lustre"] / "experiment"),
+            str(entry / "saved"), "--prefect",
+        ])
+        self.assertEqual(prefect.prepare(options, site)["destination"], "saved")
+
     def test_automatic_archive_intent_is_explicit_and_uses_managed_preview(
                 self,
             ):
