@@ -768,6 +768,14 @@ class Prefect(unittest.TestCase):
                 prefect.exchange(self.site, request)
         https.assert_not_called()
 
+    def test_cache_transport_failure_names_the_cache_service(self):
+        request = {"version": 1, "action": "status", "operation": "cache"}
+        with patch(
+            "gbi_data.prefect._exchange_socket", side_effect = ValueError("lost")
+        ):
+            with self.assertRaisesRegex(ValueError, "Cache request not confirmed"):
+                prefect.exchange(self.site, request)
+
     def test_https_url_rejects_unsafe_forms(self):
         for value in (
             "http://broker.example", "https://user:pass@broker.example",
@@ -1045,6 +1053,19 @@ class Prefect(unittest.TestCase):
         with (
             patch("gbi_data.prefect.exchange") as exchange,
             self.assertRaisesRegex(ValueError, "re-running"),
+        ):
+            prefect.submit(run_dir, self.site)
+        exchange.assert_not_called()
+
+    def test_native_cache_retry_names_the_original_cache_command(self):
+        run_dir = self.base / "cache"
+        run_dir.mkdir()
+        (run_dir / "request.json").write_text(json.dumps({
+            "execution": "cache", "uid": os.getuid(),
+        }))
+        with (
+            patch("gbi_data.prefect.exchange") as exchange,
+            self.assertRaisesRegex(ValueError, "original gbi data cache command"),
         ):
             prefect.submit(run_dir, self.site)
         exchange.assert_not_called()

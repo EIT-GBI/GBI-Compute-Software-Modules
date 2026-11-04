@@ -35,7 +35,7 @@ class _BrokerError(ValueError):
 
 class _NoRedirect(urlrequest.HTTPRedirectHandler):
     def redirect_request(self, request, file, code, msg, headers, newurl):
-        raise ValueError("Prefect HTTPS endpoint redirected")
+        raise ValueError("broker HTTPS endpoint redirected")
 
 
 def _resolve_source(value):
@@ -289,7 +289,7 @@ def _validate_result(raw):
         "NOT_SUBMITTED", "SCHEDULED", "PENDING", "RUNNING", "COMPLETED",
         "FAILED", "CANCELLED", "CANCELLING", "CRASHED", "PAUSED", "UNKNOWN",
     }:
-        raise ValueError("unsupported Prefect state")
+        raise ValueError("unsupported broker state")
     if result["state"] != "NOT_SUBMITTED":
         result["run_id"] = str(uuid.UUID(result.get("run_id", "")))
     result["terminal"] = result["state"] in {
@@ -394,11 +394,11 @@ def _exchange_https(url, request):
             raw = response.read(_MAX_RESPONSE + 1)
     except urlerror.HTTPError as error:
         raise ValueError(
-            f"Prefect HTTPS request failed: HTTP {error.code}"
+            f"broker HTTPS request failed: HTTP {error.code}"
         ) from None
     except (urlerror.URLError, OSError, ValueError) as error:
         raise ValueError(
-            f"Prefect HTTPS request failed: {type(error).__name__}"
+            f"broker HTTPS request failed: {type(error).__name__}"
         ) from None
     if raw and not raw.endswith(b"\n"):
         raw += b"\n"
@@ -407,40 +407,47 @@ def _exchange_https(url, request):
     except _BrokerError:
         raise
     except (ValueError, TypeError, AttributeError):
-        raise ValueError("Prefect HTTPS response was invalid") from None
+        raise ValueError("broker HTTPS response was invalid") from None
 
 
 def exchange(site, request, retry_hint = "retry with the same transfer ID"):
-    path = site.values["prefect_socket"]
-    deadlines.event("contacting Prefect migration broker", path)
+    path    = site.values["prefect_socket"]
+    service = "Cache" if request.get("operation") == "cache" else "Prefect"
+    deadlines.event(f"contacting {service} broker", path)
     try:
         return _exchange_socket(path, request)
     except _BrokerUnavailable as error:
         url = _https_url(site)
         if not url:
             raise ValueError(
-                "Prefect broker unavailable on this node. Run this command on the login node "
+                f"{service} broker unavailable on this node. "
+                "Run this command on the login node "
                 f"or contact cluster support. No request was sent; {retry_hint}"
             ) from error
         deadlines.event(
-            "local Prefect broker unavailable; using HTTPS transport", url
+            f"local {service} broker unavailable; using HTTPS transport", url
         )
         try:
             return _exchange_https(url, request)
         except (OSError, ValueError, TypeError, AttributeError) as https_error:
             raise ValueError(
-            f"Prefect request not confirmed: {https_error}. "
-            f"Use status or {retry_hint}"
+                f"{service} request not confirmed: {https_error}. "
+                f"Use status or {retry_hint}"
             ) from https_error
     except (OSError, ValueError, TypeError, AttributeError) as error:
         raise ValueError(
-            f"Prefect request not confirmed: {error}. Use status or {retry_hint}"
+            f"{service} request not confirmed: {error}. Use status or {retry_hint}"
         ) from error
 
 
-def stored_request(run_dir):
+def stored_request(run_dir, *, execution = "prefect"):
     record = json.loads((run_dir / "request.json").read_text())
-    if record.get("execution") != "prefect":
+    if record.get("execution") != execution:
+        if record.get("execution") == "cache":
+            raise ValueError(
+                "cache loads are retried by re-running their original "
+                "gbi data cache command"
+            )
         raise ValueError(
             "ordinary transfers are retried by re-running their original copy or move command"
         )

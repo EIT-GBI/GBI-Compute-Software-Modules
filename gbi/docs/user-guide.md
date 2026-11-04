@@ -247,10 +247,10 @@ instead of pulling cold data from Object Storage. `gbi data cache` makes a
 path resident ahead of the job that needs it:
 
 ```bash
-# First line of a job script, or a Slurm prolog: return when the blocks are cached.
+# First step of your job script: return when the blocks are cached.
 gbi data cache /mnt/team/my-lab/members/$USER/dataset
 
-# A shared reference, with a wall-time bound for a prolog (the load itself continues).
+# A shared reference, with a wait limit (the load itself continues).
 gbi data cache /mnt/team/my-lab/shared/reference --timeout 900
 
 # Sequencing data: a run folder, and only the files you need.
@@ -259,12 +259,16 @@ gbi data cache /mnt/instrument-data/illumina_nextseq_1/RUN --include '*.fastq.gz
 # Submit and come back later.
 gbi data cache /mnt/instrument-data/oxford_nanopore_promethion_1 --detach
 gbi data status TRANSFER_ID --watch
+
+# Inspect current cache state for a whole path, without submitting a load.
+gbi data status /mnt/team/my-lab/shared/reference
 ```
 
 Nothing is read on your node. The command resolves the path, the site's broker
-maps it to the storage cluster behind the mount, and one native load is
-submitted: every storage worker loads blocks in parallel, so the data lands in
-the cache faster than any single reader could pull it. The load applies the
+maps it to the storage cluster behind the mount, and the always-on cache
+service submits a native load without starting a Prefect flow. Every storage
+worker loads blocks in parallel, so the data lands in the cache faster than any
+single reader could pull it. The load applies the
 same permissions as your mount, from the top of the mount down: you can load
 what you can read, and nothing else. A folder is loaded whole when every file
 in it is yours to read and is in Object Storage; otherwise, and with
@@ -274,12 +278,18 @@ links to the sequencing mounts); it is followed once and must land inside an
 Object Storage mount. Lustre and FSS paths are refused because they have no
 block cache. Running it again is cheap: resident blocks are not loaded again.
 
-The command prints the Prefect state as it changes and, when the load ends, one
-line: files, bytes, the percentage resident, seconds, and any files skipped
+The command prints the cache state as it changes and, when the load ends, one
+line: files, bytes, the percentage resident, and any files skipped
 because you cannot read them or because they are still being written. Each
-path gets a transfer ID; `gbi data status TRANSFER_ID --watch` reconnects after
+path gets a transfer ID when your Lustre state directory is available;
+`gbi data status TRANSFER_ID --watch` reconnects with the original selection after
 `--detach`, a dropped session or `--timeout`. Ctrl-C only detaches; the load
 continues on the storage workers.
+
+`gbi data status PATH` inspects current state for the whole path. Saved cache
+IDs from older releases still show their original Prefect flow state. Run
+warming under your own account in the job script; a root-run Slurm prolog
+cannot submit it on your behalf.
 
 Exit codes: `0` the blocks are cached; `1` the load failed (the line says why,
 for example `refused: ... is not readable by ...`); `2` the request was refused

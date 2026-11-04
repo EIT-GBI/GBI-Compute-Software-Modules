@@ -162,6 +162,18 @@ gbi data status TRANSFER_ID --watch
 gbi data usage --depth 1 --limit 20
 ```
 
+Warm Object Storage data as the first step of your job script with
+`gbi data cache PATH`. The site's always-on cache service submits the native
+Alluxio load, and the command waits for its result. Use `--detach` to return
+after submission, `gbi data status PATH` for current whole-path cache state,
+or the printed transfer ID to follow the original selection. Historical cache
+IDs retain their Prefect status lookup. See the
+[cache guide](docs/user-guide.md#load-data-into-the-cache-before-a-job).
+This source change does not establish site deployment or runtime acceptance.
+Install this CLI before switching the broker to the cache service. Until that
+switch, submissions and saved IDs continue to use the existing Prefect route;
+the service response selects native path status after the switch.
+
 `usage` prints a compact Lustre/FSS summary followed by the largest folders
 from the latest published Lustre inventory. Lustre is your live UID quota; FSS
 and the folder report come from the snapshot the site publishes weekly
