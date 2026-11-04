@@ -282,7 +282,18 @@ def compact_bar(progress):
 
     width = max(10, min(36, shutil.get_terminal_size().columns - 36))
     filled = int(width * percent / 100)
-    return f"[{'=' * filled}{' ' * (width - filled)}] {percent:.1f}%"
+    bar = f"[{'=' * filled}{' ' * (width - filled)}] {percent:.1f}%"
+
+    if progress["phase"] == "complete":
+        colour = "\033[32m"  # green
+    elif progress["phase"] in ("failed", "interrupted"):
+        colour = "\033[31m"  # red
+    else:
+        colour = "\033[33m"  # yellow
+
+    reset = "\033[0m" # reset colour
+
+    return f"{colour}{bar}{reset}"
 
 
 class ProgressDisplay:
