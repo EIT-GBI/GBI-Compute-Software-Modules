@@ -1,5 +1,6 @@
 """Real local transfers plus fault injection at the source-deletion boundary."""
 
+from contextlib import redirect_stdout
 import hashlib
 import io
 import json
@@ -871,13 +872,18 @@ class Interface(unittest.TestCase):
                 options = cli.parser().parse_args(
                     ["data", "move", str(source), str(target_root / "dest")]
                 )
-                planned = cli.plan(options, self.site)
-                self.assertEqual(planned["delete"], source_kind != "alluxio")
-                options.delete_source = True
-                with self.assertRaisesRegex(
-                    ValueError, "--delete-source is not supported"
+                with (
+                    patch("gbi_data.moves.terminal", return_value = False),
+                    redirect_stdout(io.StringIO()),
                 ):
-                    cli.plan(options, self.site)
+                    planned = cli.plan(options, self.site)
+                # Object Storage to a filesystem keeps the source unless asked.
+                self.assertEqual(
+                    planned["delete"],
+                    source_kind != "alluxio" or target_kind == "alluxio",
+                )
+                options.delete_source = True
+                self.assertTrue(cli.plan(options, self.site)["delete"])
 
     def test_source_overlap_refused(self):
         source = self.site.roots["lustre"] / "data"
@@ -964,8 +970,13 @@ class Interface(unittest.TestCase):
             options = cli.parser().parse_args(
                 ["data", "move", str(source), str(target / "new")]
             )
-            planned = cli.plan(options, site)
+            with (
+                patch("gbi_data.moves.terminal", return_value = False),
+                redirect_stdout(io.StringIO()),
+            ):
+                planned = cli.plan(options, site)
             self.assertEqual(planned["delete"], source != instrument)
+        # A mount itself is never a removable source, even when asked.
         options = cli.parser().parse_args(
             [
                 "data", "move", str(instrument), str(shared / "new"),
@@ -973,7 +984,7 @@ class Interface(unittest.TestCase):
             ]
         )
         with self.assertRaisesRegex(
-            ValueError, "--delete-source is not supported"
+            ValueError, "overlaps an Object Storage root"
         ):
             cli.plan(options, site)
 

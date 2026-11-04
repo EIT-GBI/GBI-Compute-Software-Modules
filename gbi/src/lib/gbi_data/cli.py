@@ -19,7 +19,7 @@ import uuid
 from . import __version__
 from . import jobs
 from . import deadlines
-from . import cache, prefect
+from . import cache, moves, prefect
 from . import format_selection, packing, roots, usage
 from .selection import entries, probe, stream_entries
 from .storage import Site, overlap
@@ -76,8 +76,9 @@ def command_reference(verbs):
         formatter.start_section(title)
         if name == "move":
             formatter.add_text(
-                "copy keeps sources. move removes eligible sources only after verification.\n"
-                "Object Storage originals are durable and always retained."
+                "copy keeps sources. move removes the source after verification.\n"
+                "Moving Object Storage data to Lustre or FSS asks first; without a\n"
+                "terminal the source is kept unless you add --delete-source."
             )
         else:
             formatter.add_text(command.description)
@@ -113,9 +114,8 @@ def parser(*, advanced = False):
             "Every everyday option is explained below; --help-all includes expert overrides.\n"
             "For a command's usage and examples,\n"
             "use e.g. `gbi data copy --help` or `gbi data usage --help`.\n"
-            "Ordinary transfers use site classification and normal Unix permissions;\n"
-            "--prefect additionally requires both paths to be inside the roots that\n"
-            "`gbi data roots` prints."
+            "Ordinary and --prefect transfers both run with your normal Unix\n"
+            "permissions; --prefect needs an Object Storage mount on one side."
         ),
         formatter_class = argparse.RawDescriptionHelpFormatter,
     )
@@ -129,8 +129,9 @@ def parser(*, advanced = False):
         help = "move data, inspect transfer state, or report usage",
         description = (
             "Public data commands. `copy` keeps the source; `move` removes only sources\n"
-            "whose verified deletion policy allows it. `status` and `retry` use a saved\n"
-            "transfer ID; `usage` reads live quota and the owner-scoped Lustre snapshot."
+            "whose verified deletion policy allows it. `status` accepts a saved transfer\n"
+            "ID or a cache path; `retry` uses a saved transfer ID. `usage` reads live\n"
+            "quota and the owner-scoped Lustre snapshot."
         ),
         formatter_class = argparse.RawDescriptionHelpFormatter,
     )
@@ -140,7 +141,7 @@ def parser(*, advanced = False):
     )
     verbs = data.add_subparsers(
         dest = "verb", required = True,
-        metavar = "{copy,move,status,retry,roots,usage}",
+        metavar = "{copy,move,status,retry,roots,usage,cache}",
     )
     for verb in ("copy", "move"):
         command = verbs.add_parser(
@@ -152,9 +153,10 @@ def parser(*, advanced = False):
                     "SOURCE and DESTINATION may be files or directories; the source remains."
                     if verb == "copy"
                     else "Copy SOURCE to DESTINATION and independently verify every "
-                    "file before removing\n"
-                    "eligible filesystem sources. Object Storage originals are "
-                    "durable and always retained."
+                    "file, then remove\n"
+                    "the source. Moving Object Storage data to Lustre or FSS asks "
+                    "first; without a\n"
+                    "terminal the source is kept unless you add --delete-source."
                 )
             ),
             formatter_class = argparse.RawDescriptionHelpFormatter,
@@ -171,10 +173,11 @@ def parser(*, advanced = False):
                 "resumable part sizes. Restore that root to Lustre or FSS with "
                 "an ordinary copy.\n"
                 "No packing or chunk-size choices are needed for restore.\n\n"
-                "--prefect submits personal Object Storage transfers through "
-                "the site's broker.\n"
+                "--prefect submits the transfer through the site's broker: any path you can\n"
+                "read to any path you can write on Lustre, FSS and Object Storage mounts,\n"
+                "with Object Storage on at least one side. The transfer job checks\n"
+                "permissions as you before any data moves.\n"
                 "Archive previews may create managed tracking records, but never change data.\n"
-                "Object Storage originals are durable and always retained by every route.\n"
                 "After a lost submission reply: gbi data retry ID (same saved request).\n\n"
                 "Use --help-all for expert overrides and compatibility options.\n\n"
                 f"Examples:\n  gbi data {verb} SOURCE DESTINATION --dry-run\n"
@@ -246,7 +249,13 @@ def parser(*, advanced = False):
             ),
         )
         command.add_argument(
-            "--delete-source", action = "store_true", help = argparse.SUPPRESS
+            "--delete-source", action = "store_true",
+            help = (
+                "remove an Object Storage source after verification without "
+                "asking"
+                if verb == "move"
+                else argparse.SUPPRESS
+            ),
         )
         command.add_argument(
             "--dry-run", action = "store_true",
@@ -272,7 +281,10 @@ def parser(*, advanced = False):
         )
         execution.add_argument(
             "--prefect", action = "store_true",
-            help = "submit a personal Object Storage migration through Prefect",
+            help = (
+                "submit through the site's Prefect service; Object Storage on "
+                "at least one side"
+            ),
         )
         command.add_argument(
             "--job-size", choices = ("small", "large"),
@@ -283,14 +295,22 @@ def parser(*, advanced = False):
             ),
         )
     status = verbs.add_parser(
-        "status", help = "show a saved transfer's progress",
-        description = "Show progress for a Slurm job ID or printed transfer ID.",
-        epilog = "Examples:\n  gbi data status 123456\n  gbi data status TRANSFER_ID --watch",
+        "status", help = "show transfer progress or a path's cache state",
+        description = (
+            "Show progress for a Slurm job ID, printed transfer ID, or an Object\n"
+            "Storage cache path. A path shows current state for the whole path;\n"
+            "a cache transfer ID keeps its original --include selection."
+        ),
+        epilog = (
+            "Examples:\n  gbi data status 123456\n"
+            "  gbi data status TRANSFER_ID --watch\n"
+            "  gbi data status /mnt/team/my-lab/shared/reference --watch"
+        ),
         formatter_class = argparse.RawDescriptionHelpFormatter,
     )
     status.add_argument(
-        "job_id", metavar = "JOB_OR_TRANSFER_ID",
-        help = "Slurm job ID, or a printed transfer ID when the job has several transfers",
+        "job_id", metavar = "JOB_OR_TRANSFER_ID_OR_PATH",
+        help = "Slurm job ID, printed transfer ID, or Object Storage path",
     )
     status.add_argument(
         "--watch", action = "store_true",
@@ -362,7 +382,7 @@ def parser(*, advanced = False):
             "storage worker serves it in parallel, so the data lands in the cache\n"
             "faster than any single reader could pull it; nothing is read on this\n"
             "node. Returns when the blocks are cached; repeating it is cheap. Use it\n"
-            "as the first line of a job script or in a prolog. Paths must be inside\n"
+            "as the first step of your job script. Paths must be inside\n"
             "an Object Storage (Alluxio) mount you can read: your member folder, a\n"
             "team or shared mount, or sequencing data under /mnt/instrument-data.\n"
             "--include keeps only files whose name matches a pattern. Exit codes:\n"
@@ -414,11 +434,7 @@ def parser(*, advanced = False):
 
 
 def plan(options, site):
-    if options.delete_source:
-        raise ValueError(
-            "--delete-source is not supported; Object Storage originals are "
-            "durable and always retained"
-        )
+    moves.refuse_copy_deletion(options)
     if getattr(options, "job_size", None) is not None:
         raise ValueError(
             "--job-size is supported only for --prefect restores to Lustre or FSS"
@@ -440,7 +456,12 @@ def plan(options, site):
         target /= source.name
     if overlap(source, target):
         raise ValueError("source and destination must not overlap")
-    delete = options.verb == "move" and source_kind != "alluxio"
+    delete = moves.deletes(options, source_kind, target_kind, source)
+    if delete:
+        moves.check_removable(
+            source, int(site.values["inline_scan_entries"]),
+            float(site.values["inline_probe_seconds"]),
+        )
     specification = {
         "source": str(source), "target": str(target),
         "source_kind": source_kind, "target_kind": target_kind,
@@ -1060,6 +1081,10 @@ def main():
             return 0
         if options.verb == "cache":
             return cache.main(options, site)
+        if options.verb == "status" and not re.fullmatch(
+            r"(?:[0-9]+|[0-9]{8}T[0-9]{6}Z-[0-9a-f]{12})", options.job_id
+        ):
+            return cache.status_path(options.job_id, site, options.watch)
         if "lustre" not in site.roots or "alluxio" not in site.roots:
             raise ValueError(
                 "the gbi module needs Lustre scratch and Alluxio archive roots"
@@ -1075,9 +1100,11 @@ def main():
                 )
             request = run_dir / "request.json"
             record = json.loads(request.read_text()) if request.is_file() else {}
-            if record.get("execution") == "prefect":
+            if record.get("execution") in ("prefect", "cache"):
                 if record.get("broker_request", {}).get("operation") == "cache":
-                    return cache.status(run_dir, site, options.watch)
+                    return cache.status(
+                        run_dir, site, options.watch, record["execution"]
+                    )
                 return prefect.follow(run_dir, site, options.watch)
             return jobs.watch(
                 run_dir, options.job_id, options.watch, site.roots["alluxio"]
@@ -1110,12 +1137,6 @@ def main():
             if specification["delete"]
             else "Sources: keep originals."
         )
-        if (
-            options.verb == "move"
-            and specification["source_kind"] == "alluxio"
-            and not specification["delete"]
-        ):
-            print("Object Storage originals are durable and always retained.")
         mode = specification["execution"]
         print(
             {

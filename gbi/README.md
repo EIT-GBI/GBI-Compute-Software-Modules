@@ -34,6 +34,19 @@ unchanged. Object Storage originals and versions remain retained. A published
 module or image alone does not establish runtime acceptance; unsupported
 requests fail rather than silently changing the operation.
 
+**0.4.38** lets `--prefect` move data between any path you can read and any
+path you can write (Scientific-Computing-Infrastructure#120). The CLI sends the
+resolved absolute paths instead of paths relative to your personal roots; the
+broker maps the mounts and the transfer job checks permissions as you. Object
+Storage to Object Storage is the new `copy-objects` operation. `move` now
+follows one table on both routes: Lustre and FSS sources are removed after
+verification as before, and so are Object Storage sources moved to Object
+Storage. Moving Object Storage data to Lustre or FSS asks `[y/N]` on a
+terminal; `--delete-source` answers yes, and without a terminal or the flag
+the source is kept with one line saying so. `copy --delete-source` is refused.
+Python `data.move(..., delete_source=True)` passes the flag and never asks.
+Needs the matching broker and flows; older brokers refuse absolute paths.
+
 **0.4.37** stops restores reading what they just wrote
 (gbi-data-platform-tracking#44, pooled single-read restores). A file extracted
 from a packed archive is proved by the hash of the bytes handed to the writer
@@ -148,6 +161,18 @@ gbi data move SOURCE DESTINATION --archive
 gbi data status TRANSFER_ID --watch
 gbi data usage --depth 1 --limit 20
 ```
+
+Warm Object Storage data as the first step of your job script with
+`gbi data cache PATH`. The site's always-on cache service submits the native
+Alluxio load, and the command waits for its result. Use `--detach` to return
+after submission, `gbi data status PATH` for current whole-path cache state,
+or the printed transfer ID to follow the original selection. Historical cache
+IDs retain their Prefect status lookup. See the
+[cache guide](docs/user-guide.md#load-data-into-the-cache-before-a-job).
+This source change does not establish site deployment or runtime acceptance.
+Install this CLI before switching the broker to the cache service. Until that
+switch, submissions and saved IDs continue to use the existing Prefect route;
+the service response selects native path status after the switch.
 
 `usage` prints a compact Lustre/FSS summary followed by the largest folders
 from the latest published Lustre inventory. Lustre is your live UID quota; FSS
