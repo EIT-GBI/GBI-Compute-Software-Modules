@@ -111,6 +111,12 @@ class CLIHelp(unittest.TestCase):
         self.assertIn("not live", usage)
         self.assertIn("recursive usage", usage)
 
+    def test_cache_help_uses_user_job_script_and_status_describes_paths(self):
+        cache = self.help_text("data", "cache")
+        self.assertIn("your job script", cache)
+        self.assertNotIn("prolog", cache.lower())
+        self.assertIn("whole path", self.help_text("data", "status"))
+
     def test_execution_conflict_names_flags_and_alternative(self):
         output = io.StringIO()
         with (

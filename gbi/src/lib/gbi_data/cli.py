@@ -129,8 +129,9 @@ def parser(*, advanced = False):
         help = "move data, inspect transfer state, or report usage",
         description = (
             "Public data commands. `copy` keeps the source; `move` removes only sources\n"
-            "whose verified deletion policy allows it. `status` and `retry` use a saved\n"
-            "transfer ID; `usage` reads live quota and the owner-scoped Lustre snapshot."
+            "whose verified deletion policy allows it. `status` accepts a saved transfer\n"
+            "ID or a cache path; `retry` uses a saved transfer ID. `usage` reads live\n"
+            "quota and the owner-scoped Lustre snapshot."
         ),
         formatter_class = argparse.RawDescriptionHelpFormatter,
     )
@@ -140,7 +141,7 @@ def parser(*, advanced = False):
     )
     verbs = data.add_subparsers(
         dest = "verb", required = True,
-        metavar = "{copy,move,status,retry,roots,usage}",
+        metavar = "{copy,move,status,retry,roots,usage,cache}",
     )
     for verb in ("copy", "move"):
         command = verbs.add_parser(
@@ -283,14 +284,22 @@ def parser(*, advanced = False):
             ),
         )
     status = verbs.add_parser(
-        "status", help = "show a saved transfer's progress",
-        description = "Show progress for a Slurm job ID or printed transfer ID.",
-        epilog = "Examples:\n  gbi data status 123456\n  gbi data status TRANSFER_ID --watch",
+        "status", help = "show transfer progress or a path's cache state",
+        description = (
+            "Show progress for a Slurm job ID, printed transfer ID, or an Object\n"
+            "Storage cache path. A path shows current state for the whole path;\n"
+            "a cache transfer ID keeps its original --include selection."
+        ),
+        epilog = (
+            "Examples:\n  gbi data status 123456\n"
+            "  gbi data status TRANSFER_ID --watch\n"
+            "  gbi data status /mnt/team/my-lab/shared/reference --watch"
+        ),
         formatter_class = argparse.RawDescriptionHelpFormatter,
     )
     status.add_argument(
-        "job_id", metavar = "JOB_OR_TRANSFER_ID",
-        help = "Slurm job ID, or a printed transfer ID when the job has several transfers",
+        "job_id", metavar = "JOB_OR_TRANSFER_ID_OR_PATH",
+        help = "Slurm job ID, printed transfer ID, or Object Storage path",
     )
     status.add_argument(
         "--watch", action = "store_true",
@@ -362,7 +371,7 @@ def parser(*, advanced = False):
             "storage worker serves it in parallel, so the data lands in the cache\n"
             "faster than any single reader could pull it; nothing is read on this\n"
             "node. Returns when the blocks are cached; repeating it is cheap. Use it\n"
-            "as the first line of a job script or in a prolog. Paths must be inside\n"
+            "as the first step of your job script. Paths must be inside\n"
             "an Object Storage (Alluxio) mount you can read: your member folder, a\n"
             "team or shared mount, or sequencing data under /mnt/instrument-data.\n"
             "--include keeps only files whose name matches a pattern. Exit codes:\n"
@@ -1060,6 +1069,10 @@ def main():
             return 0
         if options.verb == "cache":
             return cache.main(options, site)
+        if options.verb == "status" and not re.fullmatch(
+            r"(?:[0-9]+|[0-9]{8}T[0-9]{6}Z-[0-9a-f]{12})", options.job_id
+        ):
+            return cache.status_path(options.job_id, site, options.watch)
         if "lustre" not in site.roots or "alluxio" not in site.roots:
             raise ValueError(
                 "the gbi module needs Lustre scratch and Alluxio archive roots"
@@ -1075,9 +1088,11 @@ def main():
                 )
             request = run_dir / "request.json"
             record = json.loads(request.read_text()) if request.is_file() else {}
-            if record.get("execution") == "prefect":
+            if record.get("execution") in ("prefect", "cache"):
                 if record.get("broker_request", {}).get("operation") == "cache":
-                    return cache.status(run_dir, site, options.watch)
+                    return cache.status(
+                        run_dir, site, options.watch, record["execution"]
+                    )
                 return prefect.follow(run_dir, site, options.watch)
             return jobs.watch(
                 run_dir, options.job_id, options.watch, site.roots["alluxio"]
