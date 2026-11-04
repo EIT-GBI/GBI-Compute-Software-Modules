@@ -1094,3 +1094,29 @@ class Prefect(unittest.TestCase):
                 ),
             ):
                 self.assertEqual(prefect.follow(run_dir, self.site, True), 1)
+
+    def test_terminal_state_shows_the_flows_reason(self):
+        run_dir = self.base / "refused"
+        run_dir.mkdir()
+        (run_dir / "request.json").write_text(json.dumps({
+            "execution": "prefect", "uid": os.getuid(),
+            "broker_request": prefect.prepare(self.options(), self.site),
+        }))
+        for state, message, shown in (
+            ("FAILED",
+             "Flow run encountered an exception: TransferRefused: "
+             "cannot read /mnt/lustre/u/x/locked: permission denied",
+             "Prefect: cannot read /mnt/lustre/u/x/locked: permission denied"),
+            ("COMPLETED", "shared: 3 of 4 entries set", "Prefect: shared: 3 of 4 entries set"),
+        ):
+            output = io.StringIO()
+            with (
+                self.subTest(state = state),
+                patch("gbi_data.prefect.exchange", return_value = {
+                    "version": 1, "state": state, "terminal": True,
+                    "run_id": "11111111-2222-3333-4444-555555555555", "message": message,
+                }),
+                contextlib.redirect_stdout(output),
+            ):
+                prefect.follow(run_dir, self.site, True)
+            self.assertIn(shown + "\n", output.getvalue())
