@@ -34,6 +34,10 @@ unchanged. Object Storage originals and versions remain retained. A published
 module or image alone does not establish runtime acceptance; unsupported
 requests fail rather than silently changing the operation.
 
+**0.4.39** shows why a `--prefect` transfer stopped. When the job refuses a
+path you cannot read or write, the CLI now prints that path and the reason
+instead of only the run's state; `gbi data status` shows the same line.
+
 **0.4.38** lets `--prefect` move data between any path you can read and any
 path you can write (Scientific-Computing-Infrastructure#120). The CLI sends the
 resolved absolute paths instead of paths relative to your personal roots; the

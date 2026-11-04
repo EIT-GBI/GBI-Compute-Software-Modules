@@ -456,6 +456,15 @@ def stored_request(run_dir, *, execution = "prefect"):
     return record["broker_request"]
 
 
+def reason(message):
+    """The flow's own words, without Prefect's exception framing."""
+    text = message.removeprefix("Flow run encountered an exception: ")
+    name, separator, rest = text.partition(": ")
+    if separator and rest and name.isidentifier() and name[:1].isupper():
+        return rest
+    return text
+
+
 def show(result, transfer_id):
     print(
         f"{jobs.timestamp()} Prefect {result['state']} · transfer {transfer_id}"
@@ -486,6 +495,8 @@ def follow(run_dir, site, wait = False, initial = None):
                 )
                 return 1
             if result.get("terminal"):
+                if result.get("message"):
+                    print(f"Prefect: {reason(result['message'])}")
                 print(
                     "This is the Prefect flow state; inspect its maintained "
                     "migration receipts for file verification."
