@@ -19,7 +19,7 @@ import uuid
 from . import __version__
 from . import jobs
 from . import deadlines
-from . import cache, prefect
+from . import cache, moves, prefect
 from . import format_selection, packing, roots, usage
 from .selection import entries, probe, stream_entries
 from .storage import Site, overlap
@@ -76,8 +76,9 @@ def command_reference(verbs):
         formatter.start_section(title)
         if name == "move":
             formatter.add_text(
-                "copy keeps sources. move removes eligible sources only after verification.\n"
-                "Object Storage originals are durable and always retained."
+                "copy keeps sources. move removes the source after verification.\n"
+                "Moving Object Storage data to Lustre or FSS asks first; without a\n"
+                "terminal the source is kept unless you add --delete-source."
             )
         else:
             formatter.add_text(command.description)
@@ -113,9 +114,8 @@ def parser(*, advanced = False):
             "Every everyday option is explained below; --help-all includes expert overrides.\n"
             "For a command's usage and examples,\n"
             "use e.g. `gbi data copy --help` or `gbi data usage --help`.\n"
-            "Ordinary transfers use site classification and normal Unix permissions;\n"
-            "--prefect additionally requires both paths to be inside the roots that\n"
-            "`gbi data roots` prints."
+            "Ordinary and --prefect transfers both run with your normal Unix\n"
+            "permissions; --prefect needs an Object Storage mount on one side."
         ),
         formatter_class = argparse.RawDescriptionHelpFormatter,
     )
@@ -152,9 +152,10 @@ def parser(*, advanced = False):
                     "SOURCE and DESTINATION may be files or directories; the source remains."
                     if verb == "copy"
                     else "Copy SOURCE to DESTINATION and independently verify every "
-                    "file before removing\n"
-                    "eligible filesystem sources. Object Storage originals are "
-                    "durable and always retained."
+                    "file, then remove\n"
+                    "the source. Moving Object Storage data to Lustre or FSS asks "
+                    "first; without a\n"
+                    "terminal the source is kept unless you add --delete-source."
                 )
             ),
             formatter_class = argparse.RawDescriptionHelpFormatter,
@@ -171,10 +172,11 @@ def parser(*, advanced = False):
                 "resumable part sizes. Restore that root to Lustre or FSS with "
                 "an ordinary copy.\n"
                 "No packing or chunk-size choices are needed for restore.\n\n"
-                "--prefect submits personal Object Storage transfers through "
-                "the site's broker.\n"
+                "--prefect submits the transfer through the site's broker: any path you can\n"
+                "read to any path you can write on Lustre, FSS and Object Storage mounts,\n"
+                "with Object Storage on at least one side. The transfer job checks\n"
+                "permissions as you before any data moves.\n"
                 "Archive previews may create managed tracking records, but never change data.\n"
-                "Object Storage originals are durable and always retained by every route.\n"
                 "After a lost submission reply: gbi data retry ID (same saved request).\n\n"
                 "Use --help-all for expert overrides and compatibility options.\n\n"
                 f"Examples:\n  gbi data {verb} SOURCE DESTINATION --dry-run\n"
@@ -246,7 +248,13 @@ def parser(*, advanced = False):
             ),
         )
         command.add_argument(
-            "--delete-source", action = "store_true", help = argparse.SUPPRESS
+            "--delete-source", action = "store_true",
+            help = (
+                "remove an Object Storage source after verification without "
+                "asking"
+                if verb == "move"
+                else argparse.SUPPRESS
+            ),
         )
         command.add_argument(
             "--dry-run", action = "store_true",
@@ -272,7 +280,10 @@ def parser(*, advanced = False):
         )
         execution.add_argument(
             "--prefect", action = "store_true",
-            help = "submit a personal Object Storage migration through Prefect",
+            help = (
+                "submit through the site's Prefect service; Object Storage on "
+                "at least one side"
+            ),
         )
         command.add_argument(
             "--job-size", choices = ("small", "large"),
@@ -414,11 +425,7 @@ def parser(*, advanced = False):
 
 
 def plan(options, site):
-    if options.delete_source:
-        raise ValueError(
-            "--delete-source is not supported; Object Storage originals are "
-            "durable and always retained"
-        )
+    moves.refuse_copy_deletion(options)
     if getattr(options, "job_size", None) is not None:
         raise ValueError(
             "--job-size is supported only for --prefect restores to Lustre or FSS"
@@ -440,7 +447,12 @@ def plan(options, site):
         target /= source.name
     if overlap(source, target):
         raise ValueError("source and destination must not overlap")
-    delete = options.verb == "move" and source_kind != "alluxio"
+    delete = moves.deletes(options, source_kind, target_kind, source)
+    if delete:
+        moves.check_removable(
+            source, int(site.values["inline_scan_entries"]),
+            float(site.values["inline_probe_seconds"]),
+        )
     specification = {
         "source": str(source), "target": str(target),
         "source_kind": source_kind, "target_kind": target_kind,
@@ -1110,12 +1122,6 @@ def main():
             if specification["delete"]
             else "Sources: keep originals."
         )
-        if (
-            options.verb == "move"
-            and specification["source_kind"] == "alluxio"
-            and not specification["delete"]
-        ):
-            print("Object Storage originals are durable and always retained.")
         mode = specification["execution"]
         print(
             {

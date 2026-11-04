@@ -18,20 +18,28 @@ from .storage import fingerprint, overlap, lock_stripe
 
 
 def validate_source_retention(task, storage_roots = ()):
-    """Reject obsolete destructive Object Storage requests before any writes."""
-    if task.get("delete_source") or (
-        task.get("delete") and task.get("source_kind") == "alluxio"
-    ):
+    """Reject deletions that would cross a mount boundary before any writes.
+
+    A move may remove an Object Storage source only when it lies inside one
+    Object Storage mount; a filesystem source must not contain or sit inside
+    one. ``delete_source`` is a field from before 0.4.10 and is refused.
+    """
+    if task.get("delete_source"):
         raise ValueError(
-            "Object Storage originals are durable and cannot be deleted by GBI"
+            "this saved request uses the retired delete_source field; "
+            "run the move again"
         )
-    if task.get("delete") and any(
-        kind == "alluxio" and overlap(Path(task["source"]), root)
-        for kind, root in storage_roots
-    ):
+    if not task.get("delete"):
+        return
+    source = Path(task["source"])
+    for kind, root in storage_roots:
+        if kind != "alluxio" or not overlap(source, root):
+            continue
+        if task.get("source_kind") == "alluxio" and root in source.parents:
+            continue
         raise ValueError(
             "source overlaps an Object Storage root; use copy or move an exact "
-            "filesystem subtree"
+            "subtree inside one mount"
         )
 
 

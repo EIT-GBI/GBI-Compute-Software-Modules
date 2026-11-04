@@ -34,6 +34,19 @@ unchanged. Object Storage originals and versions remain retained. A published
 module or image alone does not establish runtime acceptance; unsupported
 requests fail rather than silently changing the operation.
 
+**0.4.38** lets `--prefect` move data between any path you can read and any
+path you can write (Scientific-Computing-Infrastructure#120). The CLI sends the
+resolved absolute paths instead of paths relative to your personal roots; the
+broker maps the mounts and the transfer job checks permissions as you. Object
+Storage to Object Storage is the new `copy-objects` operation. `move` now
+follows one table on both routes: Lustre and FSS sources are removed after
+verification as before, and so are Object Storage sources moved to Object
+Storage. Moving Object Storage data to Lustre or FSS asks `[y/N]` on a
+terminal; `--delete-source` answers yes, and without a terminal or the flag
+the source is kept with one line saying so. `copy --delete-source` is refused.
+Python `data.move(..., delete_source=True)` passes the flag and never asks.
+Needs the matching broker and flows; older brokers refuse absolute paths.
+
 **0.4.37** stops restores reading what they just wrote
 (gbi-data-platform-tracking#44, pooled single-read restores). A file extracted
 from a packed archive is proved by the hash of the bytes handed to the writer

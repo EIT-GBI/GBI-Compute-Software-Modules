@@ -2,7 +2,7 @@
 
 Load the gbi module before starting Python. Transfers use the CLI installed
 beside this SDK. Ordinary transfers inherit your identity and Slurm allocation;
-prefect=True submits a managed migration through the site's broker. Submission
+prefect=True submits a managed transfer through the site's broker. Submission
 from a compute job requires the site's authenticated HTTPS endpoint.
 Failures raise subprocess.CalledProcessError; no retry is submitted implicitly.
 """
@@ -28,11 +28,8 @@ def _transfer(
         ):
     if not isinstance(delete_source, bool):
         raise TypeError("delete_source must be a boolean")
-    if delete_source:
-        raise ValueError(
-            "delete_source=True is not supported; Object Storage originals are "
-            "durable and always retained"
-        )
+    if delete_source and verb != "move":
+        raise ValueError("delete_source applies only to move")
     if job_size is not None:
         if job_size not in ("small", "large"):
             raise ValueError("job_size must be small or large")
@@ -50,7 +47,7 @@ def _transfer(
             command.append(f"--{flag}={value}")
     for flag, enabled in (
         ("archive", archive), ("pack-small", pack_small), ("dry-run", dry_run),
-        ("prefect", prefect),
+        ("prefect", prefect), ("delete-source", delete_source),
     ):
         if not isinstance(enabled, bool):
             raise TypeError(f"{flag.replace('-', '_')} must be a boolean")
@@ -65,8 +62,11 @@ def copy(
             source, destination, *, include = (), exclude = (), pack = None,
             pack_small = False, chunk_size = None, dry_run = False,
             prefect = False, job_size = None, archive = False,
+            delete_source = False,
         ):
     """Copy and verify, retaining originals; return only when the CLI finishes.
+
+    delete_source=True is refused: a copy never removes its source.
 
     archive=True selects a saved directory-archive layout with automatic packing
     and part sizes. Omit it for directly readable files, or when restoring.
@@ -93,8 +93,8 @@ def copy(
     return _transfer(
         "copy", source, destination, include = include, exclude = exclude,
         pack = pack, pack_small = pack_small, chunk_size = chunk_size,
-        dry_run = dry_run, prefect = prefect, job_size = job_size,
-        archive = archive,
+        dry_run = dry_run, prefect = prefect, delete_source = delete_source,
+        job_size = job_size, archive = archive,
     )
 
 
@@ -104,12 +104,14 @@ def move(
             prefect = False, delete_source = False, job_size = None,
             archive = False,
         ):
-    """Copy and verify, then remove unchanged selected filesystem originals.
+    """Copy and verify, then remove the unchanged selected source.
 
-    Options and return/exception behavior match copy(). Object Storage originals
-    are durable and always retained; delete_source=True is rejected. A partial
-    archive restore always keeps its container. This calls the same maintained
-    `gbi data move` operation; deletion is never a separate SDK pass.
+    Options and return/exception behavior match copy(). Lustre and FSS sources
+    are removed, and so are Object Storage sources moved to Object Storage. An
+    Object Storage source moved to Lustre or FSS is kept unless
+    delete_source=True; the SDK never asks. A partial archive restore always
+    keeps its container. This calls the same maintained `gbi data move`
+    operation; deletion is never a separate SDK pass.
     """
     return _transfer(
         "move", source, destination, include = include, exclude = exclude,

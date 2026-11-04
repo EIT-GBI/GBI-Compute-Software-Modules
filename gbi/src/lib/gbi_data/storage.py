@@ -24,6 +24,13 @@ DEFAULTS = {
     # statements that change on a schedule; edit them in site.conf.
     "team_root": "/mnt/team",
     "readonly_roots": "/mnt/instrument-data /mnt/lmb-data /mnt/shared /mnt/archive",
+    # --prefect treats paths below these (and team_root and readonly_roots)
+    # as Object Storage even where the mount table names another type.
+    "object_roots": (
+        "/mnt/team /mnt/shared /mnt/archive /mnt/sequencing-data"
+        " /mnt/user-data /mnt/instrument-data /mnt/lmb-data"
+        " /mnt/.alluxio-personal /mnt/.alluxio-shared"
+    ),
     "lustre_note": (
         "lifecycle rules will expire untouched files soon:"
         " move data you want to keep to alluxio"

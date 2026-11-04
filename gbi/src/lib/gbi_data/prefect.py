@@ -1,4 +1,4 @@
-"""Explicit personal migrations through the identity-binding local broker."""
+"""Managed transfers through the identity-binding local broker."""
 
 import errno
 from dataclasses import asdict
@@ -16,7 +16,8 @@ from urllib import request as urlrequest
 from urllib.parse import urlsplit
 import uuid
 
-from . import archive_plan, deadlines, jobs, packing, roots
+from . import archive_plan, deadlines, jobs, moves, packing
+from .storage import overlap
 from .transfer import write_json
 
 _TOKEN         = None
@@ -37,12 +38,53 @@ class _NoRedirect(urlrequest.HTTPRedirectHandler):
         raise ValueError("Prefect HTTPS endpoint redirected")
 
 
-def prepare(options, site):
-    if options.delete_source:
+def _resolve_source(value):
+    path = Path(value).expanduser().absolute()
+    if not os.path.exists(path):
+        raise ValueError(f"source does not exist: {path}")
+    return Path(os.path.realpath(path))
+
+
+def _resolve_destination(value):
+    """Resolve what exists; the rest is created by the transfer."""
+    path    = Path(value).expanduser().absolute()
+    missing = []
+    while not os.path.exists(path):
+        if os.path.lexists(path):
+            raise ValueError(f"destination is a broken symlink: {path}")
+        if path.parent == path:
+            break
+        missing.append(path.name)
+        path = path.parent
+    if any(part in ("", ".", "..") for part in missing):
+        raise ValueError("--prefect needs a plain destination path")
+    return Path(os.path.realpath(path)).joinpath(*reversed(missing))
+
+
+def _object_roots(site):
+    values = [
+        site.values["team_root"], *site.values["readonly_roots"].split(),
+        *site.values["object_roots"].split(),
+    ]
+    return [Path(os.path.realpath(value)) for value in values if value]
+
+
+def _kind(site, path):
+    """Lustre, FSS or Object Storage, as the broker will map the path."""
+    _, kind, _ = site.classify(path)
+    if kind != "alluxio" and any(
+        path == root or root in path.parents for root in _object_roots(site)
+    ):
+        kind = "alluxio"
+    if kind not in ("lustre", "fss", "alluxio"):
         raise ValueError(
-            "--delete-source is not supported; Object Storage originals are "
-            "durable and always retained"
+            f"--prefect supports Lustre, FSS and Object Storage paths: {path}"
         )
+    return kind
+
+
+def prepare(options, site):
+    moves.refuse_copy_deletion(options)
     for name in ("include", "exclude"):
         patterns = getattr(options, name)
         if len(patterns) > 100 or any(
@@ -56,53 +98,43 @@ def prepare(options, site):
                 f"Prefect --{name} requires quoted file-name globs (at most 100 patterns)"
             )
 
-    def candidates(name):
-        # The roots `gbi data roots` prints: the configured alias, what it
-        # resolves to and, for Object Storage, the team member folder of an
-        # account that has no /mnt/user-data entry.
-        found = [site.root_aliases.get(name), site.roots.get(name)]
-        if name == "alluxio":
-            found.append(roots.archive_root(site)[0])
-        return [root for root in dict.fromkeys(found) if root is not None]
-
-    def personal(path):
-        path = Path(path).expanduser().absolute()
-        for name in ("lustre", "fss", "alluxio"):
-            for root in candidates(name):
-                if root in path.parents:
-                    relative = path.relative_to(root).as_posix()
-                    if any(
-                        part in ("", ".", "..") or part != part.strip()
-                        for part in relative.split("/")
-                    ):
-                        raise ValueError(
-                            "--prefect needs a plain path inside your personal storage root"
-                        )
-                    if site.is_reserved(path, root):
-                        raise ValueError(
-                            "transfer state and development prefixes are reserved"
-                        )
-                    return name, relative
-        raise ValueError(
-            "--prefect supports paths inside the Lustre, FSS and Object "
-            "Storage roots that gbi data roots prints"
-        )
-
-    source_kind, source = personal(options.source)
-    target_kind, target = personal(options.destination)
-    if target_kind == "alluxio" and source_kind in ("lustre", "fss"):
+    # Any path you can read to any path you can write: the broker maps the
+    # mounts and the transfer job checks permissions as you. The checks here
+    # only refuse obvious mistakes before anything is submitted.
+    source_path = _resolve_source(options.source)
+    target_path = _resolve_destination(options.destination)
+    for path in (source_path, target_path):
+        _check_plain_path(str(path))
+    source_kind = _kind(site, source_path)
+    target_kind = _kind(site, target_path)
+    if source_kind == target_kind == "alluxio":
+        operation = "copy-objects"
+    elif target_kind == "alluxio":
         operation = "archive-" + source_kind
-    elif source_kind == "alluxio" and target_kind in ("lustre", "fss"):
+    elif source_kind == "alluxio":
         operation = "stage-" + target_kind
     else:
         raise ValueError(
-            "--prefect needs one personal Object Storage path and one personal "
-            "Lustre or FSS path"
+            "both paths are on filesystems; run the command without --prefect"
         )
+    if overlap(source_path, target_path):
+        raise ValueError("source and destination must not overlap")
+    moves.check_readable(source_path)
+    moves.check_writable(target_path)
+    source, target = str(source_path), str(target_path)
     pack, pack_small = getattr(options, "pack", None), getattr(
         options, "pack_small", False
     )
     archive_auto = getattr(options, "archive", False)
+    if operation == "copy-objects" and (
+        archive_auto or pack or pack_small
+        or getattr(options, "chunk_size", None) is not None
+        or getattr(options, "job_size", None) is not None
+    ):
+        raise ValueError(
+            "--archive, --pack, --pack-small, --chunk-size and --job-size do "
+            "not apply to a copy between Object Storage mounts"
+        )
     if archive_auto and (
         pack or pack_small or getattr(options, "chunk_size", None) is not None
     ):
@@ -144,8 +176,6 @@ def prepare(options, site):
             "--job-size small or large is supported only for --prefect "
             "restores to Lustre or FSS"
         )
-    for value in (source, target):
-        _check_plain_path(value)
     request = {
         "version": 1, "action": "submit", "request_id": str(uuid.uuid4()),
         "operation": operation, "verb": options.verb, "source": source,
@@ -166,13 +196,11 @@ def prepare(options, site):
     if operation.startswith("archive-") and not (pack or pack_small):
         # A plain or automatic archive of one regular file takes the chunk
         # route the backend already supports for files: the exact store grant
-        # a direct file needs, never a broader parent grant, and never inferred
-        # through symlinks. Directories keep their request unchanged.
-        try:
-            mode, size = _source_shape(site, source_kind, source)
-        except FileNotFoundError:
-            # A missing source is the backend's report to make, exactly as before.
-            mode, size = stat.S_IFDIR, 0
+        # a direct file needs, never a broader parent grant. The source is
+        # already resolved, so no symlink is traversed. Directories keep their
+        # request unchanged.
+        info = source_path.lstat()
+        mode, size = info.st_mode, info.st_size
         if stat.S_ISREG(mode):
             if options.include or options.exclude:
                 raise ValueError(
@@ -211,6 +239,15 @@ def prepare(options, site):
         archive_auto or pack or pack_small or chunk_size is not None
     ):
         request["dry_run"] = True
+    # The broker treats "move" as "remove the source after verification", so
+    # a move that keeps an Object Storage source is sent as a copy.
+    delete = moves.deletes(options, source_kind, target_kind, source)
+    if delete:
+        moves.check_removable(
+            source_path, int(site.values["inline_scan_entries"]),
+            float(site.values["inline_probe_seconds"]),
+        )
+    request["verb"] = "move" if delete else "copy"
     return request
 
 
@@ -231,19 +268,6 @@ def _check_plain_path(value):
         raise ValueError(
             "transfer state and development prefixes are reserved"
         )
-
-
-def _source_shape(site, source_kind, source):
-    """The mode and size of the source, walked without following any symlink."""
-    path = site.roots[source_kind]
-    site.check_root(path)
-    info = path.lstat()
-    for component in source.split("/"):
-        path = path / component
-        info = path.lstat()
-        if stat.S_ISLNK(info.st_mode):
-            raise ValueError("Prefect sources must not traverse symlinks")
-    return info.st_mode, info.st_size
 
 
 def _validate_result(raw):
@@ -522,10 +546,8 @@ def start(options, site, home):
                 f"{selection.capitalize()} basenames: {json.dumps(request[selection])}"
             )
     print(
-        "Sources: delete verified filesystem originals."
-        if not options.dry_run
-        and options.verb == "move"
-        and request["operation"].startswith("archive-")
+        "Sources: delete verified originals."
+        if not options.dry_run and request["verb"] == "move"
         else "Sources: keep originals."
     )
     if options.dry_run and not request.get("dry_run"):
