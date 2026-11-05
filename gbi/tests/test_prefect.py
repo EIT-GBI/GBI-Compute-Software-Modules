@@ -718,56 +718,44 @@ class Prefect(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "same transfer ID"):
                     prefect.exchange(self.site, request)
 
-    def test_https_fallback_only_handles_unavailable_socket(self):
+    def test_configured_https_is_used_even_when_local_broker_exists(self):
         request = prefect.prepare(self.options(), self.site)
         response = {
             "version": 1, "state": "SCHEDULED",
             "run_id": "74ec9296-0446-4a46-a428-f004e556f066",
         }
-        with (
-            patch(
-                "gbi_data.prefect._exchange_socket",
-                side_effect = prefect._BrokerUnavailable("missing"),
-            ),
-            patch("gbi_data.prefect._exchange_https") as https,
+        self.site.values["prefect_url"] = "https://broker.example/prefect"
+        for action in ("submit", "status"):
+            for operation in (request["operation"], "cache"):
+                body = {**request, "action": action, "operation": operation}
+                with (
+                    self.subTest(action = action, operation = operation),
+                    patch("gbi_data.prefect._exchange_socket", return_value = response) as local,
+                    patch("gbi_data.prefect._exchange_https", return_value = response) as https,
+                ):
+                    self.assertEqual(prefect.exchange(self.site, body), response)
+                https.assert_called_once_with(self.site.values["prefect_url"], body)
+                local.assert_not_called()
+
+    def test_https_failure_never_falls_back_to_local_broker(self):
+        self.site.values["prefect_url"] = "https://broker.example/prefect"
+        request = prefect.prepare(self.options(), self.site)
+        for error in (
+            ValueError("broker HTTPS request failed: HTTP 401"),
+            ValueError("broker HTTPS request failed: HTTP 403"),
+            ValueError("cannot obtain Slurm user token"),
+            prefect.TransientError("broker HTTPS request failed: HTTP 502"),
+            TimeoutError("lost reply"),
         ):
-            with self.assertRaisesRegex(
-                ValueError, "login node.*No request was sent"
+            with (
+                self.subTest(error = str(error)),
+                patch("gbi_data.prefect._exchange_socket") as local,
+                patch("gbi_data.prefect._exchange_https", side_effect = error) as https,
+                self.assertRaisesRegex(ValueError, "request not confirmed"),
             ):
                 prefect.exchange(self.site, request)
-        https.assert_not_called()
-        self.site.values["prefect_url"] = "https://broker.example/prefect"
-        with (
-            patch(
-                "gbi_data.prefect._exchange_socket",
-                side_effect = prefect._BrokerUnavailable("missing"),
-            ),
-            patch(
-                "gbi_data.prefect._exchange_https", return_value = response
-            ) as https,
-        ):
-            self.assertEqual(prefect.exchange(self.site, request), response)
-        https.assert_called_once_with(self.site.values["prefect_url"], request)
-        with (
-            patch(
-                "gbi_data.prefect._exchange_socket",
-                side_effect = ValueError("partial reply"),
-            ),
-            patch("gbi_data.prefect._exchange_https") as https,
-        ):
-            with self.assertRaisesRegex(ValueError, "partial reply"):
-                prefect.exchange(self.site, request)
-        https.assert_not_called()
-        with (
-            patch(
-                "gbi_data.prefect._exchange_socket",
-                side_effect = PermissionError("denied"),
-            ),
-            patch("gbi_data.prefect._exchange_https") as https,
-        ):
-            with self.assertRaisesRegex(ValueError, "denied"):
-                prefect.exchange(self.site, request)
-        https.assert_not_called()
+            https.assert_called_once_with(self.site.values["prefect_url"], request)
+            local.assert_not_called()
 
     def test_cache_transport_failure_names_the_cache_service(self):
         request = {"version": 1, "action": "status", "operation": "cache"}
@@ -908,7 +896,6 @@ class Prefect(unittest.TestCase):
             )
 
     def test_socket_write_failure_never_switches_transport(self):
-        self.site.values["prefect_url"] = "https://broker.example/migrations"
         for error in (
             BrokenPipeError(errno.EPIPE, "lost write"),
             TimeoutError("lost reply"),
@@ -926,25 +913,20 @@ class Prefect(unittest.TestCase):
                     )
                 remote.assert_not_called()
 
-    def test_missing_socket_falls_back_without_changing_request(self):
-        self.site.values["prefect_url"] = "https://broker.example/migrations"
+    def test_unconfigured_https_keeps_local_socket_errors(self):
         request = prefect.prepare(self.options(), self.site)
         for code in (errno.ENOENT, errno.ECONNREFUSED):
             with (
                 self.subTest(code = code),
                 patch("gbi_data.prefect.socket.socket") as factory,
-                patch(
-                    "gbi_data.prefect._exchange_https",
-                    return_value = {"state": "RUNNING"},
-                ) as remote,
+                patch("gbi_data.prefect._exchange_https") as remote,
             ):
                 client = factory.return_value.__enter__.return_value
                 client.connect.side_effect = OSError(code, "unavailable")
-                prefect.exchange(self.site, request)
+                with self.assertRaisesRegex(ValueError, "login node.*No request was sent"):
+                    prefect.exchange(self.site, request)
                 client.sendall.assert_not_called()
-                remote.assert_called_once_with(
-                    self.site.values["prefect_url"], request
-                )
+                remote.assert_not_called()
 
     def test_lost_reply_retry_resends_identical_saved_request(self):
         sent = []

@@ -34,6 +34,13 @@ unchanged. Object Storage originals and versions remain retained. A published
 module or image alone does not establish runtime acceptance; unsupported
 requests fail rather than silently changing the operation.
 
+**0.4.41** uses the configured HTTPS broker on both login and compute nodes,
+so broker updates can run independently of login sessions. The route uses the
+caller's existing Slurm user token. Sites without an HTTPS URL continue using
+the local Unix socket; an HTTPS error never switches to that socket. This is
+the CLI part of [independent broker delivery](https://github.com/EIT-GBI/gbi-sandpit-cluster/issues/1796);
+site broker routing and installation are separate delivery steps.
+
 **0.4.40** keeps transfer and cache monitoring connected through temporary
 broker outages. Status reads retry up to three times, after 2, 4 and 8 seconds;
 submissions are never retried automatically. Confirmed Prefect runs are polled

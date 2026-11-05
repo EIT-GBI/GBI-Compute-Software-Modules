@@ -442,30 +442,24 @@ def _exchange_https(url, request):
 
 def exchange(site, request, retry_hint = "retry with the same transfer ID"):
     path    = site.values["prefect_socket"]
+    url     = _https_url(site)
     service = "Cache" if request.get("operation") == "cache" else "Prefect"
-    deadlines.event(f"contacting {service} broker", path)
+    deadlines.event(f"contacting {service} broker", url or path)
     try:
+        if url:
+            return _exchange_https(url, request)
         return _exchange_socket(path, request)
     except _BrokerUnavailable as error:
-        url = _https_url(site)
-        if not url:
-            if request.get("action") == "status":
-                raise ValueError(
-                    f"{service} status unavailable: broker unavailable on this node. "
-                    "Run this command on the login node or contact cluster support."
-                ) from error
+        if request.get("action") == "status":
             raise ValueError(
-                f"{service} broker unavailable on this node. "
-                "Run this command on the login node "
-                f"or contact cluster support. No request was sent; {retry_hint}"
+                f"{service} status unavailable: broker unavailable on this node. "
+                "Run this command on the login node or contact cluster support."
             ) from error
-        deadlines.event(
-            f"local {service} broker unavailable; using HTTPS transport", url
-        )
-        try:
-            return _exchange_https(url, request)
-        except (OSError, ValueError, TypeError, AttributeError) as https_error:
-            _exchange_error(service, request, https_error, retry_hint)
+        raise ValueError(
+            f"{service} broker unavailable on this node. "
+            "Run this command on the login node "
+            f"or contact cluster support. No request was sent; {retry_hint}"
+        ) from error
     except (OSError, ValueError, TypeError, AttributeError) as error:
         _exchange_error(service, request, error, retry_hint)
 
