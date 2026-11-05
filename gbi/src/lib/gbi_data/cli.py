@@ -960,7 +960,7 @@ def _run(run_dir, site, home):
         history = publish_history(
             run_dir, site, state, rclone, progress, stopped, inline
         )
-        print(f"History: {history}", flush = True)
+        print(f"History: {history}/history.json", flush = True)
     except (OSError, ValueError) as error:
         print(
             f"Could not save history to Alluxio: {error}. Temporary records retained: {run_dir}",
