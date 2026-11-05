@@ -894,10 +894,11 @@ def _run(run_dir, site, home):
     if output.compact_verb:
         output.update(progress)  # Show the completed bar before the summary.
     output.finish()
-    print(
-        f"Data phase: {progress['phase']}. Receipts: {run_dir / 'receipts.jsonl'}",
-        flush = True,
-    )
+    data_phase = f"Data phase: {progress['phase']}"
+    if progress["phase"] != "complete":
+        data_phase += f" Receipts: {run_dir / 'receipts.jsonl'} - use this for debugging."
+    print(data_phase, flush = True)
+
     if output.compact_verb:
         speed = progress["bytes"] / max(progress["elapsed"], 1)
         print(
