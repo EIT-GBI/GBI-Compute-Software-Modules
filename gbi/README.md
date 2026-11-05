@@ -34,6 +34,14 @@ unchanged. Object Storage originals and versions remain retained. A published
 module or image alone does not establish runtime acceptance; unsupported
 requests fail rather than silently changing the operation.
 
+**0.4.43** adds receipt-backed `gbi data retry ID` for stopped ordinary
+copy/move transfers, completing the ordinary retry source change for
+[repeated transfers and retry reporting](https://github.com/EIT-GBI/Scientific-Computing-Infrastructure/issues/123).
+Each retry creates a new run linked to the unchanged original history.
+Already moved files are checked again at their saved destinations and receive
+no additional freed-space credit. Managed retries retain their original
+request identity.
+
 **0.4.42** reports verified destination reuse accurately in ordinary transfers.
 Per-file output says `REUSED` when a copy verifies an identical destination;
 a move that removes its source after reuse says `MOVED` with
@@ -301,10 +309,40 @@ without opening the Prefect UI. One endpoint must be personal Lustre/FSS
 and the other personal Object Storage. Ordinary routing can use any mounted
 path your Unix account can access. See the guide for site-version requirements.
 
-After failure, confirm workers stopped and inspect receipts before repeating
-the same command. Keep recovery state. `gbi data retry TRANSFER_ID` is only
-for a lost Prefect submission reply, not for restarting an already failed flow
-or ordinary transfer. An observation timeout does not prove a job stopped.
+After failure, keep the recovery state and use `gbi data retry TRANSFER_ID`
+(or an unambiguous Slurm job ID) for an ordinary file/link transfer. The CLI
+requires terminal history, refuses live or unresolved prior workers, and uses
+the saved exact paths, filters and deletion consent. It creates a fresh run;
+the original history remains unchanged. A detached transfer stays detached;
+use `--wait` to follow it. An allocation transfer reuses your current allocation
+or submits a new Slurm job if you are outside one.
+
+Existing sources pass the usual checksum, destination reuse and owned-partial
+recovery checks. Across nodes, retry ignores only the mount's device ID and
+still requires the saved inode, type, size and modification time. Previously
+verified sources also require a fresh source checksum. A changed or replaced
+source is retained; filesystems that assign a different inode cannot establish
+this identity and are refused. Inspect the history and use the original command
+for a fresh selection in that case.
+An absent source needs an acknowledged deletion receipt and a fresh destination
+checksum under the transfer lock. Missing or changed destinations fail safely;
+a verification receipt alone does not acknowledge source removal. Output and
+new history distinguish copied, reused, already moved, and failed files.
+Already moved files are included in reused counts, with zero newly freed bytes.
+An absent empty directory is checked against its existing destination directory;
+it receives no file or freed-space credit, and retry does not recreate it.
+A failed worker may have completed some receipt-backed work before its result
+was lost; a failure count does not mean those sources are still present.
+
+A saved finite selection is preserved. Older streaming requests have no complete
+saved file inventory: retry rechecks recorded files and rediscovers the original
+root and filters, including files not previously started. It explicitly reports
+that the original undiscovered remainder is unknown. An absent streaming source
+root is accepted only with completed discovery and matching receipt coverage.
+Archive/packed/chunked units use their existing original-command recovery path;
+ordinary retry refuses to reinterpret their manifests. A managed retry resends
+the identical saved request after a lost submission reply; it does not restart
+a failed flow. An observation timeout never proves a job stopped.
 
 ## Python
 

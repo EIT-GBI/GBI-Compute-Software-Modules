@@ -218,6 +218,10 @@ def display(progress, width = 24):
         for phase, count in sorted(progress.get("phases", {}).items())
     )
     reused = f" ({progress['reused']:,} reused)" if "reused" in progress else ""
+    if "copied" in progress:
+        reused = f" ({progress['copied']:,} copied, {progress['reused']:,} reused)"
+    if progress.get("already_moved"):
+        reused += f" ({progress['already_moved']:,} already moved)"
     return (
         f"{bar}  {progress['files']:,} verified{reused}  {human_bytes(completed)}  "
         f"{human_bytes(speed)}/s  freed {human_bytes(progress['freed'])}  "
@@ -262,6 +266,10 @@ def terminal_display(progress):
         for phase, count in sorted(progress.get("phases", {}).items())
     )
     reused = f" ({progress['reused']:,} reused)" if "reused" in progress else ""
+    if "copied" in progress:
+        reused = f" ({progress['copied']:,} copied, {progress['reused']:,} reused)"
+    if progress.get("already_moved"):
+        reused += f" ({progress['already_moved']:,} already moved)"
     return (
         f"{bar}\n"
         f"Verified {progress['files']:,} files{reused} · {human_bytes(done)} · {human_bytes(speed)}/s\n"

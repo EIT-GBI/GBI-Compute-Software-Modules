@@ -19,7 +19,7 @@ import uuid
 from . import __version__
 from . import jobs
 from . import deadlines
-from . import cache, moves, prefect
+from . import cache, moves, prefect, retry
 from . import format_selection, packing, roots, usage
 from .selection import entries, probe, stream_entries
 from .storage import Site, fingerprint, overlap
@@ -319,21 +319,22 @@ def parser(*, advanced = False):
     )
     retry = verbs.add_parser(
         "retry",
-        help = "resend one unchanged saved Prefect request after a lost reply",
+        help = "resume a saved ordinary transfer or resend a managed request",
         description = (
-            "Retry only a saved Prefect request; ordinary transfers are rerun "
-            "with their original command."
+            "Retry a stopped ordinary transfer in a new run using its saved "
+            "paths, filters and receipts. Already moved files are reverified. "
+            "A managed request is resent unchanged after a lost reply."
         ),
         epilog = "Example:\n  gbi data retry TRANSFER_ID --wait",
         formatter_class = argparse.RawDescriptionHelpFormatter,
     )
     retry.add_argument(
         "job_id", metavar = "TRANSFER_ID",
-        help = "printed ID of the saved Prefect request",
+        help = "printed transfer ID or unambiguous Slurm job ID",
     )
     retry.add_argument(
         "--wait", action = "store_true",
-        help = "wait for the existing migration's result",
+        help = "wait for the transfer result",
     )
     verbs.add_parser(
         "roots",
@@ -542,6 +543,16 @@ def execution_plan(specification, site, options):
     }
 
 
+def worker_group_stopped(pid):
+    try:
+        os.killpg(pid, 0)
+    except ProcessLookupError:
+        return True
+    except PermissionError:
+        pass
+    return False
+
+
 def supervise(task, timeout, stopped):
     """Bound all per-file I/O, including close and verification, in a process."""
     process = subprocess.Popen(
@@ -565,12 +576,13 @@ def supervise(task, timeout, stopped):
                 except subprocess.TimeoutExpired:
                     pass
             process.stdout.close()
-            unresolved = process.poll() is None
+            unresolved = process.poll() is None or not worker_group_stopped(process.pid)
             deadlines.event(
                 worker_finished = process.pid,
                 **({"unresolved": process.pid} if unresolved else {}),
             )
             return {
+                "workers_stopped": not unresolved,
                 "error": f"interrupted or timed out: worker PID {process.pid}; "
                 + (
                     "kernel I/O may still be active; confirm terminal state before retrying; "
@@ -583,18 +595,30 @@ def supervise(task, timeout, stopped):
             process.wait(timeout = 0.2)
         except subprocess.TimeoutExpired:
             pass
+    if not worker_group_stopped(process.pid):
+        process.stdout.close()
+        deadlines.event(worker_finished = process.pid, unresolved = process.pid)
+        return {
+            "error": "transfer worker group remains active; inspect worker PIDs before retrying",
+            "workers_stopped": False,
+        }
     output = process.stdout.read()
     process.stdout.close()
     deadlines.event(worker_finished = process.pid)
     if process.returncode:
         return {
-            "error": f"transfer worker exited {process.returncode}; inspect receipts"
+            "error": f"transfer worker exited {process.returncode}; inspect receipts",
+            "workers_stopped": True,
         }
     try:
-        return json.loads(output)
+        result = json.loads(output)
+        if not isinstance(result, dict):
+            raise ValueError("worker result must be an object")
+        return {**result, "workers_stopped": True}
     except ValueError:
         return {
-            "error": "transfer worker returned no valid result; inspect receipts"
+            "error": "transfer worker returned no valid result; inspect receipts",
+            "workers_stopped": True,
         }
 
 
@@ -656,15 +680,24 @@ def _run(run_dir, site, home):
     source_root, target_root = Path(specification["source_root"]), Path(
         specification["target_root"]
     )
+    if specification["directory"] and os.path.lexists(source) and (
+        source.is_symlink() or not source.is_dir()
+    ):
+        raise ValueError("saved source directory changed; source kept")
     state = home / "state"
     deadlines.event("preparing transfer state", state)
     for path in (state / "locks", state / "pending", run_dir / "active"):
         path.mkdir(parents = True, exist_ok = True, mode = 0o700)
-    if specification["directory"]:
+    if specification["directory"] and not (
+        specification.get("retry_from") and not os.path.lexists(source)
+    ):
         deadlines.event("preparing destination", target)
         ensure_parent(target / ".placeholder", target_root)
     source_cleanup = None
-    if specification.get("remove_empty_source_root") and can_remove_source_root(specification):
+    if (
+        specification.get("remove_empty_source_root")
+        and can_remove_source_root(specification) and source.exists()
+    ):
         source_cleanup = (fingerprint(source)[:3], fingerprint(target)[:3])
     stopped = threading.Event()
     for signum in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
@@ -672,7 +705,8 @@ def _run(run_dir, site, home):
     started, last_publish, discovery_wait = time.monotonic(), 0.0, 0.0
     discovery_progress = None
     progress = {
-        "phase": "running", "files": 0, "reused": 0,
+        "phase": "running", "files": 0, "reused": 0, "already_moved": 0,
+        "workers_stopped": True,
         "bytes": 0, "freed": 0, "failed": 0,
         "discovered_files": 0, "discovered_bytes": 0,
         "discovery_complete": False, "elapsed": 0, "active": 0,
@@ -680,7 +714,14 @@ def _run(run_dir, site, home):
         "hostname": socket.gethostname(),
         "coordinator_identity": jobs.process_identity(os.getpid()),
     }
+    if specification.get("retry_from"):
+        progress["copied"] = 0
+        progress["original_inventory_known"] = selected is not None
     iterator = iter(selected) if selected is not None else None
+    unit_iterator = (
+        retry.entries if specification.get("retry_from")
+        else format_selection.iter_units
+    )
     discovery = (
         None
         if selected is not None
@@ -689,17 +730,18 @@ def _run(run_dir, site, home):
             exclusions = specification.get("exclude", []),
             **(
                 {
-                    "iterator_factory": lambda on_error, visit: format_selection.iter_units(
+                    "iterator_factory": lambda on_error, visit: unit_iterator(
                         specification, site, on_error, visit
                     )
                 }
-                if specification.get("format_units")
+                if specification.get("format_units") or specification.get("retry_from")
                 else {}
             ),
         )
     )
     file_specification = {
-        key: value for key, value in specification.items() if key != "selection"
+        key: value for key, value in specification.items()
+        if key not in ("selection", "retry_receipts", "retry_missing")
     }
     pending       = {}
     counted_bytes = {}
@@ -707,11 +749,11 @@ def _run(run_dir, site, home):
     width         = int(site.values["jobs"])
     output        = jobs.ProgressDisplay()
 
-    def record_failure(path, error):
+    def record_failure(path, error, workers_stopped = True):
         progress["failed"] += 1
         record = {
             "event": "failed", "source": str(path), "error": str(error),
-            "time": time.time(),
+            "time": time.time(), "workers_stopped": workers_stopped,
         }
         deadlines.event(
             "writing failure receipt", run_dir / "receipts.jsonl",
@@ -736,6 +778,11 @@ def _run(run_dir, site, home):
             path, empty = entry
             unit = {}
         if unit.get("format_action"):
+            if specification.get("retry_from"):
+                raise ValueError(
+                    "retry encountered an archive/packed unit; repeat its "
+                    "original command with recovery state"
+                )
             source_cleanup = None
         active = run_dir / "active" / (uuid.uuid4().hex + ".json")
         task = {
@@ -755,6 +802,7 @@ def _run(run_dir, site, home):
             ),
             "native_bytes": int(site.values["native_bytes"]),
             "target_base": True, "empty": empty, **unit,
+            "retry_receipt": specification.get("retry_receipts", {}).get(str(path)),
         }
         if not empty:
             progress["discovered_files"] += 1
@@ -874,19 +922,29 @@ def _run(run_dir, site, home):
                     )
                     active.unlink(missing_ok = True)
                     if "error" in outcome:
-                        record_failure(path, outcome["error"])
+                        workers_stopped = not retry.uncertain_worker(outcome)
+                        if not workers_stopped:
+                            progress["workers_stopped"] = False
+                        record_failure(path, outcome["error"], workers_stopped)
                     elif not empty:
                         progress["files"] += 1
                         reused = outcome.get("reused", False)
                         progress["reused"] += int(reused)
+                        progress["already_moved"] += int(
+                            outcome.get("already_moved", False)
+                        )
+                        if "copied" in progress:
+                            progress["copied"] += int(not reused)
                         progress["bytes"] += outcome["bytes"]
                         progress["freed"] += outcome.get(
                             "freed_bytes",
                             outcome["bytes"] if outcome["deleted"] else 0,
                         )
                         if not output.terminal:
-                            action = "MOVED" if outcome["deleted"] else (
-                                "REUSED" if reused else "COPIED"
+                            action = (
+                                "ALREADY MOVED" if outcome.get("already_moved")
+                                else "MOVED" if outcome["deleted"]
+                                else "REUSED" if reused else "COPIED"
                             )
                             detail = " (reused destination)" if reused and outcome["deleted"] else ""
                             print(
@@ -931,6 +989,7 @@ def _run(run_dir, site, home):
                     last_publish = time.monotonic()
     except (OSError, ValueError) as error:
         stopped.set()
+        progress["workers_stopped"] = progress["workers_stopped"] and not pending
         progress["failed"] += 1
         output.finish()
         print(f"FAILED discovery: {error}", flush = True)
@@ -1075,6 +1134,78 @@ def publish_history(
     return destination
 
 
+def start(specification, site, home, wait = False, detach = False):
+    """Snapshot and execute a new ordinary request, including saved retries."""
+    mode = specification["execution"]
+    if mode == "slurm" and not site.values["partition"]:
+        raise ValueError("the gbi module has no Slurm partition configured")
+    deadlines.event("checking scratch root", site.roots["lustre"])
+    site.check_root(site.roots["lustre"])
+    deadlines.event("checking archive root", site.roots["alluxio"])
+    site.check_root(site.roots["alluxio"])
+    run_dir = (
+        home
+        / "runs"
+        / (
+            time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
+            + "-"
+            + uuid.uuid4().hex[:12]
+        )
+    )
+    deadlines.event(
+        "preparing request snapshot", run_dir, records = str(run_dir)
+    )
+    run_dir.mkdir(parents = True, mode = 0o700)
+    # A queued job uses the exact code and settings that were submitted,
+    # even if the module's default version changes before it starts.
+    runtime = run_dir / "runtime" / "gbi_data"
+    shutil.copytree(
+        Path(__file__).parent, runtime,
+        ignore = shutil.ignore_patterns("__pycache__"),
+    )
+    # Installed source may be read-only. This private, caller-owned copy
+    # must remain removable after its verified history has been published.
+    for directory in (
+        runtime,
+        *(path for path in runtime.rglob("*") if path.is_dir()),
+    ):
+        directory.chmod(0o700)
+    shutil.copyfile(site.path, run_dir / "site.conf")
+    source_hash = hashlib.sha256()
+    for path in sorted(runtime.glob("*.py")):
+        source_hash.update(path.name.encode() + b"\0" + path.read_bytes())
+    specification["code_sha256"] = source_hash.hexdigest()
+    specification["version"] = __version__
+    specification.pop("allocation_job_id", None)
+    if mode == "allocation":
+        specification["allocation_job_id"] = os.environ["SLURM_JOB_ID"]
+    write_json(run_dir / "request.json", specification)
+    if mode != "slurm":
+        if mode == "allocation":
+            print(
+                f"Transfer {run_dir.name}. Reconnect: gbi data status {run_dir.name} --watch",
+                flush = True,
+            )
+        else:
+            print(
+                f"Transfer {run_dir.name}. History: gbi data status {run_dir.name}"
+            )
+        return run(run_dir, site, home)
+    command = [
+        sys.executable, "-B", "-m", "gbi_data.cli", "data", "_run",
+        str(run_dir),
+    ]
+    job_id = jobs.submit(run_dir, command, site)
+    print(
+        f"Submitted transfer {job_id}. Reconnect: gbi data status {job_id} --watch"
+    )
+    if wait or (not detach and sys.stdout.isatty()):
+        return jobs.watch(
+            run_dir, job_id, archive_root = site.roots["alluxio"]
+        )
+    return 0
+
+
 def main():
     options = parser().parse_args()
     os.umask(0o077)
@@ -1119,9 +1250,27 @@ def main():
         if options.verb in ("status", "retry"):
             run_dir = jobs.locate(home, options.job_id, site.roots["alluxio"])
             if options.verb == "retry":
-                return prefect.submit(
-                    run_dir, site, options.wait or sys.stdout.isatty()
+                request = run_dir / "request.json"
+                record = json.loads(request.read_text()) if request.is_file() else {}
+                if record.get("execution") in ("prefect", "cache"):
+                    return prefect.submit(
+                        run_dir, site, options.wait or sys.stdout.isatty()
+                    )
+                specification = retry.prepare(run_dir, site)
+                if specification["execution"] == "allocation":
+                    specification["execution"] = (
+                        "allocation" if os.environ.get("SLURM_JOB_ID") else "slurm"
+                    )
+                print(
+                    f"Retry of {run_dir.name}; original history retained at {run_dir}"
                 )
+                if specification["selection"] is None:
+                    print(
+                        "Original file inventory was not saved; rediscovering "
+                        "the saved root and filters. Undiscovered original "
+                        "remainder is unknown."
+                    )
+                return start(specification, site, home, options.wait, True)
             request = run_dir / "request.json"
             record = json.loads(request.read_text()) if request.is_file() else {}
             if record.get("execution") in ("prefect", "cache"):
@@ -1187,70 +1336,7 @@ def main():
                 )
             print("Dry run: no job submitted and no files written.")
             return 0
-        deadlines.event("checking scratch root", site.roots["lustre"])
-        site.check_root(site.roots["lustre"])
-        deadlines.event("checking archive root", site.roots["alluxio"])
-        site.check_root(site.roots["alluxio"])
-        run_dir = (
-            home
-            / "runs"
-            / (
-                time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
-                + "-"
-                + uuid.uuid4().hex[:12]
-            )
-        )
-        deadlines.event(
-            "preparing request snapshot", run_dir, records = str(run_dir)
-        )
-        run_dir.mkdir(parents = True, mode = 0o700)
-        # A queued job uses the exact code and settings that were submitted,
-        # even if the module's default version changes before it starts.
-        runtime = run_dir / "runtime" / "gbi_data"
-        shutil.copytree(
-            Path(__file__).parent, runtime,
-            ignore = shutil.ignore_patterns("__pycache__"),
-        )
-        # Installed source may be read-only. This private, caller-owned copy
-        # must remain removable after its verified history has been published.
-        for directory in (
-            runtime,
-            *(path for path in runtime.rglob("*") if path.is_dir()),
-        ):
-            directory.chmod(0o700)
-        shutil.copyfile(site.path, run_dir / "site.conf")
-        source_hash = hashlib.sha256()
-        for path in sorted(runtime.glob("*.py")):
-            source_hash.update(path.name.encode() + b"\0" + path.read_bytes())
-        specification["code_sha256"] = source_hash.hexdigest()
-        specification["version"] = __version__
-        if mode == "allocation":
-            specification["allocation_job_id"] = os.environ["SLURM_JOB_ID"]
-        write_json(run_dir / "request.json", specification)
-        if mode != "slurm":
-            if mode == "allocation":
-                print(
-                    f"Transfer {run_dir.name}. Reconnect: gbi data status {run_dir.name} --watch",
-                    flush = True,
-                )
-            else:
-                print(
-                    f"Transfer {run_dir.name}. History: gbi data status {run_dir.name}"
-                )
-            return run(run_dir, site, home)
-        command = [
-            sys.executable, "-B", "-m", "gbi_data.cli", "data", "_run",
-            str(run_dir),
-        ]
-        job_id = jobs.submit(run_dir, command, site)
-        print(
-            f"Submitted transfer {job_id}. Reconnect: gbi data status {job_id} --watch"
-        )
-        if options.wait or (not options.detach and sys.stdout.isatty()):
-            return jobs.watch(
-                run_dir, job_id, archive_root = site.roots["alluxio"]
-            )
-        return 0
+        return start(specification, site, home, options.wait, options.detach)
     except (OSError, ValueError, subprocess.SubprocessError) as error:
         print(f"gbi data: {error}", file = sys.stderr)
         return 2
