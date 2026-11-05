@@ -143,10 +143,13 @@ def follow(
         while True:
             now = clock()
             for run in runs:
-                if run.get("done"):
+                if run.get("done") or run.get("error"):
                     continue
                 result = run.get("result")
                 if result is None:
+                    if timeout and clock() >= started + timeout:
+                        timed_out = True
+                        break
                     query = {"version": 1, "action": "status"}
                     if run["execution"] == "cache":
                         query.update(
@@ -154,16 +157,28 @@ def follow(
                             include = run["include"],
                         )
                     else:
-                        query["request_id"] = run["request_id"]
+                        query = prefect.status_query(
+                            run["request_id"], run.get("last_result")
+                        )
                     try:
-                        result = prefect.exchange(
+                        result = prefect.status(
                             site, query, retry_hint = RETRY_HINT,
+                            sleep = sleep, clock = clock,
+                            until = started + timeout if timeout else None,
                         )
                     except ValueError as error:
-                        run.update(done = True, error = str(error))
-                        print(f"gbi data cache: {run['path']}: {error}", file = sys.stderr)
+                        run["error"] = str(error)
+                        run["monitoring_lost"] = isinstance(error, prefect.TransientError)
+                        last = run.get("last_result")
+                        observed = f" Last observed state: {last['state']}." if last else ""
+                        print(
+                            f"gbi data cache: {run['path']}: monitoring stopped; "
+                            f"current load state is unknown.{observed} {error}."
+                            + _reconnect([run]), file = sys.stderr,
+                        )
                         continue
                     run["result"] = result
+                run["last_result"] = result
                 if run["run_dir"] is not None:
                     write_json(
                         run["run_dir"] / (run["execution"] + ".json"), result
@@ -178,8 +193,11 @@ def follow(
                             print(f"  {result['message']}", flush = True)
                         if result["state"] == "NOT_SUBMITTED":
                             print(f"  no submitted load found; {RETRY_HINT}", flush = True)
-            if all(run.get("done") for run in runs) or not wait:
+            if timed_out or all(
+                run.get("done") or run.get("error") for run in runs
+            ) or not wait:
                 break
+            now = clock()
             deadlines.event(
                 "waiting for the cache load", runs[0]["path"],
                 counters = {"seconds": int(now - started)},
@@ -189,16 +207,19 @@ def follow(
                 break
             if now - heartbeat >= HEARTBEAT_SECONDS and not as_json:
                 heartbeat = now
-                active = sum(1 for run in runs if not run.get("done"))
+                active = sum(
+                    1 for run in runs if not run.get("done") and not run.get("error")
+                )
                 print(
                     f"{jobs.timestamp()} still loading: {active} path(s), "
                     f"{int(now - started)} s elapsed",
                     flush = True,
                 )
             for run in runs:
-                if not run.get("done"):
+                if not run.get("done") and not run.get("error"):
                     run["result"] = None
-            sleep(POLL_SECONDS)
+            delay = min(POLL_SECONDS, started + timeout - clock()) if timeout else POLL_SECONDS
+            sleep(max(0, delay))
     except KeyboardInterrupt:
         print("\nDetached. The load continues on the storage workers." + _reconnect(runs))
         return EXIT_OK
@@ -212,10 +233,13 @@ def follow(
     if timed_out:
         return EXIT_PARTIAL
     if any(
-        run.get("error") or (run.get("result") or {}).get("state") in FAILED_STATES
+        (run.get("error") and not run.get("monitoring_lost"))
+        or (run.get("done") and run["last_result"]["state"] in FAILED_STATES)
         for run in runs
     ):
         return EXIT_FAILED
+    if any(run.get("monitoring_lost") for run in runs):
+        return EXIT_PARTIAL
     return EXIT_OK
 
 
@@ -237,9 +261,9 @@ def _summary(runs, timed_out):
                 "path": run["path"],
                 "request_id": run["request_id"],
                 "transfer_id": run["run_dir"].name if run["run_dir"] else None,
-                "run_id": (run.get("result") or {}).get("run_id"),
-                "state": (run.get("result") or {}).get("state"),
-                "message": (run.get("result") or {}).get("message"),
+                "run_id": (run.get("last_result") or {}).get("run_id"),
+                "state": (run.get("last_result") or {}).get("state"),
+                "message": (run.get("last_result") or {}).get("message"),
                 "error": run.get("error"),
             }
             for run in runs
@@ -255,6 +279,7 @@ def status(run_dir, site, watch, execution = "cache"):
             "path": body["path"], "request_id": body["request_id"],
             "run_dir": run_dir, "result": None,
             "execution": execution, "include": body.get("include", []),
+            "last_result": prefect.saved_result(run_dir, execution),
         }
     ]
     return follow(site, runs, wait = watch)

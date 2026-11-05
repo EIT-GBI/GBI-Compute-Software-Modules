@@ -11,7 +11,7 @@ import unittest
 from unittest.mock import patch
 from contextlib import redirect_stdout, redirect_stderr
 
-from gbi_data import cache, cli
+from gbi_data import cache, cli, prefect
 from gbi_data.storage import Site
 
 
@@ -58,12 +58,14 @@ class Broker:
         if request["action"] == "submit":
             state = self.submit_state
         else:
-            key = request.get("request_id") or (
+            key = request.get("run_id") or request.get("request_id") or (
                 request["path"], tuple(request["include"])
             )
             count = self.polls.get(key, 0)
             self.polls[key] = count + 1
             state = self.states[min(count, len(self.states) - 1)]
+            if isinstance(state, Exception):
+                raise state
         result = {
             "version": 1, "state": state,
             "terminal": state in {"COMPLETED", "FAILED", "CANCELLED", "CRASHED"},
@@ -280,7 +282,7 @@ class Cache(unittest.TestCase):
         self.assertIn("Prefect COMPLETED · cache", out)
         self.assertEqual([r for r, _ in broker.requests[1:]], [{
             "version": 1, "action": "status",
-            "request_id": record["broker_request"]["request_id"],
+            "run_id": "11111111-2222-3333-4444-555555555555",
         }] * 2)
 
     def test_detached_json_keeps_the_initial_service_state(self):
@@ -342,6 +344,94 @@ class Cache(unittest.TestCase):
         self.assertGreaterEqual(event.call_count, 30)
         self.assertEqual(event.call_args[0][0], "waiting for the cache load")
         self.assertIn("still loading: 1 path(s)", out)
+
+    def test_transient_status_error_recovers_without_repeating_submission(self):
+        broker = Broker(states = (
+            "RUNNING", prefect.TransientError("HTTP 502"), "COMPLETED",
+        ))
+        code, out, err = self.run_cache(broker, str(self.data), "--include", "*.bin")
+        self.assertEqual(code, 0)
+        self.assertIn("Cache COMPLETED", out)
+        self.assertIn("Monitoring temporarily unavailable", err)
+        self.assertEqual(sum(r["action"] == "submit" for r, _ in broker.requests), 1)
+        for query, _hint in broker.requests[1:]:
+            self.assertEqual(query, {
+                "version": 1, "action": "status", "operation": "cache",
+                "path": str(self.data), "include": ["*.bin"],
+            })
+
+    def test_monitoring_exhaustion_retains_state_and_allows_other_paths_to_finish(self):
+        broker = Broker(states = ("COMPLETED",))
+        queries = []
+
+        def intermittent(site, query, retry_hint = None):
+            queries.append(query)
+            if query["action"] == "status" and query["path"] == str(self.data):
+                raise prefect.TransientError("HTTP 502")
+            return broker(site, query, retry_hint)
+
+        code, out, err = self.run_cache(
+            intermittent, str(self.data), str(self.data / "a"), "--json",
+        )
+        self.assertEqual(code, 3)
+        summary = json.loads(out.strip().splitlines()[-1])
+        first, second = summary["paths"]
+        self.assertEqual(first["state"], "SCHEDULED")
+        self.assertEqual(first["error"], "HTTP 502")
+        self.assertEqual(second["state"], "COMPLETED")
+        self.assertIsNone(second["error"])
+        self.assertIn("current load state is unknown", err)
+        self.assertIn(f"gbi data status {first['transfer_id']} --watch", err)
+        self.assertEqual(len(queries), 7)
+        saved = json.loads((self.lustre / ".gbi/runs" / first["transfer_id"] / "cache.json").read_text())
+        self.assertEqual(saved["state"], "SCHEDULED")
+
+    def test_status_refusal_does_not_retry_or_claim_load_failure(self):
+        broker = Broker(states = (ValueError("cache path is not readable by your account"),))
+        code, out, err = self.run_cache(broker, str(self.data))
+        self.assertEqual(code, 1)
+        self.assertEqual(len(broker.requests), 2)
+        self.assertIn("not readable by your account", err)
+        self.assertNotIn("Cache FAILED", out)
+
+    def test_timeout_bounds_status_backoff_and_additional_polls(self):
+        broker = Broker(states = (prefect.TransientError("HTTP 502"),))
+        code, _out, err = self.run_cache(broker, str(self.data), "--timeout", "6")
+        self.assertEqual(code, 3)
+        self.assertLessEqual(self.time.monotonic(), 1006)
+        self.assertEqual(len(broker.requests), 3)
+        self.assertIn("Reconnect: gbi data status", err)
+
+    def test_saved_failure_is_not_a_current_failure_when_monitoring_is_lost(self):
+        for execution in (None, "cache"):
+            with self.subTest(execution = execution):
+                broker = Broker(execution = execution, submit_state = "FAILED")
+                self.run_cache(broker, str(self.data), "--detach")
+                run_dir = self.runs()[-1]
+                code, out, err = self.run_status(
+                    Broker(states = (prefect.TransientError("HTTP 502"),)), run_dir.name,
+                )
+                self.assertEqual(code, 3)
+                self.assertIn("Last observed state: FAILED", err)
+                self.assertNotIn("Prefect FAILED", out)
+                self.assertNotIn("Cache FAILED", out)
+
+    def test_deadline_passing_before_sleep_is_a_timeout(self):
+        run = {
+            "path": str(self.data), "request_id": "saved", "execution": "cache",
+            "run_dir": None, "include": [], "result": {
+                "version": 1, "state": "RUNNING", "terminal": False,
+            },
+        }
+        moments = iter([1000, 1000, 1005, 1006.1, 1006.1, 1006.1])
+        with redirect_stdout(io.StringIO()), patch("gbi_data.prefect.exchange") as exchange:
+            code = cache.follow(
+                self.site, [run], timeout = 6,
+                clock = lambda: next(moments), sleep = self.time.sleep,
+            )
+        self.assertEqual(code, 3)
+        self.assertEqual(self.time.slept, [0])
+        exchange.assert_not_called()
 
 
 if __name__ == "__main__":

@@ -20,9 +20,10 @@ from . import archive_plan, deadlines, jobs, moves, packing
 from .storage import overlap
 from .transfer import write_json
 
-_TOKEN         = None
-_TOKEN_EXPIRES = 0.0
-_MAX_RESPONSE  = 65536
+_TOKEN              = None
+_TOKEN_EXPIRES       = 0.0
+_MAX_RESPONSE       = 65536
+STATUS_RETRY_DELAYS = (2, 4, 8)
 
 
 class _BrokerUnavailable(OSError):
@@ -31,6 +32,21 @@ class _BrokerUnavailable(OSError):
 
 class _BrokerError(ValueError):
     """A deliberate public error from the authenticated broker."""
+
+
+class TransientError(_BrokerError):
+    """Temporary transport/backend loss; only status reads may retry."""
+
+
+def _transient_transport(error):
+    if isinstance(error, urlerror.URLError):
+        return _transient_transport(error.reason)
+    if isinstance(error, (TimeoutError, ConnectionError)):
+        return True
+    return isinstance(error, OSError) and error.errno in {
+        errno.EAGAIN, errno.ENETDOWN, errno.ENETUNREACH, errno.EHOSTUNREACH,
+        errno.ETIMEDOUT, socket.EAI_AGAIN,
+    }
 
 
 class _NoRedirect(urlrequest.HTTPRedirectHandler):
@@ -284,7 +300,14 @@ def _validate_result(raw):
             or len(message) > 1024
         ):
             raise ValueError("invalid broker error")
-        raise _BrokerError(message)
+        transient = result.get("error_code") == "backend_unavailable" or (
+            "error_code" not in result and message in {
+                "Prefect CSRF authentication is unavailable",
+                "Prefect response unavailable; retry using the same request ID",
+                "cache service unavailable; retry the same path",
+            }
+        )
+        raise (TransientError if transient else _BrokerError)(message)
     if result.get("state") not in {
         "NOT_SUBMITTED", "SCHEDULED", "PENDING", "RUNNING", "COMPLETED",
         "FAILED", "CANCELLED", "CANCELLING", "CRASHED", "PAUSED", "UNKNOWN",
@@ -292,6 +315,8 @@ def _validate_result(raw):
         raise ValueError("unsupported broker state")
     if result["state"] != "NOT_SUBMITTED":
         result["run_id"] = str(uuid.UUID(result.get("run_id", "")))
+    else:
+        result.pop("run_id", None)
     result["terminal"] = result["state"] in {
         "COMPLETED", "FAILED", "CANCELLED", "CRASHED",
     }
@@ -393,11 +418,16 @@ def _exchange_https(url, request):
         with opener.open(req, timeout = 30) as response:
             raw = response.read(_MAX_RESPONSE + 1)
     except urlerror.HTTPError as error:
-        raise ValueError(
+        kind = TransientError if error.code in {
+            408, 429, 500, 502, 503, 504,
+        } else ValueError
+        error.close()
+        raise kind(
             f"broker HTTPS request failed: HTTP {error.code}"
         ) from None
     except (urlerror.URLError, OSError, ValueError) as error:
-        raise ValueError(
+        kind = TransientError if _transient_transport(error) else ValueError
+        raise kind(
             f"broker HTTPS request failed: {type(error).__name__}"
         ) from None
     if raw and not raw.endswith(b"\n"):
@@ -419,6 +449,11 @@ def exchange(site, request, retry_hint = "retry with the same transfer ID"):
     except _BrokerUnavailable as error:
         url = _https_url(site)
         if not url:
+            if request.get("action") == "status":
+                raise ValueError(
+                    f"{service} status unavailable: broker unavailable on this node. "
+                    "Run this command on the login node or contact cluster support."
+                ) from error
             raise ValueError(
                 f"{service} broker unavailable on this node. "
                 "Run this command on the login node "
@@ -430,14 +465,61 @@ def exchange(site, request, retry_hint = "retry with the same transfer ID"):
         try:
             return _exchange_https(url, request)
         except (OSError, ValueError, TypeError, AttributeError) as https_error:
-            raise ValueError(
-                f"{service} request not confirmed: {https_error}. "
-                f"Use status or {retry_hint}"
-            ) from https_error
+            _exchange_error(service, request, https_error, retry_hint)
     except (OSError, ValueError, TypeError, AttributeError) as error:
-        raise ValueError(
-            f"{service} request not confirmed: {error}. Use status or {retry_hint}"
-        ) from error
+        _exchange_error(service, request, error, retry_hint)
+
+
+def _exchange_error(service, request, error, retry_hint):
+    kind = TransientError if (
+        isinstance(error, TransientError) or _transient_transport(error)
+    ) else ValueError
+    if request.get("action") == "status":
+        raise kind(f"{service} status unavailable: {error}") from error
+    raise kind(
+        f"{service} request not confirmed: {error}. Use status or {retry_hint}"
+    ) from error
+
+
+def status(
+            site, query, *, retry_hint = "retry with the same transfer ID",
+            sleep = None, clock = None, until = None,
+        ):
+    """Retry a status read, never a submission, within the caller's wait."""
+    if query.get("action") != "status":
+        raise ValueError("status requires a status request")
+    sleep = sleep if sleep is not None else time.sleep
+    clock = clock if clock is not None else time.monotonic
+    for delay in (*STATUS_RETRY_DELAYS, None):
+        try:
+            return exchange(site, query, retry_hint = retry_hint)
+        except TransientError as error:
+            if delay is None or (until is not None and clock() + delay >= until):
+                raise
+            print(
+                f"Monitoring temporarily unavailable; retrying status in {delay}s: {error}",
+                file = sys.stderr, flush = True,
+            )
+            sleep(delay)
+            if until is not None and clock() >= until:
+                raise
+
+
+def saved_result(run_dir, execution = "prefect"):
+    """A saved reply is historical context, never a current status."""
+    try:
+        with (run_dir / (execution + ".json")).open("rb") as stream:
+            raw = stream.read(_MAX_RESPONSE + 1)
+        return _validate_result(raw if raw.endswith(b"\n") else raw + b"\n")
+    except (OSError, ValueError, TypeError, AttributeError):
+        return None
+
+
+def status_query(request_id, result = None):
+    query = {"version": 1, "action": "status"}
+    run_id = (result or {}).get("run_id")
+    query["run_id" if run_id else "request_id"] = run_id or request_id
+    return query
 
 
 def stored_request(run_dir, *, execution = "prefect"):
@@ -476,16 +558,15 @@ def show(result, transfer_id):
 def follow(run_dir, site, wait = False, initial = None):
     request = stored_request(run_dir)
     result  = initial
+    last    = initial or saved_result(run_dir)
+    reconnect = f"gbi data status {run_dir.name} --watch"
     try:
         while True:
             if result is None:
-                result = exchange(
-                    site,
-                    {
-                        "version": 1, "action": "status",
-                        "request_id": request["request_id"],
-                    },
+                result = status(
+                    site, status_query(request["request_id"], last),
                 )
+            last = result
             show(result, run_dir.name)
             write_json(run_dir / "prefect.json", result)
             if result["state"] == "NOT_SUBMITTED":
@@ -506,9 +587,16 @@ def follow(run_dir, site, wait = False, initial = None):
                 return 0
             time.sleep(2)
             result = None
+    except ValueError as error:
+        observed = f" Last observed state: {last['state']}." if last else ""
+        print(
+            f"Monitoring stopped; current transfer state is unknown.{observed} "
+            f"{error}. Reconnect: {reconnect}", file = sys.stderr,
+        )
+        return 2
     except KeyboardInterrupt:
         print(
-            f"\nDetached. Migration continues. Reconnect: gbi data status {run_dir.name} --watch"
+            f"\nDetached. Migration continues. Reconnect: {reconnect}"
         )
         return 0
 
