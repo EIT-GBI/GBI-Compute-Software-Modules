@@ -949,7 +949,7 @@ def _run(run_dir, site, home):
         run_dir / "progress.json", {**progress, "phase": "saving history"}
     )
     if output.compact_verb:
-        print("Saving history", flush = True)
+        print("Saving history…", flush = True)
     else:
         output.update({**progress, "phase": "saving history"})
         output.finish()
