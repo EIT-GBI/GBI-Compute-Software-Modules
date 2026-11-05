@@ -55,6 +55,13 @@ def slurm_state(job_id):
 
 
 def submit(run_dir, command, site):
+    sbatch = shutil.which("sbatch")
+    if sbatch is None:
+        raise ValueError(
+            "sbatch is unavailable on this node. Run --detach from a Slurm "
+            "login node, or omit --detach for a transfer within the foreground "
+            "limits. No job was submitted."
+        )
     script = run_dir / "job.sh"
     environment = [
         "env", f"PYTHONPATH={run_dir / 'runtime'}",
@@ -67,7 +74,7 @@ def submit(run_dir, command, site):
     )
     result = subprocess.run(
         [
-            "sbatch", "--parsable", f"--partition={site.values['partition']}",
+            sbatch, "--parsable", f"--partition={site.values['partition']}",
             f"--time={site.values['time_limit']}",
             f"--cpus-per-task={site.values['cpus']}",
             f"--mem={site.values['mem']}", "--job-name=gbi-data",
@@ -210,8 +217,9 @@ def display(progress, width = 24):
         f"{count} {phase}"
         for phase, count in sorted(progress.get("phases", {}).items())
     )
+    reused = f" ({progress['reused']:,} reused)" if "reused" in progress else ""
     return (
-        f"{bar}  {progress['files']:,} verified  {human_bytes(completed)}  "
+        f"{bar}  {progress['files']:,} verified{reused}  {human_bytes(completed)}  "
         f"{human_bytes(speed)}/s  freed {human_bytes(progress['freed'])}  "
         f"failed {progress['failed']}  "
         f"active {progress.get('active', 0)} ({human_bytes(progress.get('active_bytes', 0))})"
@@ -253,9 +261,10 @@ def terminal_display(progress):
         f"{count} {phase}"
         for phase, count in sorted(progress.get("phases", {}).items())
     )
+    reused = f" ({progress['reused']:,} reused)" if "reused" in progress else ""
     return (
         f"{bar}\n"
-        f"Verified {progress['files']:,} files · {human_bytes(done)} · {human_bytes(speed)}/s\n"
+        f"Verified {progress['files']:,} files{reused} · {human_bytes(done)} · {human_bytes(speed)}/s\n"
         f"Source removed {human_bytes(progress['freed'])} · failed {progress['failed']}\n"
         f"Active {progress.get('active', 0)}"
         + (f": {phases}" if phases else "")

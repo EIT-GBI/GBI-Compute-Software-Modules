@@ -34,6 +34,24 @@ unchanged. Object Storage originals and versions remain retained. A published
 module or image alone does not establish runtime acceptance; unsupported
 requests fail rather than silently changing the operation.
 
+**0.4.42** reports verified destination reuse accurately in ordinary transfers.
+Per-file output says `REUSED` when a copy verifies an identical destination;
+a move that removes its source after reuse says `MOVED` with
+`(reused destination)`. Progress and saved history retain the verified total
+and show how many worker results explicitly reported reuse. Older histories
+without that count keep their existing display. Verification, conflict checks
+and per-file source removal are unchanged. This addresses
+[truthful reuse reporting](https://github.com/EIT-GBI/Scientific-Computing-Infrastructure/issues/123).
+When `sbatch` is unavailable, Slurm submission now points to a Slurm login node
+or explains when omitting `--detach` allows foreground execution; no job is
+submitted. This addresses
+[submission guidance from non-Slurm hosts](https://github.com/EIT-GBI/Scientific-Computing-Infrastructure/issues/131).
+An unfiltered ordinary move also removes its now-empty named source folder
+after discovery and all file work succeed. The caller's current directory,
+its ancestors and storage roots are retained. Filtered or packed moves keep
+their existing behavior. This addresses
+[empty source folders left after ordinary moves](https://github.com/EIT-GBI/Scientific-Computing-Infrastructure/issues/117).
+
 **0.4.41** uses the configured HTTPS broker on both login and compute nodes,
 so broker updates can run independently of login sessions. The route uses the
 caller's existing Slurm user token. Sites without an HTTPS URL continue using

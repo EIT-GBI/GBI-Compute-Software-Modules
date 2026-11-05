@@ -19,7 +19,117 @@ from unittest.mock import MagicMock, patch
 from gbi_data import cli, jobs
 from gbi_data import selection
 from gbi_data.storage import Site, fingerprint, mounted_roots
-from gbi_data.transfer import copy_stream, digest as transfer_digest, transfer
+from gbi_data.transfer import (
+    can_remove_source_root, copy_stream, digest as transfer_digest,
+    remove_empty_source_root, transfer,
+)
+
+
+class SourceRootCleanup(unittest.TestCase):
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.base = Path(temporary.name).resolve()
+        self.source = self.base / "source-root" / "selected"
+        self.target = self.base / "target-root" / "selected"
+        for path in (self.source, self.target):
+            path.mkdir(parents = True)
+        self.specification = {
+            "source": str(self.source), "target": str(self.target),
+            "source_root": str(self.source.parent),
+            "target_root": str(self.target.parent),
+            "directory": True, "delete": True, "include": [], "exclude": [],
+            "remove_empty_source_root": True,
+        }
+        self.identities = (
+            fingerprint(self.source)[:3], fingerprint(self.target)[:3],
+        )
+
+    def test_named_empty_root_removed_but_destination_retained(self):
+        self.assertTrue(
+            remove_empty_source_root(self.specification, *self.identities)
+        )
+        self.assertFalse(self.source.exists())
+        self.assertTrue(self.target.is_dir())
+
+    def test_destination_storage_root_is_supported(self):
+        self.specification["target"] = str(self.target.parent)
+        self.assertTrue(remove_empty_source_root(
+            self.specification, self.identities[0], fingerprint(self.target.parent)[:3],
+        ))
+        self.assertFalse(self.source.exists())
+        self.assertTrue(self.target.parent.is_dir())
+
+    def test_new_entry_retains_nonempty_root(self):
+        child = self.source / "new-data"
+        child.write_bytes(b"new data after discovery")
+        self.assertFalse(remove_empty_source_root(self.specification, *self.identities))
+        self.assertEqual(child.read_bytes(), b"new data after discovery")
+
+    def test_cwd_ancestors_storage_roots_filters_and_archives_are_ineligible(self):
+        cases = [
+            {"delete": False}, {"directory": False},
+            {"source_root": str(self.source)},
+            {"include": ["*"]}, {"exclude": ["*.tmp"]},
+            {"archive_auto": True}, {"pack": "tar"},
+            {"packing_policy": {"min_files": 1}}, {"chunk_size": 1024},
+            {"source_format": "chunks"},
+        ]
+        for values in cases:
+            with self.subTest(values = values):
+                self.assertFalse(can_remove_source_root({**self.specification, **values}))
+        for cwd in (self.source, self.source / "child"):
+            with self.subTest(cwd = cwd), patch("gbi_data.transfer.Path.cwd", return_value = cwd):
+                self.assertFalse(can_remove_source_root(self.specification))
+                self.assertFalse(remove_empty_source_root(self.specification, *self.identities))
+        self.assertTrue(self.source.is_dir())
+
+    def test_saved_requests_without_cleanup_opt_in_retain_root(self):
+        for value in (None, False):
+            with self.subTest(value = value):
+                specification = {**self.specification, "remove_empty_source_root": value}
+                self.assertFalse(remove_empty_source_root(specification, *self.identities))
+        self.assertTrue(self.source.is_dir())
+
+    def test_source_or_destination_directory_replacement_retains_root(self):
+        for path in (self.source, self.target):
+            with self.subTest(path = path):
+                original = path.with_name("original")
+                path.rename(original)
+                path.mkdir()
+                with self.assertRaisesRegex(ValueError, "directory changed"):
+                    remove_empty_source_root(self.specification, *self.identities)
+                self.assertTrue(self.source.is_dir())
+                path.rmdir()
+                original.rename(path)
+
+    def test_source_parent_symlink_swap_is_refused(self):
+        parent = self.source.parent
+        original = parent.with_name("original-root")
+        parent.rename(original)
+        parent.symlink_to(original)
+        with self.assertRaisesRegex(ValueError, "parent path changed or contains a symlink"):
+            remove_empty_source_root(self.specification, *self.identities)
+        self.assertTrue((original / "selected").is_dir())
+
+    def test_final_source_identity_recheck_refuses_replacement(self):
+        from gbi_data.formats import _owned_rmdir
+
+        def replace_then_remove(path, identity, root):
+            path.rename(path.with_name("original"))
+            path.mkdir()
+            _owned_rmdir(path, identity, root)
+
+        with patch("gbi_data.formats._owned_rmdir", side_effect = replace_then_remove):
+            with self.assertRaisesRegex(ValueError, "changed; retained"):
+                remove_empty_source_root(self.specification, *self.identities)
+        self.assertTrue(self.source.is_dir())
+
+    def test_io_failure_is_not_reported_as_nonempty_retention(self):
+        with patch("gbi_data.formats._owned_rmdir", side_effect = PermissionError("denied")):
+            with self.assertRaisesRegex(PermissionError, "denied"):
+                remove_empty_source_root(self.specification, *self.identities)
+        self.assertTrue(self.source.is_dir())
 
 
 class Transfers(unittest.TestCase):
@@ -1353,6 +1463,94 @@ class Interface(unittest.TestCase):
         )
         self.assertTrue((target / "empty").is_dir())
         self.assertFalse((source / "empty").exists())
+        self.assertFalse(source.exists())
+
+    def test_named_move_removes_root_only_without_filters_or_retained_content(self):
+        environment = {
+            **os.environ, "GBI_DATA_SITE_CONF": str(self.conf), "PATH": "",
+        }
+        environment.pop("SLURM_JOB_ID", None)
+        for name, flags, retained in (
+            ("ordinary", [], False),
+            ("empty", [], False),
+            ("include", ["--include", "*"], True),
+            ("exclude", ["--exclude", "*.tmp"], True),
+            ("reserved", [], True),
+        ):
+            with self.subTest(name = name):
+                source = self.site.roots["lustre"] / name
+                target = self.site.roots["fss"] / name
+                source.mkdir()
+                if name != "empty":
+                    (source / "data").write_bytes(b"verified content")
+                if name == "reserved":
+                    (source / ".gbi").mkdir()
+                    (source / ".gbi/state").write_bytes(b"protected state")
+                result = subprocess.run(
+                    [sys.executable, "-B", "-m", "gbi_data.cli", "data", "move",
+                     str(source), str(target), *flags],
+                    env = environment, capture_output = True, text = True,
+                    timeout = 15,
+                )
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertEqual(source.is_dir(), retained)
+                self.assertTrue(target.is_dir())
+                if name != "empty":
+                    self.assertFalse((source / "data").exists())
+                    self.assertEqual((target / "data").read_bytes(), b"verified content")
+                if name == "reserved":
+                    self.assertEqual((source / ".gbi/state").read_bytes(), b"protected state")
+
+    def test_move_current_directory_preserves_root(self):
+        environment = {
+            **os.environ, "GBI_DATA_SITE_CONF": str(self.conf), "PATH": "",
+            "PYTHONPATH": str(Path(cli.__file__).resolve().parents[1]),
+        }
+        environment.pop("SLURM_JOB_ID", None)
+        for index, argument in enumerate((".", "./", None)):
+            with self.subTest(argument = argument):
+                source = self.site.roots["lustre"] / f"cwd-{index}"
+                target = self.site.roots["fss"] / f"cwd-{index}"
+                source.mkdir()
+                (source / "data").write_bytes(b"current directory content")
+                result = subprocess.run(
+                    [sys.executable, "-B", "-m", "gbi_data.cli", "data", "move",
+                     argument or str(source), str(target)],
+                    cwd = source, env = environment, capture_output = True,
+                    text = True, timeout = 15,
+                )
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertTrue(source.is_dir())
+                self.assertEqual(list(source.iterdir()), [])
+                self.assertEqual((target / "data").read_bytes(), b"current directory content")
+
+    def test_saved_move_preserves_submission_cwd_on_another_execution_cwd(self):
+        source = self.site.roots["lustre"] / "submission-cwd"
+        target = self.site.roots["fss"] / "submission-cwd"
+        source.mkdir()
+        (source / "data").write_bytes(b"saved request content")
+        options = cli.parser().parse_args(
+            ["data", "move", str(source), str(target), "--detach"]
+        )
+        with patch("gbi_data.transfer.Path.cwd", return_value = source):
+            specification = cli.plan(options, self.site)
+        self.assertFalse(specification["remove_empty_source_root"])
+        specification.update(execution = "slurm", selection = None, reader = "native")
+        run_dir = self.site.roots["lustre"] / ".gbi/runs/saved-request"
+        run_dir.mkdir(parents = True)
+        (run_dir / "request.json").write_text(json.dumps(specification))
+        result = subprocess.run(
+            [sys.executable, "-B", "-m", "gbi_data.cli", "data", "_run", str(run_dir)],
+            cwd = self.base, env = {
+                **os.environ, "GBI_DATA_SITE_CONF": str(self.conf),
+                "PYTHONPATH": str(Path(cli.__file__).resolve().parents[1]),
+            },
+            capture_output = True, text = True, timeout = 15,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertTrue(source.is_dir())
+        self.assertEqual(list(source.iterdir()), [])
+        self.assertEqual((target / "data").read_bytes(), b"saved request content")
 
     def test_progress_has_no_percentage_until_discovery_complete(self):
         progress = {
@@ -1366,6 +1564,76 @@ class Interface(unittest.TestCase):
         progress["phase"] = "saving history"
         self.assertIn("Saving history", jobs.terminal_display(progress))
 
+    def test_failed_discovery_retains_even_an_empty_source_root(self):
+        source = self.site.roots["lustre"] / "failed-discovery"
+        target = self.site.roots["fss"] / "failed-discovery"
+        source.mkdir()
+        options = cli.parser().parse_args(
+            ["data", "move", str(source), str(target), "--detach"]
+        )
+        specification = {
+            **cli.plan(options, self.site), "execution": "slurm",
+            "reader": "native", "selection": None,
+        }
+        run_dir = self.base / "failed-discovery-run"
+        run_dir.mkdir()
+        (run_dir / "request.json").write_text(json.dumps(specification))
+        discovery = MagicMock()
+        discovery.get.return_value = ("fatal", None, OSError("lookup failed"))
+        with (
+            patch("gbi_data.cli.stream_entries", return_value = discovery),
+            patch("gbi_data.cli.publish_history", return_value = "history"),
+            patch("gbi_data.cli.remove_empty_source_root") as cleanup,
+        ):
+            self.assertEqual(cli.run(run_dir, self.site, self.base / "home"), 1)
+        cleanup.assert_not_called()
+        self.assertTrue(source.is_dir())
+
+    def test_nested_encoded_units_keep_the_ordinary_selection_root(self):
+        for action in ("restore_archive", "restore_chunks"):
+            for selected in (True, False):
+                with self.subTest(action = action, selected = selected):
+                    name = f"{action}-{selected}"
+                    source = self.site.roots["lustre"] / name
+                    target = self.site.roots["fss"] / name
+                    source.mkdir()
+                    payload = source / "encoded"
+                    payload.write_bytes(b"encoded content")
+                    options = cli.parser().parse_args(
+                        ["data", "move", str(source), str(target), "--detach"]
+                    )
+                    unit = {
+                        "source": str(payload), "empty": False,
+                        "format_action": action,
+                        "expected_source": fingerprint(payload),
+                    }
+                    specification = {
+                        **cli.plan(options, self.site), "execution": "slurm",
+                        "reader": "native", "selection": [unit] if selected else None,
+                    }
+                    run_dir = self.base / name
+                    run_dir.mkdir()
+                    (run_dir / "request.json").write_text(json.dumps(specification))
+                    discovery = MagicMock()
+                    discovery.get.side_effect = [
+                        ("entry", unit, None), ("done", None, None),
+                    ]
+
+                    def completed_unit(*_args):
+                        payload.unlink()
+                        return {"bytes": 15, "deleted": True}
+
+                    with (
+                        patch("gbi_data.cli.stream_entries", return_value = discovery),
+                        patch("gbi_data.cli.supervise", side_effect = completed_unit),
+                        patch("gbi_data.cli.publish_history", return_value = "history"),
+                        patch("gbi_data.cli.remove_empty_source_root") as cleanup,
+                    ):
+                        self.assertEqual(cli.run(run_dir, self.site, self.base / "home"), 0)
+                    cleanup.assert_not_called()
+                    self.assertTrue(source.is_dir())
+                    self.assertEqual(list(source.iterdir()), [])
+
     def test_interruption_before_discovery_exhaustion_keeps_progress_unknown(
                 self,
             ):
@@ -1376,7 +1644,7 @@ class Interface(unittest.TestCase):
             path.write_bytes(b"contents")
         target = self.site.roots["alluxio"] / "interrupted"
         options = cli.parser().parse_args(
-            ["data", "copy", str(source), str(target), "--detach"]
+            ["data", "move", str(source), str(target), "--detach"]
         )
         specification = {
             **cli.plan(options, self.site), "execution": "slurm",
@@ -1412,12 +1680,15 @@ class Interface(unittest.TestCase):
             patch("gbi_data.cli.stream_entries", return_value = discovery),
             patch("gbi_data.cli.supervise", side_effect = interrupted_supervise),
             patch("gbi_data.cli.publish_history", side_effect = capture_history),
+            patch("gbi_data.cli.remove_empty_source_root") as cleanup,
         ):
             self.assertEqual(cli.run(run_dir, self.site, self.base / "home"), 1)
         self.assertEqual(captured["phase"], "interrupted")
         self.assertFalse(captured["discovery_complete"])
         self.assertEqual(captured["files"], 1)
         discovery.stop.assert_called()
+        cleanup.assert_not_called()
+        self.assertTrue(source.is_dir())
 
     def test_full_cli_all_routes_archives_history_and_cleans_scratch(self):
         environment = {**os.environ, "GBI_DATA_SITE_CONF": str(self.conf)}

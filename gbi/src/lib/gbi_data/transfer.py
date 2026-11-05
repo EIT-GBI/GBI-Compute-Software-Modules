@@ -4,6 +4,7 @@ Each invocation is a child process. Its parent bounds the entire operation,
 including filesystem calls; a blocked child keeps its cross-node lock.
 """
 
+import errno
 import fcntl
 import hashlib
 import json
@@ -94,6 +95,56 @@ def ensure_parent(path, root):
     check_parent(path, root)
     path.parent.mkdir(parents = True, exist_ok = True, mode = 0o700)
     check_parent(path, root)
+
+
+def can_remove_source_root(specification):
+    """Only an unfiltered ordinary move may remove a named source folder."""
+    if not specification.get("delete") or not specification.get("directory"):
+        return False
+    if any(
+        specification.get(key)
+        for key in (
+            "include", "exclude", "archive_auto", "pack", "packing_policy",
+            "chunk_size", "source_format",
+        )
+    ):
+        return False
+    source = Path(specification["source"])
+    cwd    = Path.cwd()
+    return (
+        Path(specification["source_root"]) in source.parents
+        and source != cwd
+        and source not in cwd.parents
+    )
+
+
+def remove_empty_source_root(specification, source_identity, target_identity):
+    """Finish successful discovery/workers with one guarded, empty-only rmdir."""
+    if (
+        not specification.get("remove_empty_source_root")
+        or not can_remove_source_root(specification)
+    ):
+        return False
+    source, target = Path(specification["source"]), Path(specification["target"])
+    check_parent(source, Path(specification["source_root"]))
+    check_parent(target / ".placeholder", Path(specification["target_root"]))
+    if (
+        fingerprint(source)[:3] != source_identity
+        or fingerprint(target)[:3] != target_identity
+        or not stat.S_ISDIR(source_identity[2])
+        or not stat.S_ISDIR(target_identity[2])
+    ):
+        raise ValueError("source or destination directory changed; source kept")
+    # Reuse the descriptor-pinned removal so parent symlinks cannot redirect it.
+    from .formats import _owned_rmdir
+
+    try:
+        _owned_rmdir(source, source_identity, Path(specification["source_root"]))
+    except OSError as error:
+        if error.errno not in (errno.ENOTEMPTY, errno.EEXIST):
+            raise
+        return False
+    return True
 
 
 def copy_stream(

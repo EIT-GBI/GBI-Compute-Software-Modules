@@ -22,9 +22,10 @@ from . import deadlines
 from . import cache, moves, prefect
 from . import format_selection, packing, roots, usage
 from .selection import entries, probe, stream_entries
-from .storage import Site, overlap
+from .storage import Site, fingerprint, overlap
 from .transfer import (
-    ensure_parent, receipt, validate_source_retention, write_json,
+    can_remove_source_root, ensure_parent, receipt, remove_empty_source_root,
+    validate_source_retention, write_json,
 )
 
 
@@ -494,12 +495,14 @@ def plan(options, site):
         if getattr(options, "pack_small", False)
         else None
     )
-    return format_selection.configure(
+    specification = format_selection.configure(
         specification, site, pack = getattr(options, "pack", None),
         chunk_size = getattr(options, "chunk_size", None),
         packing_policy = policy,
         archive = getattr(options, "archive", False),
     )
+    specification["remove_empty_source_root"] = can_remove_source_root(specification)
+    return specification
 
 
 def execution_plan(specification, site, options):
@@ -660,13 +663,17 @@ def _run(run_dir, site, home):
     if specification["directory"]:
         deadlines.event("preparing destination", target)
         ensure_parent(target / ".placeholder", target_root)
+    source_cleanup = None
+    if specification.get("remove_empty_source_root") and can_remove_source_root(specification):
+        source_cleanup = (fingerprint(source)[:3], fingerprint(target)[:3])
     stopped = threading.Event()
     for signum in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
         signal.signal(signum, lambda *_: stopped.set())
     started, last_publish, discovery_wait = time.monotonic(), 0.0, 0.0
     discovery_progress = None
     progress = {
-        "phase": "running", "files": 0, "bytes": 0, "freed": 0, "failed": 0,
+        "phase": "running", "files": 0, "reused": 0,
+        "bytes": 0, "freed": 0, "failed": 0,
         "discovered_files": 0, "discovered_bytes": 0,
         "discovery_complete": False, "elapsed": 0, "active": 0,
         "active_bytes": 0, "coordinator_pid": os.getpid(),
@@ -715,6 +722,7 @@ def _run(run_dir, site, home):
         print(f"{jobs.timestamp()} FAILED {path}: {error}", flush = True)
 
     def schedule(entry):
+        nonlocal source_cleanup
         if isinstance(entry, dict):
             unit = {
                 **entry,
@@ -727,6 +735,8 @@ def _run(run_dir, site, home):
         else:
             path, empty = entry
             unit = {}
+        if unit.get("format_action"):
+            source_cleanup = None
         active = run_dir / "active" / (uuid.uuid4().hex + ".json")
         task = {
             **file_specification, "source": str(path), "target": str(target),
@@ -867,16 +877,21 @@ def _run(run_dir, site, home):
                         record_failure(path, outcome["error"])
                     elif not empty:
                         progress["files"] += 1
+                        reused = outcome.get("reused", False)
+                        progress["reused"] += int(reused)
                         progress["bytes"] += outcome["bytes"]
                         progress["freed"] += outcome.get(
                             "freed_bytes",
                             outcome["bytes"] if outcome["deleted"] else 0,
                         )
                         if not output.terminal:
+                            action = "MOVED" if outcome["deleted"] else (
+                                "REUSED" if reused else "COPIED"
+                            )
+                            detail = " (reused destination)" if reused and outcome["deleted"] else ""
                             print(
-                            f"{jobs.timestamp()} VERIFIED "
-                            f"{'MOVED' if outcome['deleted'] else 'COPIED'} "
-                            f"{path} bytes={outcome['bytes']}",
+                                f"{jobs.timestamp()} VERIFIED {action} "
+                                f"{path} bytes={outcome['bytes']}{detail}",
                                 flush = True,
                             )
                 if time.monotonic() - last_publish >= 2:
@@ -922,6 +937,15 @@ def _run(run_dir, site, home):
     finally:
         if discovery is not None:
             discovery.stop()
+    if (
+        source_cleanup is not None and progress["discovery_complete"]
+        and not pending and not progress["failed"] and not stopped.is_set()
+    ):
+        try:
+            deadlines.event("removing empty source directory", source, counters = progress)
+            remove_empty_source_root(specification, *source_cleanup)
+        except (OSError, ValueError) as error:
+            record_failure(source, error)
     progress["phase"] = (
         "failed"
         if progress["failed"]
