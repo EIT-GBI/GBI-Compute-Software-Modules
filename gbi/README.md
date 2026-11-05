@@ -34,6 +34,18 @@ unchanged. Object Storage originals and versions remain retained. A published
 module or image alone does not establish runtime acceptance; unsupported
 requests fail rather than silently changing the operation.
 
+**0.4.40** keeps transfer and cache monitoring connected through temporary
+broker outages. Status reads retry up to three times, after 2, 4 and 8 seconds;
+submissions are never retried automatically. Confirmed Prefect runs are polled
+by their run UUID, including when reconnecting with
+`gbi data status TRANSFER_ID --watch`. A lost submission reply still uses the
+original saved request ID. If monitoring remains unavailable, the CLI reports
+the last observed state and the exact reconnect command; it does not report
+the transfer or load as failed. Cache monitoring loss exits 3 (partial), while
+a confirmed failed load still exits 1. Authentication and permission refusals
+are reported immediately. These are source changes; site installation and
+runtime acceptance are separate.
+
 **0.4.39** shows why a `--prefect` transfer stopped. When the job refuses a
 path you cannot read or write, the CLI now prints that path and the reason
 instead of only the run's state; `gbi data status` shows the same line.

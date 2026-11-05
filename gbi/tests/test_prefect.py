@@ -7,6 +7,7 @@ import json
 import os
 from pathlib import Path
 import pwd
+import ssl
 import subprocess
 import tempfile
 import unittest
@@ -773,7 +774,7 @@ class Prefect(unittest.TestCase):
         with patch(
             "gbi_data.prefect._exchange_socket", side_effect = ValueError("lost")
         ):
-            with self.assertRaisesRegex(ValueError, "Cache request not confirmed"):
+            with self.assertRaisesRegex(ValueError, "Cache status unavailable"):
                 prefect.exchange(self.site, request)
 
     def test_https_url_rejects_unsafe_forms(self):
@@ -1120,3 +1121,137 @@ class Prefect(unittest.TestCase):
             ):
                 prefect.follow(run_dir, self.site, True)
             self.assertIn(shown + "\n", output.getvalue())
+
+    def monitoring_record(self):
+        run_dir = self.base / "monitoring"
+        run_dir.mkdir()
+        request = prefect.prepare(self.options(), self.site)
+        (run_dir / "request.json").write_text(json.dumps({
+            "execution": "prefect", "uid": os.getuid(),
+            "broker_request": request,
+        }))
+        return run_dir, request
+
+    def test_status_retries_transport_and_backend_loss_by_confirmed_run(self):
+        run_dir, request = self.monitoring_record()
+        initial = {
+            "version": 1, "state": "RUNNING", "terminal": False,
+            "run_id": "11111111-2222-3333-4444-555555555555",
+        }
+        completed = {**initial, "state": "COMPLETED", "terminal": True}
+        saved = (run_dir / "request.json").read_bytes()
+        with (
+            patch("gbi_data.prefect._exchange_socket", side_effect = [
+                TimeoutError(), prefect.TransientError("backend unavailable"),
+                completed,
+            ]) as exchange,
+            patch("gbi_data.prefect.time.sleep") as sleep,
+            contextlib.redirect_stdout(io.StringIO()),
+            contextlib.redirect_stderr(io.StringIO()) as errors,
+        ):
+            self.assertEqual(prefect.follow(run_dir, self.site, True, initial), 0)
+        expected = {"version": 1, "action": "status", "run_id": initial["run_id"]}
+        self.assertEqual([call.args[1] for call in exchange.call_args_list], [expected] * 3)
+        self.assertEqual([call.args[0] for call in sleep.call_args_list], [2, 2, 4])
+        self.assertIn("Monitoring temporarily unavailable", errors.getvalue())
+        self.assertEqual((run_dir / "request.json").read_bytes(), saved)
+
+    def test_monitoring_exhaustion_keeps_last_state_and_exact_reconnect(self):
+        run_dir, _request = self.monitoring_record()
+        initial = {
+            "version": 1, "state": "RUNNING", "terminal": False,
+            "run_id": "11111111-2222-3333-4444-555555555555",
+        }
+        with (
+            patch("gbi_data.prefect._exchange_socket", side_effect = TimeoutError()) as exchange,
+            patch("gbi_data.prefect.time.sleep"),
+            contextlib.redirect_stdout(io.StringIO()),
+            contextlib.redirect_stderr(io.StringIO()) as errors,
+        ):
+            self.assertEqual(prefect.follow(run_dir, self.site, True, initial), 2)
+        self.assertEqual(exchange.call_count, 4)
+        self.assertEqual(json.loads((run_dir / "prefect.json").read_text()), initial)
+        self.assertIn("current transfer state is unknown", errors.getvalue())
+        self.assertIn("Last observed state: RUNNING", errors.getvalue())
+        self.assertIn(f"gbi data status {run_dir.name} --watch", errors.getvalue())
+        self.assertNotIn("request not confirmed", errors.getvalue())
+
+    def test_saved_result_locates_live_run_and_corrupt_result_uses_request(self):
+        run_dir, request = self.monitoring_record()
+        run_id = "11111111-2222-3333-4444-555555555555"
+        completed = {"version": 1, "state": "COMPLETED", "run_id": run_id}
+        for saved, key, value in (
+            (json.dumps(completed), "run_id", run_id),
+            ('{"version":1,"state":"RUNNING","run_id":"invalid"}\n', "request_id", request["request_id"]),
+            ('{"version":1,"state":"NOT_SUBMITTED","run_id":"invalid"}', "request_id", request["request_id"]),
+            ("not-json\n", "request_id", request["request_id"]),
+        ):
+            (run_dir / "prefect.json").write_text(saved)
+            with (
+                self.subTest(saved = saved),
+                patch("gbi_data.prefect.exchange", return_value = {**completed, "terminal": True}) as exchange,
+                contextlib.redirect_stdout(io.StringIO()),
+            ):
+                self.assertEqual(prefect.follow(run_dir, self.site, True), 0)
+                exchange.assert_called_once()
+                self.assertEqual(exchange.call_args.args[1], {
+                    "version": 1, "action": "status", key: value,
+                })
+
+    def test_status_classifies_http_errors_without_exposing_credentials(self):
+        query = {"version": 1, "action": "status", "request_id": "saved"}
+        self.site.values["prefect_url"] = "https://broker.example/prefect"
+        for code in (408, 429, 500, 502, 503, 504, 401, 403, 404):
+            transient = code in (408, 429, 500, 502, 503, 504)
+            error = urlerror.HTTPError("https://private-token", code, "private-token", {}, None)
+            with (
+                self.subTest(code = code),
+                patch("gbi_data.prefect._exchange_socket", side_effect = prefect._BrokerUnavailable()),
+                patch("gbi_data.prefect._token", return_value = "private-token"),
+                patch("gbi_data.prefect.urlrequest.build_opener") as factory,
+                patch("gbi_data.prefect.time.sleep"),
+                contextlib.redirect_stderr(io.StringIO()),
+            ):
+                opener = factory.return_value
+                opener.open.side_effect = error
+                with self.assertRaises(ValueError) as raised:
+                    prefect.status(self.site, query)
+                self.assertEqual(opener.open.call_count, 4 if transient else 1)
+                self.assertEqual(isinstance(raised.exception, prefect.TransientError), transient)
+                self.assertNotIn("private-token", str(raised.exception))
+
+    def test_permanent_status_errors_and_submission_never_retry(self):
+        query = {"version": 1, "action": "status", "request_id": "saved"}
+        for error in (
+            prefect._BrokerError("run belongs to another user"),
+            prefect._BrokerError("Prefect service authentication is unavailable"),
+            PermissionError("permission denied"), ssl.SSLCertVerificationError("certificate"),
+            ValueError("unsupported broker response"),
+        ):
+            with (
+                self.subTest(error = error),
+                patch("gbi_data.prefect._exchange_socket", side_effect = error) as exchange,
+                patch("gbi_data.prefect.time.sleep") as sleep,
+                self.assertRaises(ValueError),
+            ):
+                prefect.status(self.site, query)
+            exchange.assert_called_once()
+            sleep.assert_not_called()
+        with (
+            patch("gbi_data.prefect._exchange_socket", side_effect = TimeoutError()) as exchange,
+            self.assertRaisesRegex(prefect.TransientError, "request not confirmed"),
+        ):
+            prefect.exchange(self.site, {**query, "action": "submit"})
+        exchange.assert_called_once()
+
+    def test_broker_error_codes_override_legacy_retry_classification(self):
+        for extra, transient in (
+            ({}, True), ({"error_code": "backend_unavailable"}, True),
+            ({"error_code": "backend_authentication"}, False),
+        ):
+            raw = json.dumps({
+                "version": 1, "error": "Prefect CSRF authentication is unavailable", **extra,
+            }).encode() + b"\n"
+            with self.subTest(extra = extra), self.assertRaises(ValueError) as raised:
+                prefect._validate_result(raw)
+            self.assertEqual(isinstance(raised.exception, prefect.TransientError), transient)
