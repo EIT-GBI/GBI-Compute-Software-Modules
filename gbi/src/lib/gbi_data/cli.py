@@ -1137,7 +1137,7 @@ def main():
             f"{specification['source']} → {specification['target']}"
         )
         print(
-            "Sources: delete each verified file."
+            "Sources: will be deleted."
             if specification["delete"]
             else "Sources: keep originals."
         )
