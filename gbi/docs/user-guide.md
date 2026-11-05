@@ -60,8 +60,8 @@ existing file is retained and reported as a collision, never overwritten
 silently. Stop all writers before moving a finished dataset.
 
 Normal help shows everyday choices. Use `gbi data copy --help` or
-`gbi data move --help`. Expert overrides for existing scripts are described
-under `--help-all` and at the end of this guide.
+`gbi data move --help`. Expert overrides for existing scripts are also described
+at the end of this guide.
 
 ## Copy, move and durable storage
 
@@ -427,7 +427,7 @@ compared as one total. A `Limit` of `--` means no limit applies.
 ## Expert options
 
 Normal archive use does not need these choices. Existing scripts may keep
-using them; `gbi data copy --help-all` exposes them.
+using them; `gbi data copy --help` exposes them.
 
 | Option | Ordinary / Slurm | Existing allocation | Prefect |
 | --- | --- | --- | --- |

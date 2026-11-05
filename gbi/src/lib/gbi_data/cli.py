@@ -90,17 +90,7 @@ def command_reference(verbs):
     return formatter.format_help()
 
 
-class _FullHelp(argparse.Action):
-    """Expose compatible expert overrides without crowding ordinary help."""
-
-    def __call__(self, command, namespace, values, option_string = None):
-        parser(advanced = True).parse_args([*command.prog.split()[1:], "--help"])
-
-
-def parser(*, advanced = False):
-    def expert(description):
-        return description if advanced else argparse.SUPPRESS
-
+def parser():
     result = _ArgumentParser(
         prog = "gbi",
         description = "Move, archive, restore, and inspect your own HPC data.",
@@ -110,7 +100,6 @@ def parser(*, advanced = False):
             "  gbi data move SOURCE DESTINATION --detach --wait\n"
             "  gbi data status TRANSFER_ID --watch\n"
             "  gbi data usage projects --depth 2 --limit 10\n\n"
-            "Every everyday option is explained below; --help-all includes expert overrides.\n"
             "For a command's usage and examples,\n"
             "use e.g. `gbi data copy --help` or `gbi data usage --help`.\n"
             "Ordinary transfers use site classification and normal Unix permissions;\n"
@@ -120,10 +109,6 @@ def parser(*, advanced = False):
         formatter_class = argparse.RawDescriptionHelpFormatter,
     )
     result.add_argument("--version", action = "version", version = __version__)
-    result.add_argument(
-        "--help-all", action = _FullHelp, nargs = 0,
-        help = "show all options, including expert and compatibility overrides",
-    )
     data = result.add_subparsers(dest = "command", required = True).add_parser(
         "data",
         help = "move data, inspect transfer state, or report usage",
@@ -133,10 +118,6 @@ def parser(*, advanced = False):
             "transfer ID; `usage` reads live quota and the owner-scoped Lustre snapshot."
         ),
         formatter_class = argparse.RawDescriptionHelpFormatter,
-    )
-    data.add_argument(
-        "--help-all", action = _FullHelp, nargs = 0,
-        help = "show all options, including expert and compatibility overrides",
     )
     verbs = data.add_subparsers(
         dest = "verb", required = True,
@@ -176,7 +157,6 @@ def parser(*, advanced = False):
                 "Archive previews may create managed tracking records, but never change data.\n"
                 "Object Storage originals are durable and always retained by every route.\n"
                 "After a lost submission reply: gbi data retry ID (same saved request).\n\n"
-                "Use --help-all for expert overrides and compatibility options.\n\n"
                 f"Examples:\n  gbi data {verb} SOURCE DESTINATION --dry-run\n"
                 f"  gbi data {verb} SOURCE DESTINATION --archive\n"
                 f"  gbi data {verb} SOURCE DESTINATION --detach\n"
@@ -188,10 +168,6 @@ def parser(*, advanced = False):
         command.add_argument("source", help = "source file or directory path")
         command.add_argument(
             "destination", help = "destination file or directory path"
-        )
-        command.add_argument(
-            "--help-all", action = _FullHelp, nargs = 0,
-            help = "show expert and compatibility options as well",
         )
         selection = command.add_argument_group("selection")
         selection.add_argument(
@@ -216,7 +192,7 @@ def parser(*, advanced = False):
         )
         archive.add_argument(
             "--pack", choices = ("tar", "gzip"),
-            help = expert(
+            help = (
                 "pack one directory: tar is uncompressed, gzip compresses; "
                 "exact destination must end in .gbi.tar or .gbi.tar.gz "
                 "(requires matching Prefect broker/flow)"
@@ -224,7 +200,7 @@ def parser(*, advanced = False):
         )
         archive.add_argument(
             "--pack-small", action = "store_true",
-            help = expert(
+            help = (
                 "legacy selective packing: pack eligible small-file "
                 "subdirectories, transfer the rest individually; prefer "
                 "--archive for a saved whole-tree layout"
@@ -233,14 +209,14 @@ def parser(*, advanced = False):
         command.add_argument(
             "--archive-unit", action = "append", default = [],
             metavar = "SOURCE_RELATIVE",
-            help = expert(
+            help = (
                 "run an exact unit from an existing saved --archive plan; "
                 "repeat for multiple units"
             ),
         )
         command.add_argument(
             "--chunk-size", type = byte_size, metavar = "SIZE",
-            help = expert(
+            help = (
                 "override verified resumable part size, e.g. 64MiB; not "
                 "combined with --archive; omit on restore"
             ),
@@ -266,7 +242,7 @@ def parser(*, advanced = False):
         )
         execution.add_argument(
             "--local", action = "store_true",
-            help = expert(
+            help = (
                 "require the current Slurm allocation (normally detected automatically)"
             ),
         )
@@ -276,7 +252,7 @@ def parser(*, advanced = False):
         )
         command.add_argument(
             "--job-size", choices = ("small", "large"),
-            help = expert(
+            help = (
                 "Prefect restore reservation override: small reserves 2 "
                 "CPUs/16 GiB; large reserves 8 CPUs/48 GiB; omit to use the "
                 "deployment setting"
@@ -298,7 +274,7 @@ def parser(*, advanced = False):
     )
     retry = verbs.add_parser(
         "retry",
-        help = "resend one unchanged saved Prefect request after a lost reply",
+        help = "resend one unchanged, saved Prefect request after interruption/failure",
         description = (
             "Retry only a saved Prefect request; ordinary transfers are rerun "
             "with their original command."
@@ -312,11 +288,11 @@ def parser(*, advanced = False):
     )
     retry.add_argument(
         "--wait", action = "store_true",
-        help = "wait for the existing migration's result",
+        help = "wait for the existing transfer's result",
     )
     verbs.add_parser(
         "roots",
-        help = "show your storage roots and what each one is for",
+        help = "show your storage roots/available filesystems and what each one is for",
         description = (
             "Print your Lustre scratch, FSS home and Object Storage roots, the\n"
             "team folders you belong to and the read-only collections, with a\n"
@@ -330,11 +306,10 @@ def parser(*, advanced = False):
         help = "show your Lustre and FSS usage and your largest Lustre folders",
         description = (
             "Show a Lustre/FSS storage summary, then your largest Lustre folders.\n"
-            "Lustre uses your live UID quota; FSS and the folder report come from the\n"
-            "owner-scoped snapshot the site publishes weekly (Sunday 02:00 UTC).\n"
+            "Lustre uses your live UID quota.\n"
+            "FSS and the folder report come from weekly the snapshot (Sunday 02:00 UTC).\n"
+            "Folder report is apparent byte and not live, recursive usage.\n"
             "PATH is relative to your own Lustre root; omit it for the root report.\n"
-            "The folder report is apparent bytes from the dated snapshot, not live\n"
-            "recursive usage."
         ),
         epilog = (
             "Examples:\n  gbi data usage\n  gbi data usage projects --depth 2 --limit 10"
@@ -357,17 +332,11 @@ def parser(*, advanced = False):
         "cache",
         help = "load paths into the Object Storage cache before a job reads them",
         description = (
-            "Load every file below PATH into the Object Storage cache so a job\n"
-            "reads warm blocks. The site's broker submits one native load and every\n"
-            "storage worker serves it in parallel, so the data lands in the cache\n"
-            "faster than any single reader could pull it; nothing is read on this\n"
-            "node. Returns when the blocks are cached; repeating it is cheap. Use it\n"
-            "as the first line of a job script or in a prolog. Paths must be inside\n"
-            "an Object Storage (Alluxio) mount you can read: your member folder, a\n"
-            "team or shared mount, or sequencing data under /mnt/instrument-data.\n"
-            "--include keeps only files whose name matches a pattern. Exit codes:\n"
-            "0 cached, 1 the load failed, 2 refused, 3 stopped waiting at --timeout\n"
-            "(the load itself continues)."
+            "Load files below PATH into the Object Storage cache before a job reads them.\n"
+            "Use this as the first line of a job script or in a prolog. Paths must be inside\n"
+            "an accessible Object Storage (Alluxio) mount you can read.\n"
+            "--include keeps only files that whose name matches a pattern.\n"
+            "Exit codes: 0 cached, 1 failed, 2 refused, 3 wait timed out."
         ),
         epilog = (
             "Examples:\n  gbi data cache /mnt/team/my-lab/members/$USER/dataset\n"

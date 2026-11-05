@@ -18,11 +18,13 @@ class CLIHelp(unittest.TestCase):
         for explanation in (
             "--archive", "chooses packing and part sizes",
             "Restores detect archives/chunks automatically",
-            "--help-all", "compatible with older deployments",
+            "compatible with older deployments",
             "unsupported requested options fail closed",
             "Object Storage originals are durable and always retained",
         ):
             self.assertIn(explanation, text)
+        self.assertIn("--help", text)
+        self.assertNotIn("--help-all", text)
         self.assertNotIn("cannot use packing", text)
 
     def help_text(self, *arguments):
@@ -45,14 +47,16 @@ class CLIHelp(unittest.TestCase):
         self.assertIn("always retained", copy)
         self.assertNotIn("_run", data)
 
-    def test_overviews_explain_everyday_options_without_exposing_tuning(self):
+    def test_overviews_show_supported_options(self):
         for arguments in ((), ("data",)):
             with self.subTest(arguments = arguments):
                 text       = self.help_text(*arguments)
                 normalized = " ".join(text.split())
                 for flag in (
                     "--include GLOB", "--exclude GLOB", "--archive",
-                    "--help-all", "--dry-run", "--detach", "--wait",
+                    "--archive-unit", "--pack", "--pack-small",
+                    "--chunk-size", "--local", "--job-size",
+                    "--dry-run", "--detach", "--wait",
                     "--prefect", "--watch", "--depth DEPTH", "--limit LIMIT",
                 ):
                     self.assertIn(flag, text)
@@ -68,37 +72,48 @@ class CLIHelp(unittest.TestCase):
                     normalized,
                 )
                 self.assertNotIn("explicit Object Storage deletion", normalized)
-                for hidden in (
-                    "--pack", "--pack-small", "--chunk-size", "--local",
-                    "--job-size", "--delete-source",
-                ):
-                    self.assertNotIn(hidden, text)
-                self.assertNotIn("ordinary route only", normalized)
+                
+                self.assertNotIn("--delete-source", normalized)
                 self.assertNotIn("_run", text)
+                self.assertNotIn("--help-all", text)
 
-    def test_full_help_exposes_supported_overrides_but_not_obsolete_deletion(
-                self,
-            ):
-        for arguments in ([], ["data"], ["data", "copy"], ["data", "move"]):
-            output = io.StringIO()
-            with (
-                contextlib.redirect_stdout(output),
-                self.assertRaises(SystemExit) as raised,
-            ):
-                cli.parser().parse_args([*arguments, "--help-all"])
-            self.assertEqual(raised.exception.code, 0)
-            for flag in (
-                "--archive", "--archive-unit", "--pack", "--pack-small",
-                "--chunk-size", "--local", "--job-size",
-            ):
-                self.assertIn(flag, output.getvalue())
-            self.assertNotIn("--delete-source", output.getvalue())
+    def test_copy_and_move_help_show_expert_options(self):
+        for verb in ("copy", "move"):
+            with self.subTest(verb = verb):
+                text = self.help_text("data", verb)
 
-    def test_hidden_overrides_remain_parseable_for_existing_scripts(self):
+                for flag in (
+                    "--archive",
+                    "--archive-unit SOURCE_RELATIVE",
+                    "--pack {tar,gzip}",
+                    "--pack-small",
+                    "--chunk-size SIZE",
+                    "--local",
+                    "--job-size {small,large}",
+                ):
+                    self.assertIn(flag, text)
+
+                self.assertNotIn("--help-all", text)
+                self.assertNotIn("--delete-source", text)
+
+
+    def test_help_all_is_no_longer_accepted(self):
+        output = io.StringIO()
+        with (
+            contextlib.redirect_stderr(output),
+            self.assertRaises(SystemExit) as raised,
+        ):
+            cli.parser().parse_args(
+                ["data", "copy", "src", "dst", "--help-all"]
+            )
+
+        self.assertEqual(raised.exception.code, 2)
+
+    def test_expert_options_remain_parseable(self):
         options = cli.parser().parse_args(
             [
-                "data", "copy", "src", "dst", "--pack-small", "--chunk-size",
-                "64MiB",
+                "data", "copy", "src", "dst",
+                "--pack-small", "--chunk-size", "64MiB",
             ]
         )
         self.assertTrue(options.pack_small)
@@ -120,6 +135,7 @@ class CLIHelp(unittest.TestCase):
             cli.parser().parse_args(
                 ["data", "copy", "src", "dst", "--local", "--prefect"]
             )
+
         self.assertEqual(raised.exception.code, 2)
         message = output.getvalue()
         self.assertIn("unsupported option combination", message)

@@ -205,8 +205,7 @@ and schedules only the named unfinished units. It cannot create a plan or
 change the original selection, destination, or archive layout.
 
 Routine archiving needs neither `--pack-small` nor `--chunk-size`.
-Expert overrides remain compatible with scripts and are exposed by
-`gbi data copy --help-all`. Normal `--help` shows everyday choices.
+Expert overrides remain compatible with scripts. See `gbi data copy --help`.
 The retired `--delete-source` option is rejected.
 
 ## Selection and execution
