@@ -16,22 +16,22 @@ from pathlib import Path
 INDENT = " " * 9
 
 LUSTRE_NOTES = (
-    "Scratch for running jobs, e.g. inputs, intermediate files, checkpoints, logs,"
+    "- Scratch for running jobs, e.g. inputs, intermediate files, checkpoints, logs,"
     " compiling software",
-    "Best for small files and in-place writes",
-    "Not backed up",
+    "- Best for small files and in-place writes",
+    "- Not backed up",
 )
 FSS_NOTES = (
-    "home, e.g. code, conda and venv environments; no datasets or results",
-    "Not backed up",
+    "- home, e.g. code, conda and venv environments; no datasets or results",
+    "- Not backed up",
 )
 ALLUXIO_NOTES = (
-    "Keep finished runs, results, and data; object storage",
-    "Write a file once; no appending. Not suitable for git or many small files",
-    "Prepare data before a job using: gbi data cache PATH --include '*.fastq.gz'",
+    "- Keep finished runs, results, and data; object storage",
+    "- Write a file once; no appending. Not suitable for git or many small files",
+    "- Prepare data before a job using: gbi data cache PATH --include '*.fastq.gz'",
 )
 READ_NOTE = (
-    "what you can read; shared collections are written by the team that owns"
+    "- What you can read; shared collections are written by the team that owns"
     " them, archives are read-only"
 )
 FOOTER = "bulk moves between roots: gbi data move SRC DEST --prefect"
