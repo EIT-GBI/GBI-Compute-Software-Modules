@@ -16,20 +16,19 @@ from pathlib import Path
 INDENT = " " * 9
 
 LUSTRE_NOTES = (
-    "scratch for running jobs: inputs, intermediate files, checkpoints, logs,"
+    "- Scratch for running jobs, e.g. inputs, intermediate files, checkpoints, logs,"
     " compiling software",
-    "best for small files and in-place writes · not backed up",
+    "- Best for small files and in-place writes",
+    "- Not backed up",
 )
 FSS_NOTES = (
-    "home: code, scripts, notebooks, conda and venv environments;"
-    " no datasets or results",
-    "most expensive per TB · not backed up",
+    "- home, e.g. code, conda and venv environments; no datasets or results",
+    "- Not backed up",
 )
 ALLUXIO_NOTES = (
-    "keep finished runs, results and reference data; Object Storage underneath,"
-    " jobs read it directly",
-    "write each file once and whole; not for git, appends or many small files",
-    "warm before a job: gbi data cache PATH --include '*.fastq.gz'",
+    "- Keep finished runs, results, and data; object storage",
+    "- Write a file once; no appending. Not suitable for git or many small files",
+    "- Prepare data before a job using: gbi data cache PATH --include '*.fastq.gz'",
 )
 READ_NOTE = (
     "what you can read; shared collections are written by the team that owns"
