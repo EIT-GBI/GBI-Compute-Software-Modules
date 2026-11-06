@@ -25,10 +25,10 @@ DEFAULTS = {
     "team_root": "/mnt/team",
     "readonly_roots": "/mnt/instrument-data /mnt/lmb-data /mnt/shared /mnt/archive",
     "lustre_note": (
-        "lifecycle rules will expire untouched files soon:"
+        "- Lifecycle rules will expire untouched files soon:"
         " move data you want to keep to alluxio"
     ),
-    "fss_note": "a 100 GB quota will be enforced soon",
+    "fss_note": "- 100 GB quota will be enforced soon",
     "alluxio_note": "",
 }
 
