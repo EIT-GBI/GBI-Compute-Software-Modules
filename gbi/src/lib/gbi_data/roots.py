@@ -180,7 +180,10 @@ def lines(site):
             report.append(f"{'team' if index == 0 else '':8} {path}")
             report.append(f"{INDENT}read-write for everyone in {name}")
     else:
-        report.append(f"{'team':8} none: you are not in a team folder")
+        team_root = Path(site.values["team_root"]).expanduser().absolute()
+        report.append(
+            f"{'team':8} no team shared folders visible on this host under {team_root}"
+        )
     readable = readable_roots(site)
     if readable:
         report.append(f"{'read':8} {'  '.join(readable)}")

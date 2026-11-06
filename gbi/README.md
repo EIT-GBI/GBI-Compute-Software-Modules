@@ -34,6 +34,12 @@ unchanged. Object Storage originals and versions remain retained. A published
 module or image alone does not establish runtime acceptance; unsupported
 requests fail rather than silently changing the operation.
 
+**0.4.44** makes `gbi data roots` describe what the current host can see.
+When no team shared folders are visible, it names the configured team root
+instead of claiming the caller is not in a team. Missing mounts or inaccessible
+paths can produce this result even when group membership is correct.
+This corrects the [unavailable-team diagnostic](https://github.com/EIT-GBI/gbi-data-platform-tracking/issues/54).
+
 **0.4.43** adds receipt-backed `gbi data retry ID` for stopped ordinary
 copy/move transfers, completing the ordinary retry source change for
 [repeated transfers and retry reporting](https://github.com/EIT-GBI/Scientific-Computing-Infrastructure/issues/123).
