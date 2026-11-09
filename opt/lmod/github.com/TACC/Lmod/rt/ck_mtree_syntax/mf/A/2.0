@@ -1,3 +1,0 @@
-#%Module
-setenv version 2.0
-nonExistantCmd foo bar

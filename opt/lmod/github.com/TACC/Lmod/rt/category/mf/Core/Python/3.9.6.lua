@@ -1,1 +1,0 @@
-whatis("Category: Develop, Math")

@@ -1,2 +1,0 @@
-purge()
-setenv("X","X")

@@ -1,5 +1,0 @@
-hide_version("dummy/2.0")
-hide_version("mpich/3.2")
-hide_version("a/2.0")
-local MROOT = os.getenv("MODULEPATH_ROOT")
-hide_modulefile(pathJoin(MROOT,"Core/b/3.14"))
