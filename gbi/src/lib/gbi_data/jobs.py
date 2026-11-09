@@ -42,7 +42,7 @@ def slurm_state(job_id):
     result = subprocess.run(
         [
             "sacct", "-j", job_id, "--noheader", "--parsable2",
-            "--format=JobIDRaw,State,ExitCode",
+            "--format=JobIDRaw,State%32,ExitCode",
         ], capture_output = True, text = True, timeout = 15,
     )
     if result.returncode:
@@ -375,11 +375,11 @@ def watch(run_dir, job_id, follow = True, archive_root = None):
             if not run_dir.exists() and archive_root is not None:
                 run_dir = locate(home, run_dir.name, archive_root)
             progress = read_progress(run_dir)
-            output.update(progress)
             deadlines.event(
                 "following transfer status", run_dir, counters = progress
             )
             if progress["phase"] in ("complete", "failed", "interrupted"):
+                output.update(progress)
                 receipt = run_dir / (
                     "history.json"
                     if (run_dir / "history.json").is_file()
@@ -427,6 +427,7 @@ def watch(run_dir, job_id, follow = True, archive_root = None):
                 f"inspect {run_dir / 'slurm.out'}."
                 )
                 return 1
+            output.update(progress)
             if not follow:
                 print(
                     f"\nSlurm: {state}"
