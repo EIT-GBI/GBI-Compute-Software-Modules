@@ -4,7 +4,7 @@ VERSION       = "{INSTALL_VERSION}"
 VARIANT       = "{INSTALL_VERSION_VARIANT}"
 
 [install]
-versions = ["26.04.6"]
+versions = ["26.04.7"]
 prefix   = "{SITE_DESTINATION}/{STAGE_DIR}"
 # note: this is Lua regex: you will need to escape - and + (using %)
 format = "^downloaded$"
