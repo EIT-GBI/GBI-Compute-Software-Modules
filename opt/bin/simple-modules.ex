@@ -5071,6 +5071,23 @@ end
 -- iterate over versions and generate module based on template file
 log.info("Generating modules ...")
 
+-- check if `chmod o+rX` would change path. The module directory can be shared
+-- between maintainers, and chmod fails on paths owned by someone else even if
+-- the mode would not change => only chmod what is missing o+rX
+local function missing_o_rX(path)
+    local stat = require "posix.sys.stat"
+    local st = stat.stat(path)
+    if nil == st then return true end -- let chmod report the error
+    local mode = st.st_mode
+    local wanted = stat.S_IROTH
+    -- X: directories, and files that are executable by anyone
+    local any_x = stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH
+    if 0 ~= stat.S_ISDIR(mode) or 0 ~= (mode & any_x) then
+        wanted = wanted | stat.S_IXOTH
+    end
+    return wanted ~= (mode & wanted)
+end
+
 local module_dir = settings.site.modules .. "/" .. settings.site.name
 sh.mkdir("-p", module_dir) -- ensure order => don't use table
 -- fill in module template for each version
@@ -5108,8 +5125,12 @@ for version, _ in pairs(installed_versions) do
     module_file:close()
 
     sh.__verbose = true
-    sh.chmod(      "o+rX", module_dir)
-    sh.chmod("-R", "o+rX", module_path)
+    if missing_o_rX(module_dir) then
+        sh.chmod(      "o+rX", module_dir)
+    end
+    if missing_o_rX(module_path) then
+        sh.chmod("-R", "o+rX", module_path)
+    end
     sh.__verbose = false
 end
 
