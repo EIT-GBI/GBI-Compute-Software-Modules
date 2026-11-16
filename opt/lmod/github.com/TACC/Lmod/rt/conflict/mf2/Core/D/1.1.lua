@@ -1,1 +1,0 @@
-setenv("D",myModuleVersion())

@@ -1,5 +1,0 @@
-#%Module#####################################################################
-
-
-set-alias module_alias {eval `$LMOD_DIR/lmod bash "$@"`}
-set-alias drmi {docker images | awk '/<none>/ {print $3}' | xargs docker rmi}

@@ -1,4 +1,0 @@
-#%Module
-if { [info exists ::ModuleTool] && $ModuleTool == "Lmod" } {
-  module-version /1.3 default
-}

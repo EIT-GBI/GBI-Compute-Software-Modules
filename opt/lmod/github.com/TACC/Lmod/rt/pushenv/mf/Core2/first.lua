@@ -1,6 +1,0 @@
-setenv("BAR","")
-pushenv("BAZ"," ")
-pushenv("FOO","")
-pushenv("A",true)
-pushenv("B",false)
-pushenv("C",1437)

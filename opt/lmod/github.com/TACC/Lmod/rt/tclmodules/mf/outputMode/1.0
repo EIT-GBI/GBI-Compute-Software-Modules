@@ -1,3 +1,0 @@
-#%Module
-module-whatis [ exec bash -c "echo myMode: [module-info mode] > myMode.log" ]
-

@@ -1,2 +1,0 @@
-load("moduleA")
-load("moduleB")
