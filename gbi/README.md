@@ -34,6 +34,16 @@ unchanged. Object Storage originals and versions remain retained. A published
 module or image alone does not establish runtime acceptance; unsupported
 requests fail rather than silently changing the operation.
 
+**0.4.45** adds `gbi dataset get BENTO_ADDRESS` and `gbi dataset status`.
+Given the located `bento://` address of a published Bento artefact version, `get`
+prints `/mnt/shared/bento/DATASET/ARTEFACT/VERSION` if GBI already holds it.
+Otherwise it asks the site broker to start the one shared Prefect copy (or
+reports the run already copying it) and prints the run ID and future path.
+Any account may ask; there is no approval step and no subsetting. Exit codes:
+0 ready, 3 requested or copying, 1 the last copy failed, 2 refused. It needs the
+broker's `bento-ingest` operation and the `bento-ingest/prod-bento-ingest`
+deployment ([Ingest Datasets From Bento](https://github.com/EIT-GBI/Scientific-Computing-Infrastructure/issues/147)).
+
 **0.4.44** makes `gbi data roots` describe what the current host can see.
 When no team shared folders are visible, it names the configured team root
 instead of claiming the caller is not in a team. Missing mounts or inaccessible
