@@ -303,6 +303,25 @@ The cache is shared and evicts the least recently used blocks on its own, so a
 load is never refused for space; a very large dataset may tier older blocks
 down.
 
+## Bento datasets
+
+GBI copies whole published Tier 0 Bento datasets on request. Copy the located
+address of a version from the Bento GUI and run:
+
+```bash
+gbi dataset get bento://us-ashburn-1/psto-iad-drplab-allthebacteria-bucket@lr40ytmfucrr/allthebacteria/allthebacteria_base@2026-08-28a
+```
+
+If GBI already holds that version, the command prints its read-only path,
+`/mnt/shared/bento/DATASET/ARTEFACT/VERSION`. Files keep the paths Bento's
+manifest gives them, and `_bento/` beside them holds the manifest and the
+copy's records. If GBI does not hold it yet, the command starts the copy (or
+finds the one already running for anyone else who asked) and prints the
+Prefect run ID and the path where the files will appear. Check later with
+`gbi dataset status ADDRESS`; a large dataset can take a day or more. Exit codes:
+0 ready, 3 requested or copying, 1 the last copy failed (run `get` again to
+resume it), 2 refused.
+
 ## Status and recovery
 
 ```bash

@@ -19,7 +19,7 @@ import uuid
 from . import __version__
 from . import jobs
 from . import deadlines
-from . import cache, moves, prefect, retry
+from . import cache, dataset, moves, prefect, retry
 from . import format_selection, packing, roots, usage
 from .selection import entries, probe, stream_entries
 from .storage import Site, fingerprint, overlap
@@ -125,7 +125,37 @@ def parser(*, advanced = False):
         "--help-all", action = _FullHelp, nargs = 0,
         help = "show all options, including expert and compatibility overrides",
     )
-    data = result.add_subparsers(dest = "command", required = True).add_parser(
+    commands = result.add_subparsers(dest = "command", required = True)
+    dataset_command = commands.add_parser(
+        "dataset",
+        help = "get whole Tier 0 Bento datasets onto /mnt/shared/bento",
+        description = (
+            "Copy a whole published Bento artefact version into GBI storage, read-only\n"
+            "for everyone at /mnt/shared/bento/DATASET/ARTEFACT/VERSION. `get` prints the\n"
+            "path if GBI already holds it; otherwise it starts the shared copy (or reports\n"
+            "the one already running) and prints its Prefect run ID. Anyone may ask; there\n"
+            "is no approval step and nothing is subset. Exit codes: 0 ready, 3 copy\n"
+            "requested or running, 1 the last copy failed, 2 refused."
+        ),
+        epilog = (
+            "Address: copy the located bento:// address of a version from the Bento GUI.\n"
+            "Examples:\n"
+            "  gbi dataset get bento://us-ashburn-1/psto-iad-drplab-allthebacteria-bucket@lr40ytmfucrr/"
+            "allthebacteria/allthebacteria_base@2026-08-28a\n"
+            "  gbi dataset status bento://...  # the same address"
+        ),
+        formatter_class = argparse.RawDescriptionHelpFormatter,
+    )
+    dataset_verbs = dataset_command.add_subparsers(dest = "dataset_verb", required = True)
+    for name, text in (
+        ("get", "print the path, or start the copy and print its run ID"),
+        ("status", "report the copy of an address without starting one"),
+    ):
+        verb = dataset_verbs.add_parser(name, help = text, description = text)
+        verb.add_argument("address", metavar = "BENTO_ADDRESS",
+                          help = "bento://REGION/BUCKET@NAMESPACE/DATASET/ARTEFACT@VERSION")
+        verb.add_argument("--json", action = "store_true", help = "print one JSON line")
+    data = commands.add_parser(
         "data",
         help = "move data, inspect transfer state, or report usage",
         description = (
@@ -1217,6 +1247,8 @@ def main():
             )
         deadlines.event("loading site and storage roots", configuration)
         site = Site(configuration, configured = deadlines.configure)
+        if options.command == "dataset":
+            return dataset.main(options, site)
         deadlines.event(
             "checking request paths", getattr(options, "source", configuration)
         )
