@@ -80,8 +80,7 @@ class DatasetTest(unittest.TestCase):
     def test_status_reports_bilbo_progress_owner_and_requester(self):
         code, out, _, calls = run(self.site, options("status"), self.bilbo("copying"))
         self.assertEqual((code, calls[0]["action"]), (3, "status"))
-        self.assertIn("7,577,078/23,237,657 files", out)
-        self.assertIn("19.60 TB of 61.09 TB (32.1%)", out)
+        self.assertIn("32% done (7.6 M of 23.2 M files, 19.6 of 61.1 TB)", out)
         self.assertIn(RUN, out)
         self.assertIn("requested by gbi:christiaan-viljoen", out)
 

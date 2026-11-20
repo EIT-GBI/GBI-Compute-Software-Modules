@@ -63,18 +63,25 @@ def request(action, address):
     return {"version": 1, "action": action, "operation": "bento-ingest", "address": address}
 
 
-def size(value):
-    for unit, scale in (("TB", 1e12), ("GB", 1e9), ("MB", 1e6)):
-        if value >= scale:
-            return f"{value / scale:.2f} {unit}"
-    return f"{value} B"
+def scaled(done, total, units, unit_on_both):
+    """'7.6 M of 23.2 M' or '19.7 of 61.1 TB', in decimal units chosen by the total."""
+    scale, name = next(((scale, name) for scale, name in units if total >= scale), units[-1])
+
+    def figure(value):
+        return f"{value:,}" if scale == 1 else f"{value / scale:.1f}"
+
+    suffix = f" {name}" if name else ""
+    return f"{figure(done)}{suffix if unit_on_both else ''} of {figure(total)}{suffix}"
 
 
 def progress(bilbo):
+    """'32% done (7.6 M of 23.2 M files, 19.7 of 61.1 TB)', as on the BILBO page."""
     files, total_files = bilbo.get("files_copied") or 0, bilbo.get("file_count") or 0
     done, total = bilbo.get("bytes_copied") or 0, bilbo.get("size_bytes") or 0
-    percent = 100 * done / total if total else 0.0
-    return (f"{files:,}/{total_files:,} files, {size(done)} of {size(total)} ({percent:.1f}%)")
+    percent = 100 * done // total if total else 100
+    return (f"{percent}% done ("
+            f"{scaled(files, total_files, ((10**6, 'M'), (10**3, 'k'), (1, '')), True)} files, "
+            f"{scaled(done, total, ((10**12, 'TB'), (10**9, 'GB'), (10**6, 'MB'), (1, 'B')), False)})")
 
 
 def bilbo_state(bilbo):
@@ -112,7 +119,7 @@ def report(result, address, path, as_json):
               f"Check with: gbi dataset status {address}")
     elif state == "COPYING":
         stopped = result.get("prefect_state") in ("FAILED", "CRASHED", "CANCELLED")
-        print(f"Copying (Prefect run {run}{requested}): {progress(bilbo)}.\n"
+        print(f"Copying, {progress(bilbo)}. Prefect run {run}{requested}.\n"
               + (f"Its Prefect run ended {result['prefect_state'].lower()} without reporting; "
                  "Scientific Computing will reconcile it.\n" if stopped else "")
               + f"Files will appear at {path}\nCheck with: gbi dataset status {address}")
