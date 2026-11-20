@@ -16,7 +16,7 @@ DEFAULTS = {
     "inline_probe_seconds": "5", "mount_timeout": "120",
     "discovery_timeout": "120", "history_timeout": "1800",
     "prefect_socket": "/run/gbi-data/prefect.sock",
-    "bento_root": "/mnt/shared/bento", "dataset_register_url": "",
+    "bento_root": "/mnt/shared/bento",
     "prefect_url": "", "pack_small_bytes": "65536", "pack_min_files": "40",
     "pack_max_bytes": "1073741824",
     # `gbi data roots`: team folders live under team_root as

@@ -16,7 +16,7 @@ RUN = "11111111-2222-3333-4444-555555555555"
 
 class Site:
     def __init__(self, root):
-        self.values = {"bento_root": str(root), "dataset_register_url": ""}
+        self.values = {"bento_root": str(root)}
 
 
 def options(verb = "get", address = ADDRESS, json_output = False):
@@ -67,6 +67,55 @@ class DatasetTest(unittest.TestCase):
             "version": 1, "state": "FAILED", "run_id": RUN, "message": "3 files failed"})
         self.assertEqual(code, 1)
         self.assertIn("3 files failed", err)
+
+    def bilbo(self, status, **changes):
+        row = {"status": status, "flow_run_id": RUN, "files_copied": 7577078,
+               "bytes_copied": 19_600_000_000_000, "file_count": 23237657,
+               "size_bytes": 61089243350360, "mount_available": False,
+               "mount_path": str(self.path) + "/", "requested_by": "gbi:christiaan-viljoen",
+               "last_error": None}
+        row.update(changes)
+        return lambda request: {"version": 1, "state": "RUNNING", "run_id": RUN, "bilbo": row}
+
+    def test_status_reports_bilbo_progress_owner_and_requester(self):
+        code, out, _, calls = run(self.site, options("status"), self.bilbo("copying"))
+        self.assertEqual((code, calls[0]["action"]), (3, "status"))
+        self.assertIn("7,577,078/23,237,657 files", out)
+        self.assertIn("19.60 TB of 61.09 TB (32.1%)", out)
+        self.assertIn(RUN, out)
+        self.assertIn("requested by gbi:christiaan-viljoen", out)
+
+    def test_ready_prints_bilbos_path_only_once_the_path_is_verified(self):
+        code, out, _, _ = run(self.site, options("status"), self.bilbo("ready"))
+        self.assertEqual(code, 3)
+        self.assertIn("still being verified", out)
+        self.assertNotEqual(out.strip(), str(self.path))
+        code, out, _, _ = run(self.site, options("status"), self.bilbo("ready", mount_available = True))
+        self.assertEqual((code, out.strip()), (0, str(self.path)))
+
+    def test_a_permanent_failure_never_suggests_running_get_again(self):
+        code, _, err, _ = run(self.site, options("status"), self.bilbo(
+            "failed", last_error = "[permanent] ManifestError: duplicate source paths"))
+        self.assertEqual(code, 1)
+        self.assertIn("duplicate source paths", err)
+        self.assertNotIn("gbi dataset get", err)
+        self.assertIn("contact Scientific Computing", err)
+
+    def test_a_transient_failure_says_it_is_retried_automatically(self):
+        _, _, err, _ = run(self.site, options("status"), self.bilbo(
+            "failed", last_error = "[transient] after 3 attempts: OSError"))
+        self.assertIn("retried automatically", err)
+
+    def test_a_manifest_fault_from_prefect_alone_never_suggests_resuming(self):
+        _, _, err, _ = run(self.site, options("status"), lambda request: {
+            "version": 1, "state": "FAILED", "run_id": RUN,
+            "message": "Flow run encountered an exception: ManifestError: path listed twice"})
+        self.assertNotIn("to resume", err)
+
+    def test_the_cli_never_reads_bilbo_itself(self):
+        source = Path(dataset.__file__).read_text()
+        self.assertNotIn("urlopen", source)
+        self.assertNotIn("dataset_register_url", source)
 
     def test_json_output_carries_state_path_and_address(self):
         _, out, _, _ = run(self.site, options(json_output = True))
