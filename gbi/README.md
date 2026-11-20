@@ -34,6 +34,17 @@ unchanged. Object Storage originals and versions remain retained. A published
 module or image alone does not establish runtime acceptance; unsupported
 requests fail rather than silently changing the operation.
 
+**0.4.46** makes `gbi dataset status|get` report BILBO's record of the Bento
+version, read by the site broker with its own server-held reader credential:
+owning Prefect run, requester, and copied files and bytes against the manifest
+totals as a percentage. The path is printed as usable only when BILBO says the
+copy is ready and its cluster path is verified (or this node can read the
+copy's own ready record). A failure the copy flow marks permanent (for example
+a manifest fault) no longer suggests running `get` again; transient failures
+say they are retried automatically. The CLI no longer calls BILBO itself (the
+unused `dataset_register_url` setting is gone). Without the broker's BILBO
+credential it reports Prefect state as in 0.4.45.
+
 **0.4.45** adds `gbi dataset get BENTO_ADDRESS` and `gbi dataset status`.
 Given the located `bento://` address of a published Bento artefact version, `get`
 prints `/mnt/shared/bento/DATASET/ARTEFACT/VERSION` if GBI already holds it.
