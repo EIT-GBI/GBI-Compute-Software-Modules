@@ -98,7 +98,8 @@ class DatasetTest(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIn("duplicate source paths", err)
         self.assertNotIn("gbi dataset get", err)
-        self.assertIn("contact Scientific Computing", err)
+        self.assertIn("send the run ID to Scientific Computing", err)
+        self.assertIn("cannot be copied as published: duplicate source paths", err)
 
     def test_a_transient_failure_says_it_is_retried_automatically(self):
         _, _, err, _ = run(self.site, options("status"), self.bilbo(
@@ -110,6 +111,37 @@ class DatasetTest(unittest.TestCase):
             "version": 1, "state": "FAILED", "run_id": RUN,
             "message": "Flow run encountered an exception: ManifestError: path listed twice"})
         self.assertNotIn("to resume", err)
+
+    def test_an_unreadable_manifest_points_at_the_address(self):
+        code, _, err, _ = run(self.site, options("status"), lambda request: {
+            "version": 1, "state": "FAILED", "run_id": RUN,
+            "message": "Flow run encountered an exception: ManifestError: Bento has no readable "
+                       "manifest for bento://x: the address may be wrong"})
+        self.assertEqual(code, 1)
+        self.assertIn("Check the address", err)
+        self.assertIn("Artefacts tab", err)
+        self.assertNotIn("Flow run encountered", err)
+
+    def test_get_explains_when_the_broker_starts_no_new_run(self):
+        code, _, err, calls = run(self.site, options(), lambda request: {
+            "version": 1, "state": "FAILED", "run_id": RUN, "resubmit": "refused",
+            "message": "Flow run encountered an exception: ManifestError: manifest lists 'a' twice"})
+        self.assertEqual((code, calls[0]["action"]), (1, "submit"))
+        self.assertIn("No new copy was started.", err)
+        self.assertIn("manifest lists 'a' twice", err)
+
+    def test_a_crash_without_a_bilbo_row_says_how_to_resume(self):
+        _, _, err, _ = run(self.site, options("status"), lambda request: {
+            "version": 1, "state": "CRASHED", "run_id": RUN, "message": "pod evicted"})
+        self.assertIn("Files already copied are kept. Resume it with: gbi dataset get", err)
+
+    def test_queued_and_running_before_registration_say_what_is_happening(self):
+        _, out, _, _ = run(self.site, options("status"), lambda request: {
+            "version": 1, "state": "PENDING", "run_id": RUN})
+        self.assertIn("Starting the copy", out)
+        _, out, _, _ = run(self.site, options("status"), lambda request: {
+            "version": 1, "state": "RUNNING", "run_id": RUN})
+        self.assertIn("Checking Bento's manifest", out)
 
     def test_the_cli_never_reads_bilbo_itself(self):
         source = Path(dataset.__file__).read_text()

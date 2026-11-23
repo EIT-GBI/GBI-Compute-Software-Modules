@@ -92,15 +92,55 @@ def bilbo_state(bilbo):
     return {"requested": "COPYING", "copying": "COPYING", "failed": "FAILED"}.get(status, "UNKNOWN")
 
 
-def failure_hint(error, address):
-    """What the user should do about a failed copy, from the producer's error class."""
-    if error.startswith(("[transient]", "[crashed]")):
-        return ("It is retried automatically; check again later with: "
-                f"gbi dataset status {address}")
-    if error.startswith("[cancelled]"):
-        return f"Start it again with: gbi dataset get {address}"
-    return ("Running get again would fail the same way; "
-            "contact Scientific Computing support with the run ID.")
+PREFECT_PREFIX = re.compile(r"^(Flow run encountered an exception: )?([A-Za-z]+Error: )?")
+
+
+def plain(message):
+    """The failure without Prefect's and Python's wrapping, first line only, bounded."""
+    text = str(message or "").strip()
+    for kind in ("[permanent] ", "[transient] ", "[crashed] ", "[cancelled] "):
+        text = text.removeprefix(kind)
+    text = text.removeprefix("after 3 attempts: ")
+    lines = PREFECT_PREFIX.sub("", text).splitlines()
+    return (lines[0] if lines else "")[:400]
+
+
+def failure_kind(message):
+    """manifest, unreadable, cancelled, retrying or other."""
+    message = str(message or "")
+    if "no readable manifest" in message:
+        return "unreadable"
+    if "ManifestError" in message or message.startswith("[permanent]"):
+        return "manifest"
+    if message.startswith(("[transient]", "[crashed]")):
+        return "retrying"
+    if message.startswith("[cancelled]"):
+        return "cancelled"
+    return "other"
+
+
+def failure_text(message, run, address, refused):
+    """What happened, whether it fixes itself, and what to do, in plain words."""
+    kind, detail = failure_kind(message), plain(message)
+    started = "\nNo new copy was started." if refused else ""
+    if kind == "unreadable":
+        return (f"Bento has no readable manifest for {address}.\n"
+                "Check the address: copy the located bento:// address (with region and bucket) "
+                "from the version's Artefacts tab in Bento. If it is right, the dataset may not "
+                f"be shared with GBI yet; ask Scientific Computing. (Prefect run {run}){started}")
+    if kind == "manifest":
+        return (f"Bento's manifest for this version cannot be copied as published: {detail}\n"
+                "Nothing was copied. Running get again will not help until Bento or GBI fixes "
+                f"this; send the run ID to Scientific Computing. (Prefect run {run}){started}")
+    if kind == "retrying":
+        return (f"The copy stopped ({detail}). It is retried automatically; "
+                f"files already copied are kept.\nCheck with: gbi dataset status {address} "
+                f"(Prefect run {run})")
+    if kind == "cancelled":
+        return (f"The copy was cancelled (Prefect run {run}). Files already copied are kept.\n"
+                f"Resume it with: gbi dataset get {address}")
+    return (f"The copy stopped (Prefect run {run})" + (f": {detail}" if detail else "") + ".\n"
+            f"Files already copied are kept. Resume it with: gbi dataset get {address}")
 
 
 def report(result, address, path, as_json):
@@ -111,6 +151,7 @@ def report(result, address, path, as_json):
     bilbo = result.get("bilbo") or {}
     run = bilbo.get("flow_run_id") or result.get("run_id")
     requested = f", requested by {bilbo['requested_by']}" if bilbo.get("requested_by") else ""
+    refused = result.get("resubmit") == "refused"
     if state == "READY":
         print(result.get("path") or path)
     elif state == "VERIFYING_PATH":
@@ -124,24 +165,19 @@ def report(result, address, path, as_json):
                  "Scientific Computing will reconcile it.\n" if stopped else "")
               + f"Files will appear at {path}\nCheck with: gbi dataset status {address}")
     elif state == "FAILED" and bilbo:
-        error = bilbo.get("last_error") or "no error recorded"
-        print(f"The copy failed (Prefect run {run}): {error}\n{failure_hint(error, address)}",
-              file = sys.stderr)
+        print(failure_text(bilbo.get("last_error"), run, address, refused), file = sys.stderr)
     elif state == "NOT_SUBMITTED":
         print(f"Not held and no copy requested. Run: gbi dataset get {address}")
     elif state == "COMPLETED":
-        print(f"Copy finished (run {result['run_id']}). It appears at {path} within a few minutes.")
+        print(f"Copy finished (Prefect run {run}). It appears at {path} within a few minutes.")
+    elif state in ("SCHEDULED", "PENDING"):
+        print(f"Starting the copy (Prefect run {run}, queued).\n"
+              f"Files will appear at {path}\nCheck with: gbi dataset status {address}")
     elif state in ACTIVE:
-        print(f"Copying (Prefect run {result['run_id']}, {state.lower()}).\n"
-              f"Files will appear at {path}\n"
-              f"Check with: gbi dataset status {address}")
+        print(f"Checking Bento's manifest before copying (Prefect run {run}).\n"
+              f"Files will appear at {path}\nCheck with: gbi dataset status {address}")
     else:
-        message = result.get("message") or ""
-        permanent = "ManifestError" in message or "[permanent]" in message
-        print(f"The last copy ended {state.lower()} (run {result.get('run_id')})"
-              + (f": {message}" if message else "") + ". "
-              + (failure_hint("[permanent]", address) if permanent
-                 else f"Run gbi dataset get {address} to resume it."), file = sys.stderr)
+        print(failure_text(result.get("message"), run, address, refused), file = sys.stderr)
 
 
 def lookup(options, site):

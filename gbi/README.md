@@ -34,6 +34,14 @@ unchanged. Object Storage originals and versions remain retained. A published
 module or image alone does not establish runtime acceptance; unsupported
 requests fail rather than silently changing the operation.
 
+**0.4.47** words `gbi dataset get|status` failures and waits plainly. It says
+what happened, whether it fixes itself, and what to do: a mistyped or unshared
+address says to check the located `bento://` address; a manifest Bento must fix
+says that rerunning will not help (and `get` no longer starts a run that would
+fail the same way); a stopped copy says files already copied are kept and how
+to resume. Before the copy is registered it says "Starting the copy" or
+"Checking Bento's manifest" instead of a bare Prefect state.
+
 **0.4.46** makes `gbi dataset status|get` report BILBO's record of the Bento
 version, read by the site broker with its own server-held reader credential:
 owning Prefect run, requester, and copied files and bytes against the manifest
