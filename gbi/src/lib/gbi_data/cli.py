@@ -92,17 +92,7 @@ def command_reference(verbs):
     return formatter.format_help()
 
 
-class _FullHelp(argparse.Action):
-    """Expose compatible expert overrides without crowding ordinary help."""
-
-    def __call__(self, command, namespace, values, option_string = None):
-        parser(advanced = True).parse_args([*command.prog.split()[1:], "--help"])
-
-
-def parser(*, advanced = False):
-    def expert(description):
-        return description if advanced else argparse.SUPPRESS
-
+def parser():
     result = _ArgumentParser(
         prog = "gbi",
         description = "Move, archive, restore, and inspect your own HPC data.",
@@ -112,7 +102,6 @@ def parser(*, advanced = False):
             "  gbi data move SOURCE DESTINATION --detach --wait\n"
             "  gbi data status TRANSFER_ID --watch\n"
             "  gbi data usage projects --depth 2 --limit 10\n\n"
-            "Every everyday option is explained below; --help-all includes expert overrides.\n"
             "For a command's usage and examples,\n"
             "use e.g. `gbi data copy --help` or `gbi data usage --help`.\n"
             "Ordinary and --prefect transfers both run with your normal Unix\n"
@@ -121,10 +110,6 @@ def parser(*, advanced = False):
         formatter_class = argparse.RawDescriptionHelpFormatter,
     )
     result.add_argument("--version", action = "version", version = __version__)
-    result.add_argument(
-        "--help-all", action = _FullHelp, nargs = 0,
-        help = "show all options, including expert and compatibility overrides",
-    )
     commands = result.add_subparsers(dest = "command", required = True)
     dataset_command = commands.add_parser(
         "dataset",
@@ -166,10 +151,6 @@ def parser(*, advanced = False):
         ),
         formatter_class = argparse.RawDescriptionHelpFormatter,
     )
-    data.add_argument(
-        "--help-all", action = _FullHelp, nargs = 0,
-        help = "show all options, including expert and compatibility overrides",
-    )
     verbs = data.add_subparsers(
         dest = "verb", required = True,
         metavar = "{copy,move,status,retry,roots,usage,cache}",
@@ -210,7 +191,6 @@ def parser(*, advanced = False):
                 "permissions as you before any data moves.\n"
                 "Archive previews may create managed tracking records, but never change data.\n"
                 "After a lost submission reply: gbi data retry ID (same saved request).\n\n"
-                "Use --help-all for expert overrides and compatibility options.\n\n"
                 f"Examples:\n  gbi data {verb} SOURCE DESTINATION --dry-run\n"
                 f"  gbi data {verb} SOURCE DESTINATION --archive\n"
                 f"  gbi data {verb} SOURCE DESTINATION --detach\n"
@@ -222,10 +202,6 @@ def parser(*, advanced = False):
         command.add_argument("source", help = "source file or directory path")
         command.add_argument(
             "destination", help = "destination file or directory path"
-        )
-        command.add_argument(
-            "--help-all", action = _FullHelp, nargs = 0,
-            help = "show expert and compatibility options as well",
         )
         selection = command.add_argument_group("selection")
         selection.add_argument(
@@ -250,7 +226,7 @@ def parser(*, advanced = False):
         )
         archive.add_argument(
             "--pack", choices = ("tar", "gzip"),
-            help = expert(
+            help = (
                 "pack one directory: tar is uncompressed, gzip compresses; "
                 "exact destination must end in .gbi.tar or .gbi.tar.gz "
                 "(requires matching Prefect broker/flow)"
@@ -258,7 +234,7 @@ def parser(*, advanced = False):
         )
         archive.add_argument(
             "--pack-small", action = "store_true",
-            help = expert(
+            help = (
                 "legacy selective packing: pack eligible small-file "
                 "subdirectories, transfer the rest individually; prefer "
                 "--archive for a saved whole-tree layout"
@@ -267,14 +243,14 @@ def parser(*, advanced = False):
         command.add_argument(
             "--archive-unit", action = "append", default = [],
             metavar = "SOURCE_RELATIVE",
-            help = expert(
+            help = (
                 "run an exact unit from an existing saved --archive plan; "
                 "repeat for multiple units"
             ),
         )
         command.add_argument(
             "--chunk-size", type = byte_size, metavar = "SIZE",
-            help = expert(
+            help = (
                 "override verified resumable part size, e.g. 64MiB; not "
                 "combined with --archive; omit on restore"
             ),
@@ -306,7 +282,7 @@ def parser(*, advanced = False):
         )
         execution.add_argument(
             "--local", action = "store_true",
-            help = expert(
+            help = (
                 "require the current Slurm allocation (normally detected automatically)"
             ),
         )
@@ -319,7 +295,7 @@ def parser(*, advanced = False):
         )
         command.add_argument(
             "--job-size", choices = ("small", "large"),
-            help = expert(
+            help = (
                 "Prefect restore reservation override: small reserves 2 "
                 "CPUs/16 GiB; large reserves 8 CPUs/48 GiB; omit to use the "
                 "deployment setting"
@@ -368,7 +344,7 @@ def parser(*, advanced = False):
     )
     verbs.add_parser(
         "roots",
-        help = "show your storage roots and what each one is for",
+        help = "show your storage roots/available filesystems and what each one is for",
         description = (
             "Print your Lustre scratch, FSS home and Object Storage roots, the\n"
             "team folders you belong to and the read-only collections, with a\n"
@@ -382,11 +358,10 @@ def parser(*, advanced = False):
         help = "show your Lustre and FSS usage and your largest Lustre folders",
         description = (
             "Show a Lustre/FSS storage summary, then your largest Lustre folders.\n"
-            "Lustre uses your live UID quota; FSS and the folder report come from the\n"
-            "owner-scoped snapshot the site publishes weekly (Sunday 02:00 UTC).\n"
+            "Lustre uses your live UID quota.\n"
+            "FSS and the folder report come from weekly the snapshot (Sunday 02:00 UTC).\n"
+            "Folder report is apparent byte and not live, recursive usage.\n"
             "PATH is relative to your own Lustre root; omit it for the root report.\n"
-            "The folder report is apparent bytes from the dated snapshot, not live\n"
-            "recursive usage."
         ),
         epilog = (
             "Examples:\n  gbi data usage\n  gbi data usage projects --depth 2 --limit 10"
@@ -732,7 +707,7 @@ def _run(run_dir, site, home):
     stopped = threading.Event()
     for signum in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
         signal.signal(signum, lambda *_: stopped.set())
-    started, last_publish, discovery_wait = time.monotonic(), 0.0, 0.0
+    started, last_publish, last_display, discovery_wait = time.monotonic(), 0.0, 0.0, 0.0
     discovery_progress = None
     progress = {
         "phase": "running", "files": 0, "reused": 0, "already_moved": 0,
@@ -777,7 +752,7 @@ def _run(run_dir, site, home):
     counted_bytes = {}
     unknown_sizes = set()
     width         = int(site.values["jobs"])
-    output        = jobs.ProgressDisplay()
+    output        = jobs.ProgressDisplay(compact_verb = specification["verb"])
 
     def record_failure(path, error, workers_stopped = True):
         progress["failed"] += 1
@@ -982,8 +957,14 @@ def _run(run_dir, site, home):
                                 f"{path} bytes={outcome['bytes']}{detail}",
                                 flush = True,
                             )
-                if time.monotonic() - last_publish >= 2:
-                    progress["elapsed"] = time.monotonic() - started
+                now = time.monotonic()
+                publish_due = now - last_publish >= 2
+                display_due = (
+                    bool(output.compact_verb)
+                    and now - last_display >= 0.5
+                )
+                if publish_due or display_due:
+                    progress["elapsed"] = now - started
                     progress["active"] = len(pending)
                     progress["totals_known"] = not unknown_sizes
                     progress["active_bytes"] = 0
@@ -1007,16 +988,20 @@ def _run(run_dir, site, home):
                             )
                         except (OSError, ValueError, KeyError):
                             pass
-                    deadlines.event(
-                        "publishing progress", run_dir, counters = progress
-                    )
-                    write_json(run_dir / "progress.json", progress)
+
+                    if publish_due:
+                        deadlines.event(
+                            "publishing progress", run_dir, counters = progress
+                        )
+                        write_json(run_dir / "progress.json", progress)
+                        last_publish = now
+
                     output.update(progress)
+                    last_display = now
                     deadlines.event(
                         "transferring" if pending else "discovering",
                         source, counters = progress,
                     )
-                    last_publish = time.monotonic()
     except (OSError, ValueError) as error:
         stopped.set()
         progress["workers_stopped"] = progress["workers_stopped"] and not pending
@@ -1045,17 +1030,39 @@ def _run(run_dir, site, home):
     progress["totals_known"] = not unknown_sizes
     progress["active_bytes"] = 0
     progress["phases"] = {}
+
+    if output.compact_verb:
+        output.update(progress)  # Show the completed bar before the summary.
     output.finish()
-    print(
-        f"Data phase: {progress['phase']}. Receipts: {run_dir / 'receipts.jsonl'}",
-        flush = True,
-    )
+    data_phase = f"Data phase: {progress['phase']}"
+    if progress["phase"] != "complete":
+        data_phase += f" Receipts: {run_dir / 'receipts.jsonl'} - use this for debugging."
+    print(data_phase, flush = True)
+
+    if output.compact_verb:
+        speed = progress["bytes"] / max(progress["elapsed"], 1)
+        print(
+            f"Verified {progress['files']:,} files · "
+            f"{jobs.human_bytes(progress['bytes'])} · "
+            f"{jobs.human_bytes(speed)}/s",
+            flush = True,
+        )
+        if specification["verb"] == "move":
+            print(
+                f"Source removed {jobs.human_bytes(progress['freed'])} · "
+                f"failed {progress['failed']}",
+                flush = True,
+            )
+
     deadlines.event("publishing final progress", run_dir, counters = progress)
     write_json(
         run_dir / "progress.json", {**progress, "phase": "saving history"}
     )
-    output.update({**progress, "phase": "saving history"})
-    output.finish()
+    if output.compact_verb:
+        print("Saving history…", flush = True)
+    else:
+        output.update({**progress, "phase": "saving history"})
+        output.finish()
     try:
         deadlines.event(
             "saving history", site.roots["alluxio"], counters = progress
@@ -1063,7 +1070,7 @@ def _run(run_dir, site, home):
         history = publish_history(
             run_dir, site, state, rclone, progress, stopped, inline
         )
-        print(f"History: {history}", flush = True)
+        print(f"History: {history}/history.json", flush = True)
     except (OSError, ValueError) as error:
         print(
             f"Could not save history to Alluxio: {error}. Temporary records retained: {run_dir}",
@@ -1090,7 +1097,7 @@ def _run(run_dir, site, home):
             f"History saved; temporary records could not be removed: {run_dir}: {error}",
             flush = True,
         )
-    print(f"{progress['phase'].capitalize()}. History: {history}", flush = True)
+    print(f"{progress['phase'].capitalize()}.", flush = True)
     return 0 if progress["phase"] == "complete" else 1
 
 
@@ -1338,7 +1345,7 @@ def main():
             f"{specification['source']} → {specification['target']}"
         )
         print(
-            "Sources: delete each verified file."
+            "Sources: will be deleted."
             if specification["delete"]
             else "Sources: keep originals."
         )

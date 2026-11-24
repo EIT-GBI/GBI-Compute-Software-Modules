@@ -18,12 +18,14 @@ class CLIHelp(unittest.TestCase):
         for explanation in (
             "--archive", "chooses packing and part sizes",
             "Restores detect archives/chunks automatically",
-            "--help-all", "compatible with older deployments",
+            "compatible with older deployments",
             "unsupported requested options fail closed",
             "Moving Object Storage data to Lustre or FSS asks first",
             "delete_source=True",
         ):
             self.assertIn(explanation, text)
+        self.assertIn("--help", text)
+        self.assertNotIn("--help-all", text)
         self.assertNotIn("cannot use packing", text)
 
     def help_text(self, *arguments):
@@ -51,14 +53,16 @@ class CLIHelp(unittest.TestCase):
         self.assertIn("--delete-source", move)
         self.assertNotIn("_run", data)
 
-    def test_overviews_explain_everyday_options_without_exposing_tuning(self):
+    def test_overviews_show_supported_options(self):
         for arguments in ((), ("data",)):
             with self.subTest(arguments = arguments):
                 text       = self.help_text(*arguments)
                 normalized = " ".join(text.split())
                 for flag in (
                     "--include GLOB", "--exclude GLOB", "--archive",
-                    "--help-all", "--dry-run", "--detach", "--wait",
+                    "--archive-unit", "--pack", "--pack-small",
+                    "--chunk-size", "--local", "--job-size",
+                    "--dry-run", "--detach", "--wait",
                     "--prefect", "--watch", "--depth DEPTH", "--limit LIMIT",
                 ):
                     self.assertIn(flag, text)
@@ -85,6 +89,27 @@ class CLIHelp(unittest.TestCase):
                     self.assertNotIn(hidden, text)
                 self.assertNotIn("ordinary route only", normalized)
                 self.assertNotIn("_run", text)
+                self.assertNotIn("--help-all", text)
+
+    def test_copy_and_move_help_show_expert_options(self):
+        for verb in ("copy", "move"):
+            with self.subTest(verb = verb):
+                text = self.help_text("data", verb)
+
+                for flag in (
+                    "--archive",
+                    "--archive-unit SOURCE_RELATIVE",
+                    "--pack {tar,gzip}",
+                    "--pack-small",
+                    "--chunk-size SIZE",
+                    "--local",
+                    "--job-size {small,large}",
+                ):
+                    self.assertIn(flag, text)
+
+                self.assertNotIn("--help-all", text)
+                self.assertNotIn("--delete-source", text)
+
 
     def test_full_help_exposes_overrides_and_deletion_only_on_move(self):
         for arguments in ([], ["data"], ["data", "copy"], ["data", "move"]):
@@ -108,8 +133,8 @@ class CLIHelp(unittest.TestCase):
     def test_hidden_overrides_remain_parseable_for_existing_scripts(self):
         options = cli.parser().parse_args(
             [
-                "data", "copy", "src", "dst", "--pack-small", "--chunk-size",
-                "64MiB",
+                "data", "copy", "src", "dst",
+                "--pack-small", "--chunk-size", "64MiB",
             ]
         )
         self.assertTrue(options.pack_small)
@@ -137,6 +162,7 @@ class CLIHelp(unittest.TestCase):
             cli.parser().parse_args(
                 ["data", "copy", "src", "dst", "--local", "--prefect"]
             )
+
         self.assertEqual(raised.exception.code, 2)
         message = output.getvalue()
         self.assertIn("unsupported option combination", message)

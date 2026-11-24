@@ -22,7 +22,7 @@ can read and any path you can write, with Object Storage on one side.
 Archive features require matching site broker/flows.
 Restores detect archives/chunks automatically. Plain requests remain
 compatible with older deployments; unsupported requested options fail closed.
-Use --help-all for expert overrides and older scripted options.
+Use --help to see all options, including expert and older scripted options.
 Inside a Slurm job, ordinary CLI and Python calls reuse the current allocation.
 
 Command help: gbi data copy --help
