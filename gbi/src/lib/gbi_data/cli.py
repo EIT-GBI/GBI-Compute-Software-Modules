@@ -110,10 +110,6 @@ def parser():
         formatter_class = argparse.RawDescriptionHelpFormatter,
     )
     result.add_argument("--version", action = "version", version = __version__)
-    result.add_argument(
-        "--help-all", action = _FullHelp, nargs = 0,
-        help = "show all options, including expert and compatibility overrides",
-    )
     commands = result.add_subparsers(dest = "command", required = True)
     dataset_command = commands.add_parser(
         "dataset",
