@@ -18,6 +18,10 @@ pushd bin
 curl --fail --output simple-templates.ex ${STSRC}
 curl --fail --output simple-modules.ex ${SMSRC}
 
+# Keep the repository's chmod-only-when-needed fix for shared module
+# directories on the upstream helper (drop once upstream has it).
+patch --batch --forward -p0 < ../patches/simple-modules-module-dir-chmod.patch
+
 chmod u+x,o+x,g+x simple-templates.ex
 chmod u+x,o+x,g+x simple-modules.ex
 

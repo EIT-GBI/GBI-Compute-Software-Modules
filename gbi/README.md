@@ -34,6 +34,103 @@ unchanged. Object Storage originals and versions remain retained. A published
 module or image alone does not establish runtime acceptance; unsupported
 requests fail rather than silently changing the operation.
 
+**0.4.47** words `gbi dataset get|status` failures and waits plainly. It says
+what happened, whether it fixes itself, and what to do: a mistyped or unshared
+address says to check the located `bento://` address; a manifest Bento must fix
+says that rerunning will not help (and `get` no longer starts a run that would
+fail the same way); a stopped copy says files already copied are kept and how
+to resume. Before the copy is registered it says "Starting the copy" or
+"Checking Bento's manifest" instead of a bare Prefect state.
+
+**0.4.46** makes `gbi dataset status|get` report BILBO's record of the Bento
+version, read by the site broker with its own server-held reader credential:
+owning Prefect run, requester, and copied files and bytes against the manifest
+totals as a percentage. The path is printed as usable only when BILBO says the
+copy is ready and its cluster path is verified (or this node can read the
+copy's own ready record). A failure the copy flow marks permanent (for example
+a manifest fault) no longer suggests running `get` again; transient failures
+say they are retried automatically. The CLI no longer calls BILBO itself (the
+unused `dataset_register_url` setting is gone). Without the broker's BILBO
+credential it reports Prefect state as in 0.4.45.
+
+**0.4.45** adds `gbi dataset get BENTO_ADDRESS` and `gbi dataset status`.
+Given the located `bento://` address of a published Bento artefact version, `get`
+prints `/mnt/shared/bento/DATASET/ARTEFACT/VERSION` if GBI already holds it.
+Otherwise it asks the site broker to start the one shared Prefect copy (or
+reports the run already copying it) and prints the run ID and future path.
+Any account may ask; there is no approval step and no subsetting. Exit codes:
+0 ready, 3 requested or copying, 1 the last copy failed, 2 refused. It needs the
+broker's `bento-ingest` operation and the `bento-ingest/prod-bento-ingest`
+deployment ([Ingest Datasets From Bento](https://github.com/EIT-GBI/Scientific-Computing-Infrastructure/issues/147)).
+
+**0.4.44** makes `gbi data roots` describe what the current host can see.
+When no team shared folders are visible, it names the configured team root
+instead of claiming the caller is not in a team. Missing mounts or inaccessible
+paths can produce this result even when group membership is correct.
+This corrects the [unavailable-team diagnostic](https://github.com/EIT-GBI/gbi-data-platform-tracking/issues/54).
+
+**0.4.43** adds receipt-backed `gbi data retry ID` for stopped ordinary
+copy/move transfers, completing the ordinary retry source change for
+[repeated transfers and retry reporting](https://github.com/EIT-GBI/Scientific-Computing-Infrastructure/issues/123).
+Each retry creates a new run linked to the unchanged original history.
+Already moved files are checked again at their saved destinations and receive
+no additional freed-space credit. Managed retries retain their original
+request identity.
+
+**0.4.42** reports verified destination reuse accurately in ordinary transfers.
+Per-file output says `REUSED` when a copy verifies an identical destination;
+a move that removes its source after reuse says `MOVED` with
+`(reused destination)`. Progress and saved history retain the verified total
+and show how many worker results explicitly reported reuse. Older histories
+without that count keep their existing display. Verification, conflict checks
+and per-file source removal are unchanged. This addresses
+[truthful reuse reporting](https://github.com/EIT-GBI/Scientific-Computing-Infrastructure/issues/123).
+When `sbatch` is unavailable, Slurm submission now points to a Slurm login node
+or explains when omitting `--detach` allows foreground execution; no job is
+submitted. This addresses
+[submission guidance from non-Slurm hosts](https://github.com/EIT-GBI/Scientific-Computing-Infrastructure/issues/131).
+An unfiltered ordinary move also removes its now-empty named source folder
+after discovery and all file work succeed. The caller's current directory,
+its ancestors and storage roots are retained. Filtered or packed moves keep
+their existing behavior. This addresses
+[empty source folders left after ordinary moves](https://github.com/EIT-GBI/Scientific-Computing-Infrastructure/issues/117).
+
+**0.4.41** uses the configured HTTPS broker on both login and compute nodes,
+so broker updates can run independently of login sessions. The route uses the
+caller's existing Slurm user token. Sites without an HTTPS URL continue using
+the local Unix socket; an HTTPS error never switches to that socket. This is
+the CLI part of [independent broker delivery](https://github.com/EIT-GBI/gbi-sandpit-cluster/issues/1796);
+site broker routing and installation are separate delivery steps.
+
+**0.4.40** keeps transfer and cache monitoring connected through temporary
+broker outages. Status reads retry up to three times, after 2, 4 and 8 seconds;
+submissions are never retried automatically. Confirmed Prefect runs are polled
+by their run UUID, including when reconnecting with
+`gbi data status TRANSFER_ID --watch`. A lost submission reply still uses the
+original saved request ID. If monitoring remains unavailable, the CLI reports
+the last observed state and the exact reconnect command; it does not report
+the transfer or load as failed. Cache monitoring loss exits 3 (partial), while
+a confirmed failed load still exits 1. Authentication and permission refusals
+are reported immediately. These are source changes; site installation and
+runtime acceptance are separate.
+
+**0.4.39** shows why a `--prefect` transfer stopped. When the job refuses a
+path you cannot read or write, the CLI now prints that path and the reason
+instead of only the run's state; `gbi data status` shows the same line.
+
+**0.4.38** lets `--prefect` move data between any path you can read and any
+path you can write (Scientific-Computing-Infrastructure#120). The CLI sends the
+resolved absolute paths instead of paths relative to your personal roots; the
+broker maps the mounts and the transfer job checks permissions as you. Object
+Storage to Object Storage is the new `copy-objects` operation. `move` now
+follows one table on both routes: Lustre and FSS sources are removed after
+verification as before, and so are Object Storage sources moved to Object
+Storage. Moving Object Storage data to Lustre or FSS asks `[y/N]` on a
+terminal; `--delete-source` answers yes, and without a terminal or the flag
+the source is kept with one line saying so. `copy --delete-source` is refused.
+Python `data.move(..., delete_source=True)` passes the flag and never asks.
+Needs the matching broker and flows; older brokers refuse absolute paths.
+
 **0.4.37** stops restores reading what they just wrote
 (gbi-data-platform-tracking#44, pooled single-read restores). A file extracted
 from a packed archive is proved by the hash of the bytes handed to the writer
@@ -149,6 +246,18 @@ gbi data status TRANSFER_ID --watch
 gbi data usage --depth 1 --limit 20
 ```
 
+Warm Object Storage data as the first step of your job script with
+`gbi data cache PATH`. The site's always-on cache service submits the native
+Alluxio load, and the command waits for its result. Use `--detach` to return
+after submission, `gbi data status PATH` for current whole-path cache state,
+or the printed transfer ID to follow the original selection. Historical cache
+IDs retain their Prefect status lookup. See the
+[cache guide](docs/user-guide.md#load-data-into-the-cache-before-a-job).
+This source change does not establish site deployment or runtime acceptance.
+Install this CLI before switching the broker to the cache service. Until that
+switch, submissions and saved IDs continue to use the existing Prefect route;
+the service response selects native path status after the switch.
+
 `usage` prints a compact Lustre/FSS summary followed by the largest folders
 from the latest published Lustre inventory. Lustre is your live UID quota; FSS
 and the folder report come from the snapshot the site publishes weekly
@@ -234,10 +343,40 @@ without opening the Prefect UI. One endpoint must be personal Lustre/FSS
 and the other personal Object Storage. Ordinary routing can use any mounted
 path your Unix account can access. See the guide for site-version requirements.
 
-After failure, confirm workers stopped and inspect receipts before repeating
-the same command. Keep recovery state. `gbi data retry TRANSFER_ID` is only
-for a lost Prefect submission reply, not for restarting an already failed flow
-or ordinary transfer. An observation timeout does not prove a job stopped.
+After failure, keep the recovery state and use `gbi data retry TRANSFER_ID`
+(or an unambiguous Slurm job ID) for an ordinary file/link transfer. The CLI
+requires terminal history, refuses live or unresolved prior workers, and uses
+the saved exact paths, filters and deletion consent. It creates a fresh run;
+the original history remains unchanged. A detached transfer stays detached;
+use `--wait` to follow it. An allocation transfer reuses your current allocation
+or submits a new Slurm job if you are outside one.
+
+Existing sources pass the usual checksum, destination reuse and owned-partial
+recovery checks. Across nodes, retry ignores only the mount's device ID and
+still requires the saved inode, type, size and modification time. Previously
+verified sources also require a fresh source checksum. A changed or replaced
+source is retained; filesystems that assign a different inode cannot establish
+this identity and are refused. Inspect the history and use the original command
+for a fresh selection in that case.
+An absent source needs an acknowledged deletion receipt and a fresh destination
+checksum under the transfer lock. Missing or changed destinations fail safely;
+a verification receipt alone does not acknowledge source removal. Output and
+new history distinguish copied, reused, already moved, and failed files.
+Already moved files are included in reused counts, with zero newly freed bytes.
+An absent empty directory is checked against its existing destination directory;
+it receives no file or freed-space credit, and retry does not recreate it.
+A failed worker may have completed some receipt-backed work before its result
+was lost; a failure count does not mean those sources are still present.
+
+A saved finite selection is preserved. Older streaming requests have no complete
+saved file inventory: retry rechecks recorded files and rediscovers the original
+root and filters, including files not previously started. It explicitly reports
+that the original undiscovered remainder is unknown. An absent streaming source
+root is accepted only with completed discovery and matching receipt coverage.
+Archive/packed/chunked units use their existing original-command recovery path;
+ordinary retry refuses to reinterpret their manifests. A managed retry resends
+the identical saved request after a lost submission reply; it does not restart
+a failed flow. An observation timeout never proves a job stopped.
 
 ## Python
 

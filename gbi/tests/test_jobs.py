@@ -2,9 +2,11 @@
 
 import json
 import io
+import os
 from pathlib import Path
 import shutil
 import tempfile
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
@@ -150,3 +152,50 @@ class JobLookup(unittest.TestCase):
         self.assertEqual(jobs.locate(self.home, "271828", self.archive), run)
         with self.assertRaisesRegex(ValueError, "no transfer record"):
             jobs.locate(self.home, "314159", self.archive)
+
+    def test_progress_reports_reuse_without_inventing_older_history_counts(self):
+        progress = {
+            "phase": "failed", "files": 2, "bytes": 20, "freed": 10,
+            "failed": 1, "elapsed": 2,
+        }
+        for display in (jobs.display, jobs.terminal_display):
+            with self.subTest(display = display.__name__):
+                self.assertNotIn("reused", display(progress))
+                self.assertIn("(1 reused)", display({**progress, "reused": 1}))
+                self.assertIn("failed 1", display({**progress, "reused": 1}))
+
+
+class Submission(unittest.TestCase):
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.run_dir = Path(temporary.name)
+        self.site = SimpleNamespace(values = {
+            "partition": "cpu", "time_limit": "01:00:00", "cpus": "1", "mem": "1G",
+        })
+
+    def test_missing_sbatch_gives_guidance_without_attempting_submission(self):
+        with (
+            patch.dict(os.environ, {"PATH": ""}),
+            patch("gbi_data.jobs.subprocess.run") as run,
+            self.assertRaisesRegex(ValueError, "Slurm login node.*omit --detach.*No job was submitted"),
+        ):
+            jobs.submit(self.run_dir, ["gbi", "data", "copy"], self.site)
+        run.assert_not_called()
+        self.assertFalse((self.run_dir / "job.sh").exists())
+        self.assertFalse((self.run_dir / "slurm.json").exists())
+
+    def test_existing_sbatch_path_submits_and_preserves_other_os_errors(self):
+        executable = self.run_dir / "sbatch"
+        executable.write_text("#!/bin/sh\nprintf '314159;cluster\\n'\n")
+        executable.chmod(0o700)
+        with patch.dict(os.environ, {"PATH": str(self.run_dir)}):
+            self.assertEqual(jobs.submit(self.run_dir, ["gbi", "data", "copy"], self.site), "314159")
+            self.assertEqual(json.loads((self.run_dir / "slurm.json").read_text()), {"job_id": "314159"})
+            error = PermissionError("submission permission denied")
+            with (
+                patch("gbi_data.jobs.subprocess.run", side_effect = error),
+                self.assertRaises(PermissionError) as raised,
+            ):
+                jobs.submit(self.run_dir, ["gbi", "data", "copy"], self.site)
+            self.assertIs(raised.exception, error)

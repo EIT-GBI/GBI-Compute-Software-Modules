@@ -1,3 +1,0 @@
-#%Module
-module-forbid-regex BB/\[12\]%.
-

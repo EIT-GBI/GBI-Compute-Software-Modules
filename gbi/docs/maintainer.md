@@ -127,10 +127,12 @@ plus a pinned-identity listing) pass that proof as `verify_stored_archive`
 instead of re-reading the archive.
 
 `GBI_SITE_PREFECT_URL` must be an HTTPS URL without credentials, query
-parameters or fragments. The CLI tries the local broker socket first and uses
-the HTTPS endpoint only when that socket is unavailable. HTTPS uses the caller's
-short-lived Slurm token in memory; no token or cloud credential belongs in a
-request file or public documentation.
+parameters or fragments. When configured, the CLI uses that endpoint on both
+login and compute nodes, even when a local broker socket exists. The local
+socket is used only when no HTTPS endpoint is configured. An HTTPS failure
+never falls back to the socket. HTTPS uses the caller's short-lived Slurm token
+in memory; no token or cloud credential belongs in a request file or public
+documentation.
 
 Storage roots are conveniences and storage-type hints, not a general ordinary
 transfer allowlist. The ordinary route classifies mounted filesystem paths and

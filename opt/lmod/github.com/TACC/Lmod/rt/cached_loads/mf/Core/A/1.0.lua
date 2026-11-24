@@ -1,2 +1,0 @@
-setenv("ME",myModuleFullName())
-

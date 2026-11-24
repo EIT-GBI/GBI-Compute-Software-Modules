@@ -16,6 +16,7 @@ DEFAULTS = {
     "inline_probe_seconds": "5", "mount_timeout": "120",
     "discovery_timeout": "120", "history_timeout": "1800",
     "prefect_socket": "/run/gbi-data/prefect.sock",
+    "bento_root": "/mnt/shared/bento",
     "prefect_url": "", "pack_small_bytes": "65536", "pack_min_files": "40",
     "pack_max_bytes": "1073741824",
     # `gbi data roots`: team folders live under team_root as
@@ -24,6 +25,13 @@ DEFAULTS = {
     # statements that change on a schedule; edit them in site.conf.
     "team_root": "/mnt/team",
     "readonly_roots": "/mnt/instrument-data /mnt/lmb-data /mnt/shared /mnt/archive",
+    # --prefect treats paths below these (and team_root and readonly_roots)
+    # as Object Storage even where the mount table names another type.
+    "object_roots": (
+        "/mnt/team /mnt/shared /mnt/archive /mnt/sequencing-data"
+        " /mnt/user-data /mnt/instrument-data /mnt/lmb-data"
+        " /mnt/.alluxio-personal /mnt/.alluxio-shared"
+    ),
     "lustre_note": (
         "- Lifecycle rules will expire untouched files soon:"
         " move data you want to keep to alluxio"

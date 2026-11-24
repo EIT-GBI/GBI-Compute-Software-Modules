@@ -1,5 +1,7 @@
-"""Object Storage retention applies before planning and saved-request writes."""
+"""Object Storage source removal follows the move table, inside one mount."""
 
+import contextlib
+import io
 import json
 import os
 from pathlib import Path
@@ -10,7 +12,7 @@ from unittest.mock import patch
 
 from gbi_data import cli, formats, prefect
 from gbi_data.storage import Site
-from gbi_data.transfer import transfer
+from gbi_data.transfer import transfer, validate_source_retention
 
 
 class ObjectRetention(unittest.TestCase):
@@ -33,62 +35,90 @@ class ObjectRetention(unittest.TestCase):
         self.source.write_bytes(b"durable original")
         self.target = self.site.roots["fss"] / "restore"
 
-    def test_explicit_deletion_rejected_before_route_or_format_inspection(self):
-        for verb in ("copy", "move"):
-            for flags in (
-                [], ["--pack", "tar"], ["--pack", "gzip"], ["--pack-small"],
-                ["--chunk-size", "4KiB"],
+    def test_copy_deletion_flag_rejected_before_route_or_format_inspection(self):
+        for flags in (
+            [], ["--pack", "tar"], ["--pack", "gzip"], ["--pack-small"],
+            ["--chunk-size", "4KiB"],
+        ):
+            options = cli.parser().parse_args(
+                [
+                    "data", "copy", "missing", "missing-target",
+                    "--delete-source", *flags,
+                ]
+            )
+            with (
+                self.subTest(flags = flags),
+                patch.object(
+                    self.site, "classify",
+                    side_effect = AssertionError("route inspected"),
+                ),
             ):
-                options = cli.parser().parse_args(
-                    [
-                        "data", verb, "missing", "missing-target",
-                        "--delete-source", *flags,
-                    ]
-                )
-                with (
-                    self.subTest(verb = verb, flags = flags),
-                    patch.object(
-                        self.site, "classify",
-                        side_effect = AssertionError("route inspected"),
-                    ),
-                ):
-                    for planner in (cli.plan, prefect.prepare):
-                        with self.assertRaisesRegex(
-                            ValueError, "--delete-source is not supported"
-                        ):
-                            planner(options, self.site)
+                for planner in (cli.plan, prefect.prepare):
+                    with self.assertRaisesRegex(
+                        ValueError, "applies only to move"
+                    ):
+                        planner(options, self.site)
 
-    def test_old_destructive_request_fails_before_state_or_destination_creation(
-                self,
-            ):
+    def test_object_source_moves_ask_and_keep_without_a_terminal(self):
         options = cli.parser().parse_args(
             ["data", "move", str(self.source), str(self.target)]
         )
+        output = io.StringIO()
+        with (
+            patch("gbi_data.moves.terminal", return_value = False),
+            contextlib.redirect_stdout(output),
+        ):
+            self.assertFalse(cli.plan(options, self.site)["delete"])
+        self.assertIn("keeping the Object Storage source", output.getvalue())
+        for answer, delete in (("y", True), ("N", False)):
+            with (
+                self.subTest(answer = answer),
+                patch("gbi_data.moves.terminal", return_value = True),
+                patch("builtins.input", return_value = answer),
+                contextlib.redirect_stdout(io.StringIO()),
+            ):
+                self.assertEqual(cli.plan(options, self.site)["delete"], delete)
+        options.delete_source = True
+        with patch("builtins.input") as ask:
+            self.assertTrue(cli.plan(options, self.site)["delete"])
+        ask.assert_not_called()
+        between = cli.parser().parse_args(
+            [
+                "data", "move", str(self.source),
+                str(self.site.roots["alluxio"] / "moved"),
+            ]
+        )
+        with patch("builtins.input") as ask:
+            self.assertTrue(cli.plan(between, self.site)["delete"])
+        ask.assert_not_called()
+
+    def test_retired_delete_source_field_fails_before_state_or_destination(
+                self,
+            ):
+        options = cli.parser().parse_args(
+            ["data", "copy", str(self.source), str(self.target)]
+        )
         specification = cli.plan(options, self.site)
-        self.assertFalse(specification["delete"])
         run_dir = self.base / "saved-request"
         run_dir.mkdir()
         request = run_dir / "request.json"
         home    = self.base / "scratch-state"
-        for obsolete in ({"delete": True}, {"delete_source": True}):
-            request.write_text(json.dumps({**specification, **obsolete}))
-            before = request.read_bytes()
-            with (
-                self.subTest(obsolete = obsolete),
-                self.assertRaisesRegex(ValueError, "durable"),
-            ):
-                cli.run(run_dir, self.site, home)
-            self.assertEqual(request.read_bytes(), before)
-            self.assertEqual(self.source.read_bytes(), b"durable original")
-            self.assertFalse(home.exists())
-            self.assertFalse(self.target.exists())
+        request.write_text(json.dumps({**specification, "delete_source": True}))
+        before = request.read_bytes()
+        with self.assertRaisesRegex(ValueError, "retired delete_source"):
+            cli.run(run_dir, self.site, home)
+        self.assertEqual(request.read_bytes(), before)
+        self.assertEqual(self.source.read_bytes(), b"durable original")
+        self.assertFalse(home.exists())
+        self.assertFalse(self.target.exists())
 
-    def test_old_plain_empty_and_encoded_worker_tasks_fail_before_io(self):
+    def test_retired_worker_field_fails_before_io(self):
         for action in (
             None, "pack", "chunk", "restore_archive", "restore_chunks",
         ):
             task = {
                 "source_kind": "alluxio", "delete": True,
+                "delete_source": True,
                 "source": str(self.source), "target": str(self.target),
             }
             if action:
@@ -103,11 +133,31 @@ class ObjectRetention(unittest.TestCase):
                         self.subTest(
                             action = action, empty = empty, worker = worker.__module__
                         ),
-                        self.assertRaisesRegex(ValueError, "durable"),
+                        self.assertRaisesRegex(ValueError, "retired"),
                     ):
                         worker(task)
         self.assertEqual(self.source.read_bytes(), b"durable original")
         self.assertFalse(self.target.exists())
+
+    def test_object_source_must_lie_inside_one_object_mount(self):
+        root = self.site.roots["alluxio"]
+        for source_kind, source, allowed in (
+            ("alluxio", root / "source", True),
+            ("alluxio", root, False),
+            ("alluxio", root.parent, False),
+        ):
+            task = {
+                "source_kind": source_kind, "delete": True,
+                "source": str(source),
+            }
+            with self.subTest(source = source):
+                if allowed:
+                    validate_source_retention(task, self.site.storage_roots)
+                else:
+                    with self.assertRaisesRegex(
+                        ValueError, "overlaps an Object Storage root"
+                    ):
+                        validate_source_retention(task, self.site.storage_roots)
 
     def test_filesystem_parent_of_object_mount_fails_closed_including_saved_pack(
                 self,

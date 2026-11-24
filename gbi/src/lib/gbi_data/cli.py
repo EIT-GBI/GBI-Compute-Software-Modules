@@ -19,12 +19,13 @@ import uuid
 from . import __version__
 from . import jobs
 from . import deadlines
-from . import cache, prefect
+from . import cache, dataset, moves, prefect, retry
 from . import format_selection, packing, roots, usage
 from .selection import entries, probe, stream_entries
-from .storage import Site, overlap
+from .storage import Site, fingerprint, overlap
 from .transfer import (
-    ensure_parent, receipt, validate_source_retention, write_json,
+    can_remove_source_root, ensure_parent, receipt, remove_empty_source_root,
+    validate_source_retention, write_json,
 )
 
 
@@ -76,8 +77,9 @@ def command_reference(verbs):
         formatter.start_section(title)
         if name == "move":
             formatter.add_text(
-                "copy keeps sources. move removes eligible sources only after verification.\n"
-                "Object Storage originals are durable and always retained."
+                "copy keeps sources. move removes the source after verification.\n"
+                "Moving Object Storage data to Lustre or FSS asks first; without a\n"
+                "terminal the source is kept unless you add --delete-source."
             )
         else:
             formatter.add_text(command.description)
@@ -102,26 +104,60 @@ def parser():
             "  gbi data usage projects --depth 2 --limit 10\n\n"
             "For a command's usage and examples,\n"
             "use e.g. `gbi data copy --help` or `gbi data usage --help`.\n"
-            "Ordinary transfers use site classification and normal Unix permissions;\n"
-            "--prefect additionally requires both paths to be inside the roots that\n"
-            "`gbi data roots` prints."
+            "Ordinary and --prefect transfers both run with your normal Unix\n"
+            "permissions; --prefect needs an Object Storage mount on one side."
         ),
         formatter_class = argparse.RawDescriptionHelpFormatter,
     )
     result.add_argument("--version", action = "version", version = __version__)
-    data = result.add_subparsers(dest = "command", required = True).add_parser(
+    result.add_argument(
+        "--help-all", action = _FullHelp, nargs = 0,
+        help = "show all options, including expert and compatibility overrides",
+    )
+    commands = result.add_subparsers(dest = "command", required = True)
+    dataset_command = commands.add_parser(
+        "dataset",
+        help = "get whole Tier 0 Bento datasets onto /mnt/shared/bento",
+        description = (
+            "Copy a whole published Bento artefact version into GBI storage, read-only\n"
+            "for everyone at /mnt/shared/bento/DATASET/ARTEFACT/VERSION. `get` prints the\n"
+            "path if GBI already holds it; otherwise it starts the shared copy (or reports\n"
+            "the one already running) and prints its Prefect run ID. Anyone may ask; there\n"
+            "is no approval step and nothing is subset. Exit codes: 0 ready, 3 copy\n"
+            "requested or running, 1 the last copy failed, 2 refused."
+        ),
+        epilog = (
+            "Address: copy the located bento:// address of a version from the Bento GUI.\n"
+            "Examples:\n"
+            "  gbi dataset get bento://us-ashburn-1/psto-iad-drplab-allthebacteria-bucket@lr40ytmfucrr/"
+            "allthebacteria/allthebacteria_base@2026-08-28a\n"
+            "  gbi dataset status bento://...  # the same address"
+        ),
+        formatter_class = argparse.RawDescriptionHelpFormatter,
+    )
+    dataset_verbs = dataset_command.add_subparsers(dest = "dataset_verb", required = True)
+    for name, text in (
+        ("get", "print the path, or start the copy and print its run ID"),
+        ("status", "report the copy of an address without starting one"),
+    ):
+        verb = dataset_verbs.add_parser(name, help = text, description = text)
+        verb.add_argument("address", metavar = "BENTO_ADDRESS",
+                          help = "bento://REGION/BUCKET@NAMESPACE/DATASET/ARTEFACT@VERSION")
+        verb.add_argument("--json", action = "store_true", help = "print one JSON line")
+    data = commands.add_parser(
         "data",
         help = "move data, inspect transfer state, or report usage",
         description = (
             "Public data commands. `copy` keeps the source; `move` removes only sources\n"
-            "whose verified deletion policy allows it. `status` and `retry` use a saved\n"
-            "transfer ID; `usage` reads live quota and the owner-scoped Lustre snapshot."
+            "whose verified deletion policy allows it. `status` accepts a saved transfer\n"
+            "ID or a cache path; `retry` uses a saved transfer ID. `usage` reads live\n"
+            "quota and the owner-scoped Lustre snapshot."
         ),
         formatter_class = argparse.RawDescriptionHelpFormatter,
     )
     verbs = data.add_subparsers(
         dest = "verb", required = True,
-        metavar = "{copy,move,status,retry,roots,usage}",
+        metavar = "{copy,move,status,retry,roots,usage,cache}",
     )
     for verb in ("copy", "move"):
         command = verbs.add_parser(
@@ -133,9 +169,10 @@ def parser():
                     "SOURCE and DESTINATION may be files or directories; the source remains."
                     if verb == "copy"
                     else "Copy SOURCE to DESTINATION and independently verify every "
-                    "file before removing\n"
-                    "eligible filesystem sources. Object Storage originals are "
-                    "durable and always retained."
+                    "file, then remove\n"
+                    "the source. Moving Object Storage data to Lustre or FSS asks "
+                    "first; without a\n"
+                    "terminal the source is kept unless you add --delete-source."
                 )
             ),
             formatter_class = argparse.RawDescriptionHelpFormatter,
@@ -152,10 +189,11 @@ def parser():
                 "resumable part sizes. Restore that root to Lustre or FSS with "
                 "an ordinary copy.\n"
                 "No packing or chunk-size choices are needed for restore.\n\n"
-                "--prefect submits personal Object Storage transfers through "
-                "the site's broker.\n"
+                "--prefect submits the transfer through the site's broker: any path you can\n"
+                "read to any path you can write on Lustre, FSS and Object Storage mounts,\n"
+                "with Object Storage on at least one side. The transfer job checks\n"
+                "permissions as you before any data moves.\n"
                 "Archive previews may create managed tracking records, but never change data.\n"
-                "Object Storage originals are durable and always retained by every route.\n"
                 "After a lost submission reply: gbi data retry ID (same saved request).\n\n"
                 f"Examples:\n  gbi data {verb} SOURCE DESTINATION --dry-run\n"
                 f"  gbi data {verb} SOURCE DESTINATION --archive\n"
@@ -222,7 +260,13 @@ def parser():
             ),
         )
         command.add_argument(
-            "--delete-source", action = "store_true", help = argparse.SUPPRESS
+            "--delete-source", action = "store_true",
+            help = (
+                "remove an Object Storage source after verification without "
+                "asking"
+                if verb == "move"
+                else argparse.SUPPRESS
+            ),
         )
         command.add_argument(
             "--dry-run", action = "store_true",
@@ -248,7 +292,10 @@ def parser():
         )
         execution.add_argument(
             "--prefect", action = "store_true",
-            help = "submit a personal Object Storage migration through Prefect",
+            help = (
+                "submit through the site's Prefect service; Object Storage on "
+                "at least one side"
+            ),
         )
         command.add_argument(
             "--job-size", choices = ("small", "large"),
@@ -259,14 +306,22 @@ def parser():
             ),
         )
     status = verbs.add_parser(
-        "status", help = "show a saved transfer's progress",
-        description = "Show progress for a Slurm job ID or printed transfer ID.",
-        epilog = "Examples:\n  gbi data status 123456\n  gbi data status TRANSFER_ID --watch",
+        "status", help = "show transfer progress or a path's cache state",
+        description = (
+            "Show progress for a Slurm job ID, printed transfer ID, or an Object\n"
+            "Storage cache path. A path shows current state for the whole path;\n"
+            "a cache transfer ID keeps its original --include selection."
+        ),
+        epilog = (
+            "Examples:\n  gbi data status 123456\n"
+            "  gbi data status TRANSFER_ID --watch\n"
+            "  gbi data status /mnt/team/my-lab/shared/reference --watch"
+        ),
         formatter_class = argparse.RawDescriptionHelpFormatter,
     )
     status.add_argument(
-        "job_id", metavar = "JOB_OR_TRANSFER_ID",
-        help = "Slurm job ID, or a printed transfer ID when the job has several transfers",
+        "job_id", metavar = "JOB_OR_TRANSFER_ID_OR_PATH",
+        help = "Slurm job ID, printed transfer ID, or Object Storage path",
     )
     status.add_argument(
         "--watch", action = "store_true",
@@ -274,21 +329,22 @@ def parser():
     )
     retry = verbs.add_parser(
         "retry",
-        help = "resend one unchanged, saved Prefect request after interruption/failure",
+        help = "resume a saved ordinary transfer or resend a managed request",
         description = (
-            "Retry only a saved Prefect request; ordinary transfers are rerun "
-            "with their original command."
+            "Retry a stopped ordinary transfer in a new run using its saved "
+            "paths, filters and receipts. Already moved files are reverified. "
+            "A managed request is resent unchanged after a lost reply."
         ),
         epilog = "Example:\n  gbi data retry TRANSFER_ID --wait",
         formatter_class = argparse.RawDescriptionHelpFormatter,
     )
     retry.add_argument(
         "job_id", metavar = "TRANSFER_ID",
-        help = "printed ID of the saved Prefect request",
+        help = "printed transfer ID or unambiguous Slurm job ID",
     )
     retry.add_argument(
         "--wait", action = "store_true",
-        help = "wait for the existing transfer's result",
+        help = "wait for the transfer result",
     )
     verbs.add_parser(
         "roots",
@@ -332,11 +388,17 @@ def parser():
         "cache",
         help = "load paths into the Object Storage cache before a job reads them",
         description = (
-            "Load files below PATH into the Object Storage cache before a job reads them.\n"
-            "Use this as the first line of a job script or in a prolog. Paths must be inside\n"
-            "an accessible Object Storage (Alluxio) mount you can read.\n"
-            "--include keeps only files that whose name matches a pattern.\n"
-            "Exit codes: 0 cached, 1 failed, 2 refused, 3 wait timed out."
+            "Load every file below PATH into the Object Storage cache so a job\n"
+            "reads warm blocks. The site's broker submits one native load and every\n"
+            "storage worker serves it in parallel, so the data lands in the cache\n"
+            "faster than any single reader could pull it; nothing is read on this\n"
+            "node. Returns when the blocks are cached; repeating it is cheap. Use it\n"
+            "as the first step of your job script. Paths must be inside\n"
+            "an Object Storage (Alluxio) mount you can read: your member folder, a\n"
+            "team or shared mount, or sequencing data under /mnt/instrument-data.\n"
+            "--include keeps only files whose name matches a pattern. Exit codes:\n"
+            "0 cached, 1 the load failed, 2 refused, 3 stopped waiting at --timeout\n"
+            "(the load itself continues)."
         ),
         epilog = (
             "Examples:\n  gbi data cache /mnt/team/my-lab/members/$USER/dataset\n"
@@ -383,11 +445,7 @@ def parser():
 
 
 def plan(options, site):
-    if options.delete_source:
-        raise ValueError(
-            "--delete-source is not supported; Object Storage originals are "
-            "durable and always retained"
-        )
+    moves.refuse_copy_deletion(options)
     if getattr(options, "job_size", None) is not None:
         raise ValueError(
             "--job-size is supported only for --prefect restores to Lustre or FSS"
@@ -409,7 +467,12 @@ def plan(options, site):
         target /= source.name
     if overlap(source, target):
         raise ValueError("source and destination must not overlap")
-    delete = options.verb == "move" and source_kind != "alluxio"
+    delete = moves.deletes(options, source_kind, target_kind, source)
+    if delete:
+        moves.check_removable(
+            source, int(site.values["inline_scan_entries"]),
+            float(site.values["inline_probe_seconds"]),
+        )
     specification = {
         "source": str(source), "target": str(target),
         "source_kind": source_kind, "target_kind": target_kind,
@@ -442,12 +505,14 @@ def plan(options, site):
         if getattr(options, "pack_small", False)
         else None
     )
-    return format_selection.configure(
+    specification = format_selection.configure(
         specification, site, pack = getattr(options, "pack", None),
         chunk_size = getattr(options, "chunk_size", None),
         packing_policy = policy,
         archive = getattr(options, "archive", False),
     )
+    specification["remove_empty_source_root"] = can_remove_source_root(specification)
+    return specification
 
 
 def execution_plan(specification, site, options):
@@ -487,6 +552,16 @@ def execution_plan(specification, site, options):
     }
 
 
+def worker_group_stopped(pid):
+    try:
+        os.killpg(pid, 0)
+    except ProcessLookupError:
+        return True
+    except PermissionError:
+        pass
+    return False
+
+
 def supervise(task, timeout, stopped):
     """Bound all per-file I/O, including close and verification, in a process."""
     process = subprocess.Popen(
@@ -510,12 +585,13 @@ def supervise(task, timeout, stopped):
                 except subprocess.TimeoutExpired:
                     pass
             process.stdout.close()
-            unresolved = process.poll() is None
+            unresolved = process.poll() is None or not worker_group_stopped(process.pid)
             deadlines.event(
                 worker_finished = process.pid,
                 **({"unresolved": process.pid} if unresolved else {}),
             )
             return {
+                "workers_stopped": not unresolved,
                 "error": f"interrupted or timed out: worker PID {process.pid}; "
                 + (
                     "kernel I/O may still be active; confirm terminal state before retrying; "
@@ -528,18 +604,30 @@ def supervise(task, timeout, stopped):
             process.wait(timeout = 0.2)
         except subprocess.TimeoutExpired:
             pass
+    if not worker_group_stopped(process.pid):
+        process.stdout.close()
+        deadlines.event(worker_finished = process.pid, unresolved = process.pid)
+        return {
+            "error": "transfer worker group remains active; inspect worker PIDs before retrying",
+            "workers_stopped": False,
+        }
     output = process.stdout.read()
     process.stdout.close()
     deadlines.event(worker_finished = process.pid)
     if process.returncode:
         return {
-            "error": f"transfer worker exited {process.returncode}; inspect receipts"
+            "error": f"transfer worker exited {process.returncode}; inspect receipts",
+            "workers_stopped": True,
         }
     try:
-        return json.loads(output)
+        result = json.loads(output)
+        if not isinstance(result, dict):
+            raise ValueError("worker result must be an object")
+        return {**result, "workers_stopped": True}
     except ValueError:
         return {
-            "error": "transfer worker returned no valid result; inspect receipts"
+            "error": "transfer worker returned no valid result; inspect receipts",
+            "workers_stopped": True,
         }
 
 
@@ -601,27 +689,48 @@ def _run(run_dir, site, home):
     source_root, target_root = Path(specification["source_root"]), Path(
         specification["target_root"]
     )
+    if specification["directory"] and os.path.lexists(source) and (
+        source.is_symlink() or not source.is_dir()
+    ):
+        raise ValueError("saved source directory changed; source kept")
     state = home / "state"
     deadlines.event("preparing transfer state", state)
     for path in (state / "locks", state / "pending", run_dir / "active"):
         path.mkdir(parents = True, exist_ok = True, mode = 0o700)
-    if specification["directory"]:
+    if specification["directory"] and not (
+        specification.get("retry_from") and not os.path.lexists(source)
+    ):
         deadlines.event("preparing destination", target)
         ensure_parent(target / ".placeholder", target_root)
+    source_cleanup = None
+    if (
+        specification.get("remove_empty_source_root")
+        and can_remove_source_root(specification) and source.exists()
+    ):
+        source_cleanup = (fingerprint(source)[:3], fingerprint(target)[:3])
     stopped = threading.Event()
     for signum in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
         signal.signal(signum, lambda *_: stopped.set())
     started, last_publish, last_display, discovery_wait = time.monotonic(), 0.0, 0.0, 0.0
     discovery_progress = None
     progress = {
-        "phase": "running", "files": 0, "bytes": 0, "freed": 0, "failed": 0,
+        "phase": "running", "files": 0, "reused": 0, "already_moved": 0,
+        "workers_stopped": True,
+        "bytes": 0, "freed": 0, "failed": 0,
         "discovered_files": 0, "discovered_bytes": 0,
         "discovery_complete": False, "elapsed": 0, "active": 0,
         "active_bytes": 0, "coordinator_pid": os.getpid(),
         "hostname": socket.gethostname(),
         "coordinator_identity": jobs.process_identity(os.getpid()),
     }
+    if specification.get("retry_from"):
+        progress["copied"] = 0
+        progress["original_inventory_known"] = selected is not None
     iterator = iter(selected) if selected is not None else None
+    unit_iterator = (
+        retry.entries if specification.get("retry_from")
+        else format_selection.iter_units
+    )
     discovery = (
         None
         if selected is not None
@@ -630,17 +739,18 @@ def _run(run_dir, site, home):
             exclusions = specification.get("exclude", []),
             **(
                 {
-                    "iterator_factory": lambda on_error, visit: format_selection.iter_units(
+                    "iterator_factory": lambda on_error, visit: unit_iterator(
                         specification, site, on_error, visit
                     )
                 }
-                if specification.get("format_units")
+                if specification.get("format_units") or specification.get("retry_from")
                 else {}
             ),
         )
     )
     file_specification = {
-        key: value for key, value in specification.items() if key != "selection"
+        key: value for key, value in specification.items()
+        if key not in ("selection", "retry_receipts", "retry_missing")
     }
     pending       = {}
     counted_bytes = {}
@@ -648,11 +758,11 @@ def _run(run_dir, site, home):
     width         = int(site.values["jobs"])
     output        = jobs.ProgressDisplay(compact_verb = specification["verb"])
 
-    def record_failure(path, error):
+    def record_failure(path, error, workers_stopped = True):
         progress["failed"] += 1
         record = {
             "event": "failed", "source": str(path), "error": str(error),
-            "time": time.time(),
+            "time": time.time(), "workers_stopped": workers_stopped,
         }
         deadlines.event(
             "writing failure receipt", run_dir / "receipts.jsonl",
@@ -663,6 +773,7 @@ def _run(run_dir, site, home):
         print(f"{jobs.timestamp()} FAILED {path}: {error}", flush = True)
 
     def schedule(entry):
+        nonlocal source_cleanup
         if isinstance(entry, dict):
             unit = {
                 **entry,
@@ -675,6 +786,13 @@ def _run(run_dir, site, home):
         else:
             path, empty = entry
             unit = {}
+        if unit.get("format_action"):
+            if specification.get("retry_from"):
+                raise ValueError(
+                    "retry encountered an archive/packed unit; repeat its "
+                    "original command with recovery state"
+                )
+            source_cleanup = None
         active = run_dir / "active" / (uuid.uuid4().hex + ".json")
         task = {
             **file_specification, "source": str(path), "target": str(target),
@@ -693,6 +811,7 @@ def _run(run_dir, site, home):
             ),
             "native_bytes": int(site.values["native_bytes"]),
             "target_base": True, "empty": empty, **unit,
+            "retry_receipt": specification.get("retry_receipts", {}).get(str(path)),
         }
         if not empty:
             progress["discovered_files"] += 1
@@ -812,19 +931,34 @@ def _run(run_dir, site, home):
                     )
                     active.unlink(missing_ok = True)
                     if "error" in outcome:
-                        record_failure(path, outcome["error"])
+                        workers_stopped = not retry.uncertain_worker(outcome)
+                        if not workers_stopped:
+                            progress["workers_stopped"] = False
+                        record_failure(path, outcome["error"], workers_stopped)
                     elif not empty:
                         progress["files"] += 1
+                        reused = outcome.get("reused", False)
+                        progress["reused"] += int(reused)
+                        progress["already_moved"] += int(
+                            outcome.get("already_moved", False)
+                        )
+                        if "copied" in progress:
+                            progress["copied"] += int(not reused)
                         progress["bytes"] += outcome["bytes"]
                         progress["freed"] += outcome.get(
                             "freed_bytes",
                             outcome["bytes"] if outcome["deleted"] else 0,
                         )
                         if not output.terminal:
+                            action = (
+                                "ALREADY MOVED" if outcome.get("already_moved")
+                                else "MOVED" if outcome["deleted"]
+                                else "REUSED" if reused else "COPIED"
+                            )
+                            detail = " (reused destination)" if reused and outcome["deleted"] else ""
                             print(
-                            f"{jobs.timestamp()} VERIFIED "
-                            f"{'MOVED' if outcome['deleted'] else 'COPIED'} "
-                            f"{path} bytes={outcome['bytes']}",
+                                f"{jobs.timestamp()} VERIFIED {action} "
+                                f"{path} bytes={outcome['bytes']}{detail}",
                                 flush = True,
                             )
                 now = time.monotonic()
@@ -874,12 +1008,22 @@ def _run(run_dir, site, home):
                     )
     except (OSError, ValueError) as error:
         stopped.set()
+        progress["workers_stopped"] = progress["workers_stopped"] and not pending
         progress["failed"] += 1
         output.finish()
         print(f"FAILED discovery: {error}", flush = True)
     finally:
         if discovery is not None:
             discovery.stop()
+    if (
+        source_cleanup is not None and progress["discovery_complete"]
+        and not pending and not progress["failed"] and not stopped.is_set()
+    ):
+        try:
+            deadlines.event("removing empty source directory", source, counters = progress)
+            remove_empty_source_root(specification, *source_cleanup)
+        except (OSError, ValueError) as error:
+            record_failure(source, error)
     progress["phase"] = (
         "failed"
         if progress["failed"]
@@ -1031,6 +1175,78 @@ def publish_history(
     return destination
 
 
+def start(specification, site, home, wait = False, detach = False):
+    """Snapshot and execute a new ordinary request, including saved retries."""
+    mode = specification["execution"]
+    if mode == "slurm" and not site.values["partition"]:
+        raise ValueError("the gbi module has no Slurm partition configured")
+    deadlines.event("checking scratch root", site.roots["lustre"])
+    site.check_root(site.roots["lustre"])
+    deadlines.event("checking archive root", site.roots["alluxio"])
+    site.check_root(site.roots["alluxio"])
+    run_dir = (
+        home
+        / "runs"
+        / (
+            time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
+            + "-"
+            + uuid.uuid4().hex[:12]
+        )
+    )
+    deadlines.event(
+        "preparing request snapshot", run_dir, records = str(run_dir)
+    )
+    run_dir.mkdir(parents = True, mode = 0o700)
+    # A queued job uses the exact code and settings that were submitted,
+    # even if the module's default version changes before it starts.
+    runtime = run_dir / "runtime" / "gbi_data"
+    shutil.copytree(
+        Path(__file__).parent, runtime,
+        ignore = shutil.ignore_patterns("__pycache__"),
+    )
+    # Installed source may be read-only. This private, caller-owned copy
+    # must remain removable after its verified history has been published.
+    for directory in (
+        runtime,
+        *(path for path in runtime.rglob("*") if path.is_dir()),
+    ):
+        directory.chmod(0o700)
+    shutil.copyfile(site.path, run_dir / "site.conf")
+    source_hash = hashlib.sha256()
+    for path in sorted(runtime.glob("*.py")):
+        source_hash.update(path.name.encode() + b"\0" + path.read_bytes())
+    specification["code_sha256"] = source_hash.hexdigest()
+    specification["version"] = __version__
+    specification.pop("allocation_job_id", None)
+    if mode == "allocation":
+        specification["allocation_job_id"] = os.environ["SLURM_JOB_ID"]
+    write_json(run_dir / "request.json", specification)
+    if mode != "slurm":
+        if mode == "allocation":
+            print(
+                f"Transfer {run_dir.name}. Reconnect: gbi data status {run_dir.name} --watch",
+                flush = True,
+            )
+        else:
+            print(
+                f"Transfer {run_dir.name}. History: gbi data status {run_dir.name}"
+            )
+        return run(run_dir, site, home)
+    command = [
+        sys.executable, "-B", "-m", "gbi_data.cli", "data", "_run",
+        str(run_dir),
+    ]
+    job_id = jobs.submit(run_dir, command, site)
+    print(
+        f"Submitted transfer {job_id}. Reconnect: gbi data status {job_id} --watch"
+    )
+    if wait or (not detach and sys.stdout.isatty()):
+        return jobs.watch(
+            run_dir, job_id, archive_root = site.roots["alluxio"]
+        )
+    return 0
+
+
 def main():
     options = parser().parse_args()
     os.umask(0o077)
@@ -1042,6 +1258,8 @@ def main():
             )
         deadlines.event("loading site and storage roots", configuration)
         site = Site(configuration, configured = deadlines.configure)
+        if options.command == "dataset":
+            return dataset.main(options, site)
         deadlines.event(
             "checking request paths", getattr(options, "source", configuration)
         )
@@ -1061,6 +1279,10 @@ def main():
             return 0
         if options.verb == "cache":
             return cache.main(options, site)
+        if options.verb == "status" and not re.fullmatch(
+            r"(?:[0-9]+|[0-9]{8}T[0-9]{6}Z-[0-9a-f]{12})", options.job_id
+        ):
+            return cache.status_path(options.job_id, site, options.watch)
         if "lustre" not in site.roots or "alluxio" not in site.roots:
             raise ValueError(
                 "the gbi module needs Lustre scratch and Alluxio archive roots"
@@ -1071,14 +1293,34 @@ def main():
         if options.verb in ("status", "retry"):
             run_dir = jobs.locate(home, options.job_id, site.roots["alluxio"])
             if options.verb == "retry":
-                return prefect.submit(
-                    run_dir, site, options.wait or sys.stdout.isatty()
+                request = run_dir / "request.json"
+                record = json.loads(request.read_text()) if request.is_file() else {}
+                if record.get("execution") in ("prefect", "cache"):
+                    return prefect.submit(
+                        run_dir, site, options.wait or sys.stdout.isatty()
+                    )
+                specification = retry.prepare(run_dir, site)
+                if specification["execution"] == "allocation":
+                    specification["execution"] = (
+                        "allocation" if os.environ.get("SLURM_JOB_ID") else "slurm"
+                    )
+                print(
+                    f"Retry of {run_dir.name}; original history retained at {run_dir}"
                 )
+                if specification["selection"] is None:
+                    print(
+                        "Original file inventory was not saved; rediscovering "
+                        "the saved root and filters. Undiscovered original "
+                        "remainder is unknown."
+                    )
+                return start(specification, site, home, options.wait, True)
             request = run_dir / "request.json"
             record = json.loads(request.read_text()) if request.is_file() else {}
-            if record.get("execution") == "prefect":
+            if record.get("execution") in ("prefect", "cache"):
                 if record.get("broker_request", {}).get("operation") == "cache":
-                    return cache.status(run_dir, site, options.watch)
+                    return cache.status(
+                        run_dir, site, options.watch, record["execution"]
+                    )
                 return prefect.follow(run_dir, site, options.watch)
             return jobs.watch(
                 run_dir, options.job_id, options.watch, site.roots["alluxio"]
@@ -1111,12 +1353,6 @@ def main():
             if specification["delete"]
             else "Sources: keep originals."
         )
-        if (
-            options.verb == "move"
-            and specification["source_kind"] == "alluxio"
-            and not specification["delete"]
-        ):
-            print("Object Storage originals are durable and always retained.")
         mode = specification["execution"]
         print(
             {
@@ -1143,70 +1379,7 @@ def main():
                 )
             print("Dry run: no job submitted and no files written.")
             return 0
-        deadlines.event("checking scratch root", site.roots["lustre"])
-        site.check_root(site.roots["lustre"])
-        deadlines.event("checking archive root", site.roots["alluxio"])
-        site.check_root(site.roots["alluxio"])
-        run_dir = (
-            home
-            / "runs"
-            / (
-                time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
-                + "-"
-                + uuid.uuid4().hex[:12]
-            )
-        )
-        deadlines.event(
-            "preparing request snapshot", run_dir, records = str(run_dir)
-        )
-        run_dir.mkdir(parents = True, mode = 0o700)
-        # A queued job uses the exact code and settings that were submitted,
-        # even if the module's default version changes before it starts.
-        runtime = run_dir / "runtime" / "gbi_data"
-        shutil.copytree(
-            Path(__file__).parent, runtime,
-            ignore = shutil.ignore_patterns("__pycache__"),
-        )
-        # Installed source may be read-only. This private, caller-owned copy
-        # must remain removable after its verified history has been published.
-        for directory in (
-            runtime,
-            *(path for path in runtime.rglob("*") if path.is_dir()),
-        ):
-            directory.chmod(0o700)
-        shutil.copyfile(site.path, run_dir / "site.conf")
-        source_hash = hashlib.sha256()
-        for path in sorted(runtime.glob("*.py")):
-            source_hash.update(path.name.encode() + b"\0" + path.read_bytes())
-        specification["code_sha256"] = source_hash.hexdigest()
-        specification["version"] = __version__
-        if mode == "allocation":
-            specification["allocation_job_id"] = os.environ["SLURM_JOB_ID"]
-        write_json(run_dir / "request.json", specification)
-        if mode != "slurm":
-            if mode == "allocation":
-                print(
-                    f"Transfer {run_dir.name}. Reconnect: gbi data status {run_dir.name} --watch",
-                    flush = True,
-                )
-            else:
-                print(
-                    f"Transfer {run_dir.name}. History: gbi data status {run_dir.name}"
-                )
-            return run(run_dir, site, home)
-        command = [
-            sys.executable, "-B", "-m", "gbi_data.cli", "data", "_run",
-            str(run_dir),
-        ]
-        job_id = jobs.submit(run_dir, command, site)
-        print(
-            f"Submitted transfer {job_id}. Reconnect: gbi data status {job_id} --watch"
-        )
-        if options.wait or (not options.detach and sys.stdout.isatty()):
-            return jobs.watch(
-                run_dir, job_id, archive_root = site.roots["alluxio"]
-            )
-        return 0
+        return start(specification, site, home, options.wait, options.detach)
     except (OSError, ValueError, subprocess.SubprocessError) as error:
         print(f"gbi data: {error}", file = sys.stderr)
         return 2

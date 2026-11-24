@@ -4,6 +4,7 @@ Each invocation is a child process. Its parent bounds the entire operation,
 including filesystem calls; a blocked child keeps its cross-node lock.
 """
 
+import errno
 import fcntl
 import hashlib
 import json
@@ -18,20 +19,28 @@ from .storage import fingerprint, overlap, lock_stripe
 
 
 def validate_source_retention(task, storage_roots = ()):
-    """Reject obsolete destructive Object Storage requests before any writes."""
-    if task.get("delete_source") or (
-        task.get("delete") and task.get("source_kind") == "alluxio"
-    ):
+    """Reject deletions that would cross a mount boundary before any writes.
+
+    A move may remove an Object Storage source only when it lies inside one
+    Object Storage mount; a filesystem source must not contain or sit inside
+    one. ``delete_source`` is a field from before 0.4.10 and is refused.
+    """
+    if task.get("delete_source"):
         raise ValueError(
-            "Object Storage originals are durable and cannot be deleted by GBI"
+            "this saved request uses the retired delete_source field; "
+            "run the move again"
         )
-    if task.get("delete") and any(
-        kind == "alluxio" and overlap(Path(task["source"]), root)
-        for kind, root in storage_roots
-    ):
+    if not task.get("delete"):
+        return
+    source = Path(task["source"])
+    for kind, root in storage_roots:
+        if kind != "alluxio" or not overlap(source, root):
+            continue
+        if task.get("source_kind") == "alluxio" and root in source.parents:
+            continue
         raise ValueError(
             "source overlaps an Object Storage root; use copy or move an exact "
-            "filesystem subtree"
+            "subtree inside one mount"
         )
 
 
@@ -86,6 +95,56 @@ def ensure_parent(path, root):
     check_parent(path, root)
     path.parent.mkdir(parents = True, exist_ok = True, mode = 0o700)
     check_parent(path, root)
+
+
+def can_remove_source_root(specification):
+    """Only an unfiltered ordinary move may remove a named source folder."""
+    if not specification.get("delete") or not specification.get("directory"):
+        return False
+    if any(
+        specification.get(key)
+        for key in (
+            "include", "exclude", "archive_auto", "pack", "packing_policy",
+            "chunk_size", "source_format",
+        )
+    ):
+        return False
+    source = Path(specification["source"])
+    cwd    = Path.cwd()
+    return (
+        Path(specification["source_root"]) in source.parents
+        and source != cwd
+        and source not in cwd.parents
+    )
+
+
+def remove_empty_source_root(specification, source_identity, target_identity):
+    """Finish successful discovery/workers with one guarded, empty-only rmdir."""
+    if (
+        not specification.get("remove_empty_source_root")
+        or not can_remove_source_root(specification)
+    ):
+        return False
+    source, target = Path(specification["source"]), Path(specification["target"])
+    check_parent(source, Path(specification["source_root"]))
+    check_parent(target / ".placeholder", Path(specification["target_root"]))
+    if (
+        fingerprint(source)[:3] != source_identity
+        or fingerprint(target)[:3] != target_identity
+        or not stat.S_ISDIR(source_identity[2])
+        or not stat.S_ISDIR(target_identity[2])
+    ):
+        raise ValueError("source or destination directory changed; source kept")
+    # Reuse the descriptor-pinned removal so parent symlinks cannot redirect it.
+    from .formats import _owned_rmdir
+
+    try:
+        _owned_rmdir(source, source_identity, Path(specification["source_root"]))
+    except OSError as error:
+        if error.errno not in (errno.ENOTEMPTY, errno.EEXIST):
+            raise
+        return False
+    return True
 
 
 def copy_stream(
@@ -173,52 +232,12 @@ def copy_stream(
     return result.hexdigest(), total
 
 
-def transfer(task):
-    validate_source_retention(task)
-    if task.get("archive_completed"):
-        from .archive_state import resume_completed
-
-        return resume_completed(task)
-    if task.get("format_action"):
-        from .formats import transfer as transfer_format
-
-        return transfer_format(task)
-    timings        = {}
-    source         = Path(task["source"])
-    selection_root = Path(task["selection_root"])
-    target         = Path(task["target"])
-    source_root, target_root = Path(task["source_root"]), Path(
-        task["target_root"]
-    )
+def target_path(task, initial):
+    source = Path(task["source"])
     destination = (
-        target / source.relative_to(selection_root)
-        if task.get("directory", False)
-        else target
+        Path(task["target"]) / source.relative_to(task["selection_root"])
+        if task.get("directory", False) else Path(task["target"])
     )
-    if task.get("empty", False):
-        source_before = fingerprint(source)
-        ensure_parent(destination / ".placeholder", target_root)
-        destination_before = fingerprint(destination)[:3]
-        result = {
-            "empty": True, "bytes": 0, "source_size": 0, "deleted": False,
-            "reused": False,
-        }
-        archive_result(task, result)
-        if task["delete"] and source != selection_root:
-            check_parent(source, source_root)
-            check_parent(destination, target_root)
-            if (
-                fingerprint(source) != source_before
-                or fingerprint(destination)[:3] != destination_before
-            ):
-                raise ValueError(
-                    "empty directory source or destination changed; source kept"
-                )
-            source.rmdir()
-        result["deleted"] = task["delete"] and source != selection_root
-        archive_result(task, result)
-        return result
-    initial = fingerprint(source)
     decode_link = task.get(
         "decode_link",
         task.get("source_kind") == "alluxio"
@@ -246,6 +265,115 @@ def transfer(task):
         destination = destination.with_name(
             destination.name[: -len(".rclonelink")]
         )
+    return destination, decode_link, encode_link
+
+
+def verify_moved(task, target, prior, encode_link):
+    """A prior deletion is reusable only after fresh proof under its stripe."""
+    source, target_root = Path(task["source"]), Path(task["target_root"])
+    if not task["delete"] or prior["event"] not in ("deleted", "already_moved"):
+        raise ValueError("source removal was not acknowledged; inspect the original receipts")
+    if prior["source"] != str(source) or prior["destination"] != str(target):
+        raise ValueError("saved deletion receipt does not match this source and destination")
+    check_parent(target, target_root)
+    before = fingerprint(target)
+    link = prior["kind"] == "symlink" and not encode_link
+    if link:
+        matches = stat.S_ISLNK(before[2]) and hashlib.sha256(
+            os.fsencode(os.readlink(target))
+        ).hexdigest() == prior["sha256"]
+    else:
+        matches = (
+            stat.S_ISREG(before[2]) and before[3] == prior["bytes"]
+            and digest(target) == prior["sha256"]
+        )
+    check_parent(source, Path(task["source_root"]))
+    check_parent(target, target_root)
+    if not matches or fingerprint(target) != before:
+        raise ValueError(
+            "previously moved destination changed or failed checksum verification"
+        )
+    if os.path.lexists(source):
+        raise ValueError("source reappeared during retry verification; source kept")
+    receipt(Path(task["receipt"]), {
+        **prior, "event": "already_moved", "reused": True, "time": time.time(),
+    })
+    return {
+        "bytes": prior["bytes"], "source_size": prior["bytes"],
+        "deleted": False, "reused": True, "already_moved": True,
+        "freed_bytes": 0, "sha256": prior["sha256"], "kind": prior["kind"],
+    }
+
+
+def transfer(task):
+    validate_source_retention(task)
+    if task.get("archive_completed"):
+        from .archive_state import resume_completed
+
+        return resume_completed(task)
+    if task.get("format_action"):
+        from .formats import transfer as transfer_format
+
+        return transfer_format(task)
+    timings        = {}
+    source         = Path(task["source"])
+    selection_root = Path(task["selection_root"])
+    target         = Path(task["target"])
+    source_root, target_root = Path(task["source_root"]), Path(
+        task["target_root"]
+    )
+    destination = (
+        target / source.relative_to(selection_root)
+        if task.get("directory", False)
+        else target
+    )
+    if task.get("empty", False):
+        try:
+            source_before = fingerprint(source)
+        except FileNotFoundError:
+            if not task.get("retry_from") or not task["delete"]:
+                raise
+            check_parent(destination, target_root)
+            if not stat.S_ISDIR(fingerprint(destination)[2]):
+                raise ValueError("saved empty directory destination is missing or changed")
+            return {
+                "empty": True, "bytes": 0, "source_size": 0,
+                "deleted": False, "reused": True,
+            }
+        ensure_parent(destination / ".placeholder", target_root)
+        destination_before = fingerprint(destination)[:3]
+        result = {
+            "empty": True, "bytes": 0, "source_size": 0, "deleted": False,
+            "reused": False,
+        }
+        archive_result(task, result)
+        if task["delete"] and source != selection_root:
+            check_parent(source, source_root)
+            check_parent(destination, target_root)
+            if (
+                fingerprint(source) != source_before
+                or fingerprint(destination)[:3] != destination_before
+            ):
+                raise ValueError(
+                    "empty directory source or destination changed; source kept"
+                )
+            source.rmdir()
+        result["deleted"] = task["delete"] and source != selection_root
+        archive_result(task, result)
+        return result
+    prior = task.get("retry_receipt")
+    try:
+        initial = fingerprint(source)
+    except FileNotFoundError:
+        if not prior or not task["delete"] or prior["event"] not in (
+            "deleted", "already_moved",
+        ):
+            raise ValueError(
+                "source is missing without an acknowledged deletion receipt; "
+                "source disposition is unresolved"
+            )
+        initial = prior["fingerprint"]
+    destination, decode_link, encode_link = target_path(task, initial)
     target  = destination
     state   = Path(task["state"])
     key     = hashlib.sha256(os.fsencode(target)).hexdigest()
@@ -255,10 +383,32 @@ def transfer(task):
     with (state / "locks" / lock_stripe(key)).open("a+") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
         check_parent(source, source_root)
+        if prior and not os.path.lexists(source):
+            return verify_moved(task, target, prior, encode_link)
         ensure_parent(target, target_root)
         before = fingerprint(source)
+        if prior and (
+            prior["event"] in ("deleted", "already_moved")
+            or before[1:] != prior["fingerprint"][1:]
+        ):
+            raise ValueError("source changed or reappeared since the saved receipt; source kept")
         if before != initial:
             raise ValueError("source changed during preparation; source kept")
+        retry_digest = None
+        if task.get("retry_from"):
+            observed = task.get("expected_source")
+            # Device IDs name a node's mount, not a portable file identity.
+            # Keep inode/type/size/mtime and bind subsequent guards locally.
+            if observed is not None and before[1:] != observed[1:]:
+                raise ValueError("source changed since the saved selection; source kept")
+            if prior:
+                retry_digest = (
+                    hashlib.sha256(os.fsencode(os.readlink(source))).hexdigest()
+                    if stat.S_ISLNK(before[2]) else digest(source)
+                )
+                if retry_digest != prior["sha256"] or fingerprint(source) != before:
+                    raise ValueError("source changed since the saved verification; source kept")
+            task["expected_source"] = before
         _progress(task,
             {
                 "bytes": 0, "source_size": before[3], "phase": "preparing",
@@ -300,7 +450,8 @@ def transfer(task):
             else None
         )
         expected = (
-            hashlib.sha256(os.fsencode(link_text)).hexdigest() if link else None
+            hashlib.sha256(os.fsencode(link_text)).hexdigest()
+            if link else retry_digest
         )
         target_digest = None
         target_digest_fingerprint = None
@@ -327,6 +478,15 @@ def transfer(task):
                     target_digest             = candidate_digest
                     target_digest_fingerprint = candidate_fingerprint
             if not reused:
+                if task.get("retry_from") and (
+                    saved.get("source") == str(source)
+                    and (saved.get("fingerprint") or [])[1:] == before[1:]
+                    and (saved.get("target_identity") or [])[1:] == target_before[1:3]
+                ):
+                    # Rebind the same owned partial inode to this node's mount.
+                    # The ordinary ownership/phase checks below still decide
+                    # whether its incomplete output may be replaced.
+                    saved = {**saved, "fingerprint": before, "target_identity": target_before[:3]}
                 ours = (
                     saved.get("source") == str(source)
                     and saved.get("fingerprint") == before

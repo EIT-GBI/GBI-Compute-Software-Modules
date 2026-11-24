@@ -20,7 +20,8 @@ class CLIHelp(unittest.TestCase):
             "Restores detect archives/chunks automatically",
             "compatible with older deployments",
             "unsupported requested options fail closed",
-            "Object Storage originals are durable and always retained",
+            "Moving Object Storage data to Lustre or FSS asks first",
+            "delete_source=True",
         ):
             self.assertIn(explanation, text)
         self.assertIn("--help", text)
@@ -44,7 +45,12 @@ class CLIHelp(unittest.TestCase):
         self.assertIn("owner-scoped Lustre snapshot", data)
         copy = self.help_text("data", "copy")
         self.assertIn("source file or directory", copy)
-        self.assertIn("always retained", copy)
+        self.assertIn("any path you can", copy)
+        self.assertNotIn("always retained", copy)
+        self.assertNotIn("--delete-source", copy)
+        move = " ".join(self.help_text("data", "move").split())
+        self.assertIn("Moving Object Storage data to Lustre or FSS asks first", move)
+        self.assertIn("--delete-source", move)
         self.assertNotIn("_run", data)
 
     def test_overviews_show_supported_options(self):
@@ -68,12 +74,20 @@ class CLIHelp(unittest.TestCase):
                 ):
                     self.assertIn(explanation, normalized)
                 self.assertIn(
-                    "Object Storage originals are durable and always retained",
+                    "Moving Object Storage data to Lustre or FSS asks first",
                     normalized,
                 )
-                self.assertNotIn("explicit Object Storage deletion", normalized)
-                
-                self.assertNotIn("--delete-source", normalized)
+                self.assertIn(
+                    "remove an Object Storage source after verification "
+                    "without asking", normalized,
+                )
+                self.assertNotIn("always retained", normalized)
+                for hidden in (
+                    "--pack", "--pack-small", "--chunk-size", "--local",
+                    "--job-size",
+                ):
+                    self.assertNotIn(hidden, text)
+                self.assertNotIn("ordinary route only", normalized)
                 self.assertNotIn("_run", text)
                 self.assertNotIn("--help-all", text)
 
@@ -97,19 +111,26 @@ class CLIHelp(unittest.TestCase):
                 self.assertNotIn("--delete-source", text)
 
 
-    def test_help_all_is_no_longer_accepted(self):
-        output = io.StringIO()
-        with (
-            contextlib.redirect_stderr(output),
-            self.assertRaises(SystemExit) as raised,
-        ):
-            cli.parser().parse_args(
-                ["data", "copy", "src", "dst", "--help-all"]
-            )
+    def test_full_help_exposes_overrides_and_deletion_only_on_move(self):
+        for arguments in ([], ["data"], ["data", "copy"], ["data", "move"]):
+            output = io.StringIO()
+            with (
+                contextlib.redirect_stdout(output),
+                self.assertRaises(SystemExit) as raised,
+            ):
+                cli.parser().parse_args([*arguments, "--help-all"])
+            self.assertEqual(raised.exception.code, 0)
+            for flag in (
+                "--archive", "--archive-unit", "--pack", "--pack-small",
+                "--chunk-size", "--local", "--job-size",
+            ):
+                self.assertIn(flag, output.getvalue())
+            if arguments == ["data", "copy"]:
+                self.assertNotIn("--delete-source", output.getvalue())
+            else:
+                self.assertIn("--delete-source", output.getvalue())
 
-        self.assertEqual(raised.exception.code, 2)
-
-    def test_expert_options_remain_parseable(self):
+    def test_hidden_overrides_remain_parseable_for_existing_scripts(self):
         options = cli.parser().parse_args(
             [
                 "data", "copy", "src", "dst",
@@ -125,6 +146,12 @@ class CLIHelp(unittest.TestCase):
         self.assertIn("top N folders at each level", usage)
         self.assertIn("not live", usage)
         self.assertIn("recursive usage", usage)
+
+    def test_cache_help_uses_user_job_script_and_status_describes_paths(self):
+        cache = self.help_text("data", "cache")
+        self.assertIn("your job script", cache)
+        self.assertNotIn("prolog", cache.lower())
+        self.assertIn("whole path", self.help_text("data", "status"))
 
     def test_execution_conflict_names_flags_and_alternative(self):
         output = io.StringIO()

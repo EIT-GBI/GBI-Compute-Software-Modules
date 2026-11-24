@@ -62,7 +62,7 @@ class RootsReportTest(unittest.TestCase):
         self.assertIn(f"also reachable as {alias}", text)
         self.assertIn(f"team     {folder / 'shared'}", text)
         self.assertIn("read-write for everyone in scientific-computing", text)
-        self.assertNotIn("not in a team folder", text)
+        self.assertNotIn("no team shared folders visible", text)
         self.assertEqual(lines[-1], roots.FOOTER)
 
     def test_member_folder_without_a_personal_path_is_the_archive_root(self):
@@ -83,12 +83,15 @@ class RootsReportTest(unittest.TestCase):
         self.assertNotIn("also reachable as", text)
         self.assertIn(f"team     {folder / 'shared'}", text)
 
-    def test_no_team_membership_is_stated(self):
+    def test_no_visible_team_folders_names_the_configured_root(self):
         (self.base / "user-data" / self.user).mkdir()
         self.join_team("other-lab", member = False)
         text = "\n".join(roots.lines(self.site()))
         self.assertIn(f"alluxio  {self.base / 'user-data' / self.user}", text)
-        self.assertIn("team     none: you are not in a team folder", text)
+        self.assertIn(
+            f"team     no team shared folders visible on this host under {self.team}",
+            text,
+        )
 
     def test_two_teams_list_both_shared_folders(self):
         first  = self.join_team("alpha")

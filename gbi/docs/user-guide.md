@@ -4,12 +4,13 @@
 
 GBI copies, moves, archives and restores your research data between Lustre,
 FSS and Object Storage. It runs with your Unix permissions and verifies the
-destination before removing an eligible filesystem source. Object Storage is
-the durable store: normal moves and restores always retain its originals.
+destination before removing a source. Moving Object Storage data to Lustre or
+FSS asks before removing it.
 
-This guide describes the **0.4.18 release**. Archive moves reuse freshly computed
-source hashes while file identity and metadata remain unchanged. It also retains
-0.4.17's single destination archive check and parallel final chunk verification.
+This guide describes the **0.4.43 release**, including retry by transfer ID for
+ordinary file and link transfers. Archive moves reuse freshly computed source
+hashes while file identity and metadata remain unchanged. They retain 0.4.17's
+single destination archive check and parallel final chunk verification.
 Full destination verification and verified receipts still precede ordinary source
 removal. Journal-only resumes hash each remaining source file once per
 invocation, then reuse that verified observation before unlink; persisted journal
@@ -65,15 +66,22 @@ at the end of this guide.
 
 ## Copy, move and durable storage
 
-`copy` retains the source. `move` removes each selected Lustre or FSS source
-only after independent destination readback, a verification receipt and source
-identity checks. A packed move also verifies the stored archive before
-removing the selected original entries.
+`copy` retains the source. `move` removes each selected source only after
+independent destination readback, a verification receipt and source identity
+checks. A packed move also verifies the stored archive before removing the
+selected original entries.
 
-Moving or restoring from Object Storage retains objects, object versions,
-archive containers and chunk stores, including unselected archive members.
-The obsolete `--delete-source` flag and Python `delete_source=True` are
-rejected. They are not a way to override durable retention.
+| Source → destination | `move` |
+|---|---|
+| Lustre or FSS → anywhere | removes the source after verification |
+| Object Storage → Object Storage | removes the source after verification |
+| Object Storage → Lustre or FSS | asks `[y/N]` on a terminal; `--delete-source` removes it without asking; with no terminal and no flag it copies, keeps the source and prints one line saying so |
+| a source you cannot delete | refused before anything is copied |
+
+`copy --delete-source` is refused. A mount itself, such as
+`/mnt/team/my-lab`, is never a removable source; move a folder inside it.
+A partial archive restore keeps its container, and unselected archive members
+are never removed.
 
 Every selected regular file is hashed while reading the source and again
 while reading the destination. Symlinks are represented without following
@@ -177,8 +185,8 @@ GBI normally chooses the execution location for you:
   that allocation.
 - `--detach` explicitly submits another Slurm job. Add `--wait` if your
   script needs to wait for it.
-- `--prefect` requests a managed personal Object Storage transfer instead
-  of an ordinary mounted-filesystem transfer.
+- `--prefect` sends the transfer to the site's Prefect service instead of
+  running it in your shell or a Slurm job of your own.
 
 ```bash
 gbi data copy SOURCE DESTINATION --dry-run
@@ -196,17 +204,23 @@ printed transfer ID. Automatic thresholds are not completion-time promises.
 
 ## Prefect route
 
-Use `--prefect` for direct personal Object Storage transfers through the
-site's identity-bound broker. No Prefect UI or cloud credentials are needed
-in your script. One endpoint must be inside your Lustre or FSS root and the
-other inside your Object Storage root, the paths `gbi data roots` prints:
-your team member folder, or your `/mnt/user-data` path if your account still
-has one. Ordinary transfers instead use mounted paths available through your
-Unix permissions.
+Use `--prefect` for large transfers through the site's identity-bound
+broker. No Prefect UI or cloud credentials are needed in your script. It
+accepts the same paths as an ordinary transfer: any path you can read to any
+path you can write on Lustre, FSS and the Object Storage mounts (your member
+folder, your team's shared folder, read-only collections as a source), with
+Object Storage on at least one side. Between two Object Storage mounts the
+copy happens inside Object Storage. GBI sends the resolved paths; the transfer
+job checks, as you, that the whole source is readable and the destination
+writable before any data moves, and names the first path that is not.
 
 ```bash
-gbi data copy /your/fss/experiment /your/object/saved-experiment --prefect --wait
-gbi data copy /your/object/saved-experiment /your/lustre/restored --prefect --wait
+gbi data copy /your/fss/experiment \
+    /mnt/team/my-lab/members/$USER/saved-experiment --prefect --wait
+gbi data copy /mnt/team/my-lab/members/$USER/saved-experiment \
+    /mnt/team/my-lab/shared/experiment --prefect --wait
+gbi data move /mnt/team/my-lab/members/$USER/saved-experiment \
+    /your/lustre/restored --prefect --delete-source
 ```
 
 The default writes individual objects. The deployed typed broker and production
@@ -237,10 +251,10 @@ instead of pulling cold data from Object Storage. `gbi data cache` makes a
 path resident ahead of the job that needs it:
 
 ```bash
-# First line of a job script, or a Slurm prolog: return when the blocks are cached.
+# First step of your job script: return when the blocks are cached.
 gbi data cache /mnt/team/my-lab/members/$USER/dataset
 
-# A shared reference, with a wall-time bound for a prolog (the load itself continues).
+# A shared reference, with a wait limit (the load itself continues).
 gbi data cache /mnt/team/my-lab/shared/reference --timeout 900
 
 # Sequencing data: a run folder, and only the files you need.
@@ -249,12 +263,16 @@ gbi data cache /mnt/instrument-data/illumina_nextseq_1/RUN --include '*.fastq.gz
 # Submit and come back later.
 gbi data cache /mnt/instrument-data/oxford_nanopore_promethion_1 --detach
 gbi data status TRANSFER_ID --watch
+
+# Inspect current cache state for a whole path, without submitting a load.
+gbi data status /mnt/team/my-lab/shared/reference
 ```
 
 Nothing is read on your node. The command resolves the path, the site's broker
-maps it to the storage cluster behind the mount, and one native load is
-submitted: every storage worker loads blocks in parallel, so the data lands in
-the cache faster than any single reader could pull it. The load applies the
+maps it to the storage cluster behind the mount, and the always-on cache
+service submits a native load without starting a Prefect flow. Every storage
+worker loads blocks in parallel, so the data lands in the cache faster than any
+single reader could pull it. The load applies the
 same permissions as your mount, from the top of the mount down: you can load
 what you can read, and nothing else. A folder is loaded whole when every file
 in it is yours to read and is in Object Storage; otherwise, and with
@@ -264,12 +282,18 @@ links to the sequencing mounts); it is followed once and must land inside an
 Object Storage mount. Lustre and FSS paths are refused because they have no
 block cache. Running it again is cheap: resident blocks are not loaded again.
 
-The command prints the Prefect state as it changes and, when the load ends, one
-line: files, bytes, the percentage resident, seconds, and any files skipped
+The command prints the cache state as it changes and, when the load ends, one
+line: files, bytes, the percentage resident, and any files skipped
 because you cannot read them or because they are still being written. Each
-path gets a transfer ID; `gbi data status TRANSFER_ID --watch` reconnects after
+path gets a transfer ID when your Lustre state directory is available;
+`gbi data status TRANSFER_ID --watch` reconnects with the original selection after
 `--detach`, a dropped session or `--timeout`. Ctrl-C only detaches; the load
 continues on the storage workers.
+
+`gbi data status PATH` inspects current state for the whole path. Saved cache
+IDs from older releases still show their original Prefect flow state. Run
+warming under your own account in the job script; a root-run Slurm prolog
+cannot submit it on your behalf.
 
 Exit codes: `0` the blocks are cached; `1` the load failed (the line says why,
 for example `refused: ... is not readable by ...`); `2` the request was refused
@@ -278,6 +302,25 @@ continued. `--json` prints one summary line per command instead of progress.
 The cache is shared and evicts the least recently used blocks on its own, so a
 load is never refused for space; a very large dataset may tier older blocks
 down.
+
+## Bento datasets
+
+GBI copies whole published Tier 0 Bento datasets on request. Copy the located
+address of a version from the Bento GUI and run:
+
+```bash
+gbi dataset get bento://us-ashburn-1/psto-iad-drplab-allthebacteria-bucket@lr40ytmfucrr/allthebacteria/allthebacteria_base@2026-08-28a
+```
+
+If GBI already holds that version, the command prints its read-only path,
+`/mnt/shared/bento/DATASET/ARTEFACT/VERSION`. Files keep the paths Bento's
+manifest gives them, and `_bento/` beside them holds the manifest and the
+copy's records. If GBI does not hold it yet, the command starts the copy (or
+finds the one already running for anyone else who asked) and prints the
+Prefect run ID and the path where the files will appear. Check later with
+`gbi dataset status ADDRESS`; a large dataset can take a day or more. Exit codes:
+0 ready, 3 requested or copying, 1 the last copy failed (run `get` again to
+resume it), 2 refused.
 
 ## Status and recovery
 
@@ -292,25 +335,54 @@ IDs rather than guessing. Exact transfer IDs remain usable after completed
 history publication. Existing jobs retain their saved code even after a
 new module is installed.
 
-For an ordinary failed transfer, first confirm the job and workers have
-stopped, inspect its receipts and retained sources, then rerun the same
-command with the same source, destination and selection. A saved automatic
-archive plan preserves completed units and the original layout. Interrupted
-packed cleanup uses its saved original manifest, rechecks the destination,
-and removes only unchanged selected entries still present; that packed
-cleanup can be resumed from a different node than the original job. Do not
-delete locks, journals, partial output or verification receipts to force a
-retry.
-
-The retry command has a narrower meaning:
+For a failed ordinary file or link transfer, keep its recovery state and retry
+using the transfer ID or an unambiguous Slurm job ID:
 
 ```bash
 gbi data retry TRANSFER_ID
+gbi data retry TRANSFER_ID --wait
 ```
 
-It resends an unchanged Prefect request after a lost submission reply.
-It is not an ordinary Slurm retry or a retry of an already failed Prefect
-flow. Inspect the existing run before submitting any new request.
+Retry requires terminal history and refuses live or unresolved prior workers.
+It creates a fresh run linked to the original, using the saved paths, filters
+and deletion consent; the original history remains unchanged. A detached
+transfer stays detached; `--wait` follows it. An allocation transfer reuses
+your current allocation or submits a new Slurm job if you are outside one.
+
+Existing files pass fresh checksum, destination reuse and owned-partial
+recovery checks. Across nodes, retry ignores only the mount's device ID and
+still requires the saved inode, type, size and modification time. Changed or
+replaced sources are retained. If the filesystem gives a file a different
+inode, inspect the history and use the original command for a fresh selection.
+
+An absent source needs an acknowledged deletion receipt and a fresh destination
+checksum under the transfer lock. A verification receipt alone does not prove
+source removal. Missing or changed destinations fail safely. Output and new
+history distinguish copied, reused, already moved and failed files; already
+moved files count as reused and free no additional bytes. An absent empty
+directory must have its existing destination directory and receives no file or
+freed-space credit. A failed worker may have completed receipt-backed work
+before its result was lost; a failure count does not prove sources remain.
+
+A saved finite selection is preserved. Older streaming requests have no
+complete saved file inventory: retry checks recorded files and rediscovers
+the original root and filters, including files not previously started. It
+reports that the original undiscovered remainder is unknown. An absent
+streaming source root needs completed discovery and matching receipt coverage.
+
+Archive, packed and chunked transfers keep their original-command recovery
+path; ordinary retry refuses to reinterpret those manifests. Confirm the job
+and workers have stopped, inspect receipts and retained sources, then rerun
+the same command with the same source, destination and selection. A saved
+automatic archive plan preserves completed units and the original layout.
+Interrupted packed cleanup uses its saved original manifest, rechecks the
+destination and removes only unchanged selected entries still present; it
+can resume from a different node. Do not delete locks, journals, partial
+output or verification receipts to force a retry.
+
+For a managed transfer, `gbi data retry` resends the identical saved Prefect
+request after a lost submission reply. It does not restart a failed flow.
+Inspect the existing run before submitting any new request.
 
 A timeout observing the cluster does not prove a transfer stopped. Recheck
 the same job. `scancel JOB_ID` cancels an identified Slurm job; it does not
@@ -352,15 +424,15 @@ module load gbi
 python train_and_archive.py
 ```
 
-Use `prefect=True` only when you want a separate managed transfer and the
-personal route requirements are met. Ordinary calls reuse the allocation.
+Use `prefect=True` only when you want a separate managed transfer. Ordinary
+calls reuse the allocation.
 
 Complete signatures, including compatible expert arguments:
 
 ```text
 copy(source, destination, *, include=(), exclude=(), pack=None,
      pack_small=False, chunk_size=None, dry_run=False, prefect=False,
-     job_size=None, archive=False)
+     job_size=None, archive=False, delete_source=False)
 
 move(source, destination, *, include=(), exclude=(), pack=None,
      pack_small=False, chunk_size=None, dry_run=False, prefect=False,
@@ -368,8 +440,10 @@ move(source, destination, *, include=(), exclude=(), pack=None,
 ```
 
 Filters accept one string or an iterable of strings. Boolean arguments must
-be actual booleans. `delete_source=False` is compatibility-only:
-`True` is rejected. Source retention is identical to the CLI.
+be actual booleans. `move(..., delete_source=True)` removes an Object Storage
+source moved to Lustre or FSS; the default keeps it, and the SDK never asks.
+`copy(..., delete_source=True)` is refused. Otherwise source removal is
+identical to the CLI.
 
 ## Cached usage
 
@@ -441,7 +515,7 @@ using them; `gbi data copy --help` exposes them.
 | `--detach` | Submit another Slurm job | Submit another job | No |
 | `--wait` | Wait for completion | Yes | Yes |
 | `--dry-run` | No writes/submission | Yes | Local preview or supported managed plan |
-| `--delete-source` | Rejected | Rejected | Rejected |
+| `--delete-source` | `move` only: removes an Object Storage source moved to Lustre or FSS without asking | Same | Same |
 
 Do not combine `--archive` with `--pack`, `--pack-small` or `--chunk-size`.
 Restore without encoding flags. `--detach`, `--local` and `--prefect` are
