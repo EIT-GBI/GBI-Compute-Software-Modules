@@ -179,7 +179,7 @@ class Usage(unittest.TestCase):
         with contextlib.redirect_stdout(output):
             usage.print_report(result, 1, 20)
         self.assertIn(
-            "partial; 6 folders you cannot open were not scanned",
+            "partial inventory; 6 folders could not be opened",
             output.getvalue(),
         )
 
@@ -230,48 +230,48 @@ class Usage(unittest.TestCase):
         output = io.StringIO()
         with contextlib.redirect_stdout(output):
             usage.print_report(result, 1, 20)
-        self.assertIn("live UID quota", output.getvalue())
+        self.assertIn("Lustre quota accounting: live", output.getvalue())
         self.assertIn(
             "No published Lustre folder inventory is available",
             output.getvalue(),
         )
 
     def test_report_formats_lustre_and_fss_as_aligned_storage_summary(self):
-        database   = self.root / ".gbi" / "usage.sqlite3"
-        connection = sqlite3.connect(database)
-        connection.executemany(
-            "INSERT INTO metadata VALUES (?, ?)",
-            [
-                ("fss_used_bytes", str(12 * 1024**3)),
-                ("fss_limit_bytes", str(1024**5)), ("fss_files", "12345"),
-                ("fss_observed_at", "2026-09-23T12:00:00Z"),
-                ("fss_source", "OCI per-UID usage"),
-            ],
-        )
-        connection.commit()
-        connection.close()
+        database = self.root / ".gbi" / "usage.sqlite3"
+        with sqlite3.connect(database) as connection:
+            connection.executemany(
+                    "INSERT INTO metadata VALUES (?, ?)", [
+                    ("fss_used_bytes", str(60 * 1024**3)),
+                    ("fss_limit_bytes", str(100 * 1024**3)),
+                    ("fss_observed_at", "2026-09-23T12:00:00Z"),
+                    ("fss_source", "OCI per-UID usage"),
+                    ],
+                    )
         quota = {
-            "status": "available", "filesystem": "/mnt/lustre", "used": "85.2G",
-            "quota": "0", "limit": "0", "grace": "-", "files": "2888",
-            "file_quota": "0", "file_limit": "0", "file_grace": "-",
-        }
+                "status": "available", "filesystem": "/mnt/lustre", "used": "85.2G",
+                "quota": "0", "limit": "0", "grace": "-", "files": "2888",
+                "file_quota": "0", "file_limit": "0", "file_grace": "-",
+                }
         with patch("gbi_data.usage._quota", return_value = quota):
             result = usage.report(self.site, None, 1, 20)
         output = io.StringIO()
         with contextlib.redirect_stdout(output):
             usage.print_report(result, 1, 20)
         rendered = output.getvalue()
-        self.assertIn("Storage summary", rendered)
-        self.assertRegex(rendered, r"Lustre\s+85\.2 GiB")
-        self.assertFalse(
-            any(line != line.rstrip() for line in rendered.splitlines())
-        )
-        self.assertIn("FSS", rendered)
-        self.assertIn("12.0 GiB", rendered)
-        self.assertIn("1.0 PiB", rendered)
-        self.assertIn("12,345", rendered)
-        self.assertIn("Folder", rendered)
+        lines = rendered.splitlines()
+        self.assertIn("Storage usage", rendered)
+        self.assertRegex(lines[1], r"^Tier\s+Used\s+Hard quota\s+Used %$")
+        lustre_row = next(line for line in lines if line.startswith("Lustre "))
+        self.assertEqual(lustre_row.split(), ["Lustre", "85.2", "GiB"])
+        fss_row = next(line for line in lines if line.startswith("FSS"))
+        self.assertEqual(fss_row.split(), ["FSS", "60.0", "GiB", "100.0", "GiB", "60.0%"],)
+        self.assertIn("Lustre folders", rendered)
+        self.assertIn("├── project/  2.0 KiB", rendered)
+        self.assertIn("└── deleted/  500.0 B", rendered)
+        self.assertLess(rendered.index("├── project/"), rendered.index("└── deleted/"),)
+        self.assertNotIn("\033[", rendered)
         self.assertNotIn("filesystem=/mnt/lustre", rendered)
+        self.assertFalse(any(line != line.rstrip() for line in lines))
 
     def test_missing_fss_measurement_is_explicit(self):
         quota = {"status": "unavailable", "detail": "lfs is not installed"}

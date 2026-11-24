@@ -303,55 +303,243 @@ def _table(headers, rows, *, right = ()):
             ).rstrip()
         )
 
-
 def print_report(result, depth, limit):
-    metadata = result["metadata"]
-    print(f"Usage for {_display_path(result['path'])}")
-    print("\nStorage summary")
-    quota = result["quota"]
-    if quota["status"] == "available":
-        lustre = [
-            "Lustre", _lfs_size(quota["used"]), _limit(quota["limit"]),
-            _count(quota["files"]), "live UID quota",
-        ]
-    else:
-        lustre = ["Lustre", "--", "--", "--", quota["detail"]]
-    _table(
-        ("Tier", "Used", "Limit", "Files", "Measured by"),
-        [lustre, _fss_row(metadata)], right = {1, 2, 3},
+    import sys
+
+    def quota_bytes(value):
+        """Convert lfs quota -h output to bytes; bare values are KiB."""
+        text = str(value or "").strip().rstrip("*")
+        if text in {"", "-", "--"}:
+            return None
+
+        powers = {"k": 1, "K": 1, "M": 2, "G": 3, "T": 4, "P": 5}
+        suffix = text[-1:]
+        power = powers.get(suffix, 1)
+        number = text[:-1] if suffix in powers else text
+
+        try:
+            value = float(number) * 1024 ** power
+            return int(value) if value >= 0 else None
+        except (ValueError, OverflowError):
+            return None
+
+    def stored_bytes(value):
+        """Read a nonnegative byte count from snapshot metadata."""
+        try:
+            value = int(value)
+        except (TypeError, ValueError):
+            return None
+        return value if value >= 0 else None
+
+    def percentage_colour(percent):
+        if percent > 80:
+            return "\033[31m"
+        if percent >= 60:
+            return "\033[33m"
+        return "\033[32m"
+
+    use_colour = (
+            sys.stdout.isatty()
+            and "NO_COLOR" not in os.environ
     )
+
+    metadata = result.get("metadata") or {}
+    quota = result["quota"]
+    notes = []
+
+    # Lustre: live usage. Zero means no configured hard quota, so
+    # its Hard quota and Used % cells remain blank.
+    lustre_used = None
+    lustre_limit = None
+
+    if quota["status"] == "available":
+        lustre_used = quota_bytes(quota.get("used"))
+        lustre_limit = quota_bytes(quota.get("limit"))
+        notes.append("Lustre quota accounting: live")
+    else:
+        notes.append(
+            f"Lustre: {quota.get('detail', 'usage unavailable')}"
+        )
+
+    # FSS: published OCI accounting, with its own observation time.
+    fss_used = stored_bytes(metadata.get("fss_used_bytes"))
+    fss_limit = stored_bytes(metadata.get("fss_limit_bytes"))
+    fss_failed = bool(metadata.get("fss_lookup_failed_at"))
+
+    if fss_used is None:
+        detail = (
+            "latest lookup failed; no earlier value"
+            if fss_failed
+            else "usage not published"
+        )
+        notes.append(f"FSS: {detail}")
+    else:
+        observed = _timestamp(metadata.get("fss_observed_at"))
+        detail = (
+            f"observed {_age(observed)}"
+            if observed is not None
+            else "observation time unavailable"
+        )
+        if fss_failed:
+            detail += "; latest lookup failed, showing last known value"
+        notes.append(f"FSS: {detail}")
+
+        if fss_limit is None:
+            notes.append("FSS hard quota: unavailable")
+
+    measurements = [
+        ("Lustre", lustre_used, lustre_limit),
+        ("FSS", fss_used, fss_limit),
+    ]
+    measurements.sort(
+        key=lambda row: (
+            row[1] is None,
+            -(row[1] if row[1] is not None else 0),
+            row[0],
+        )
+    )
+
+    rows = []
+    percentages = []
+
+    for tier, used, hard_limit in measurements:
+        used_text = _size(used) if used is not None else "—"
+        limit_text = ""
+        percent_text = ""
+        percent = None
+
+        if hard_limit is not None and hard_limit > 0:
+            limit_text = _size(hard_limit)
+
+            if used is not None:
+                percent = 100 * used / hard_limit
+                percent_text = f"{percent:.1f}%"
+
+                # Avoid displaying a rounded boundary value with the
+                # colour belonging to the other side of that boundary.
+                rounded = float(percent_text[:-1])
+                if (
+                    percentage_colour(rounded)
+                    != percentage_colour(percent)
+                ):
+                    percent_text = f"{percent:.3f}%"
+        elif tier == "FSS" and hard_limit is None:
+            limit_text = "—"
+            percent_text = "—"
+
+        rows.append([tier, used_text, limit_text, percent_text])
+        percentages.append(percent)
+
+    print("Storage usage")
+
+    # Pad plain text first so ANSI sequences do not affect alignment.
+    headers = ("Tier", "Used", "Hard quota", "Used %")
+    widths = [
+        max(len(header), *(len(row[index]) for row in rows))
+        for index, header in enumerate(headers)
+    ]
+
+    def table_line(values, percent=None):
+        cells = []
+
+        for index, value in enumerate(values):
+            cell = (
+                value.ljust(widths[index])
+                if index == 0
+                else value.rjust(widths[index])
+            )
+
+            if index == 3 and percent is not None and use_colour:
+                cell = (
+                    percentage_colour(percent)
+                    + cell
+                    + "\033[0m"
+                )
+
+            cells.append(cell)
+
+        return "  ".join(cells).rstrip()
+
+    print(table_line(headers))
+    for row, percent in zip(rows, percentages):
+        print(table_line(row, percent))
+
+    print()
+    for note in notes:
+        print(note)
+
     if result["summary"] is None:
         print(
-            "\nFolder breakdown\nNo published Lustre folder inventory is available."
-            " No filesystem scan was started."
+            "\nLustre folders\n"
+            "No published Lustre folder inventory is available. "
+            "No filesystem scan was started."
         )
         return
-    status       = metadata.get("status", "complete")
-    stamp        = metadata["snapshot_at"]
-    parsed_stamp = _timestamp(stamp)
+
+    status = metadata.get("status", "complete")
+    stamp = metadata["snapshot_at"]
+    age = _age(_timestamp(stamp))
+
     print(
-        f"\nLustre folder breakdown ({status} snapshot {stamp}, {_age(parsed_stamp)})"
+        f"\nLustre folders · {status} snapshot {stamp} "
+        f"({age}) · apparent sizes"
     )
-    print(
-        f"Apparent total: {_size(result['summary'][0])} across "
-        f"{result['summary'][1]:,} inventory entries"
-    )
+
     if status == "partial":
         unreadable = _count(metadata.get("unreadable_directories"))
         detail = (
-            f"{unreadable} folders you cannot open were not scanned"
+            f"{unreadable} folders could not be opened"
             if unreadable not in {"--", "0"}
-            else "missing paths are not included"
+            else "some paths are missing"
         )
-        print(f"Warning: this publication is partial; {detail}.")
-    rows = [
-        [_clip(path), _size(apparent_bytes), f"{entries:,}"]
-        for path, apparent_bytes, entries in result["rows"]
-    ]
-    _table(("Folder", "Apparent size", "Entries"), rows, right = {1, 2})
+        print(f"Warning: partial inventory; {detail}.")
+
+    # report() currently returns:
+    # (path relative to Lustre root, apparent_bytes, entries).
+    # Derive parent relationships without changing that interface.
+    selected = Path(result["path"])
+    inventory_root = Path(metadata["root"])
+    relative_root = selected.relative_to(inventory_root).as_posix()
+
+    children = {}
+    for path, apparent_bytes, entries in result["rows"]:
+        parent = Path(path).parent.as_posix()
+        children.setdefault(parent, []).append(
+            (path, apparent_bytes, entries)
+        )
+
+    for siblings in children.values():
+        siblings.sort(key=lambda row: (-row[1], row[0]))
+
+    total_bytes, total_entries = result["summary"]
     print(
-        "\nApparent sizes include directory and symlink entries; they are not allocated space."
-        "\nThe Lustre row above is the space allocated to your UID anywhere on Lustre, live;"
-        "\nthe breakdown is the size each file reports inside your home at the snapshot."
-        "\nSparse files, files outside your home and space not yet freed make the two differ."
+        f"{_display_path(selected)}/"
+        f"  {_size(total_bytes)}"
+        f"  ({total_entries:,} inventory entries)"
+    )
+
+    def print_children(parent, prefix=""):
+        siblings = children.get(parent, [])
+
+        for index, (path, apparent_bytes, entries) in enumerate(siblings):
+            last = index == len(siblings) - 1
+            connector = "└── " if last else "├── "
+            name = _display_path(Path(path).name)
+
+            print(
+                f"{prefix}{connector}{name}/"
+                f"  {_size(apparent_bytes)}"
+            )
+
+            child_prefix = prefix + ("    " if last else "│   ")
+            print_children(path, child_prefix)
+
+    print_children(relative_root)
+
+    print(
+        f"\nShowing up to {limit} folders at each of "
+        f"{depth} selected depth levels."
+        "\nFolders are sorted largest first within each parent."
+        "\nParent totals include their descendants; do not add tree rows."
+        "\nApparent sizes can differ from quota-accounted usage."
     )
