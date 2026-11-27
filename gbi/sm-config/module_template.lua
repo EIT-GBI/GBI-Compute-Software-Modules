@@ -32,7 +32,10 @@ whatis("Name: gbi")
 whatis("Version: {{{INSTALL_VERSION}}}")
 depends_on("rclone/1.75.1")
 -- The packaged Lustre client also needs its module's shared-library paths.
-if isAvail("lfs/2.16.1") then
+-- It is an Ubuntu 24.04 build (glibc 2.38): a host with its own Lustre client,
+-- such as the Ubuntu 22.04 OOD VM, keeps it, as the packaged lfs cannot start
+-- there and would hide the working one.
+if isAvail("lfs/2.16.1") and not isFile("/usr/bin/lfs") then
     depends_on("lfs/2.16.1")
 end
 prepend_path("PATH", "{{{PATH}}}/bin")
