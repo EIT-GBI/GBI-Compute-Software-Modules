@@ -34,6 +34,11 @@ unchanged. Object Storage originals and versions remain retained. A published
 module or image alone does not establish runtime acceptance; unsupported
 requests fail rather than silently changing the operation.
 
+**0.4.48** changes only the modulefile: it loads the packaged `lfs/2.16.1` only
+on hosts without their own `/usr/bin/lfs`. The packaged build needs glibc 2.38,
+so on the Ubuntu 22.04 OOD VM it could not start, hid the host's working `lfs`
+and made `gbi data usage` report `lfs quota failed`. Transfers are unchanged.
+
 **0.4.47** words `gbi dataset get|status` failures and waits plainly. It says
 what happened, whether it fixes itself, and what to do: a mistyped or unshared
 address says to check the located `bento://` address; a manifest Bento must fix

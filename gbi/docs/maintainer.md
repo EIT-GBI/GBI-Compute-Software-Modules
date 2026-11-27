@@ -11,7 +11,9 @@ not need an image or Prefect change. The `--prefect` route additionally needs
 the maintained login broker and site catalogue configuration. Python 3.9 or
 newer must be available on every selected node. The module loads the pinned
 rclone dependency automatically. If installed at the site, the optional Lmod
-`lfs/2.16.1` module lets `gbi data usage` read live Lustre quotas.
+`lfs/2.16.1` module lets `gbi data usage` read live Lustre quotas. It is
+loaded only on hosts without their own `/usr/bin/lfs`: the packaged Ubuntu
+24.04 build needs glibc 2.38 and cannot start on older hosts.
 Optional FSS usage is read from the owner-scoped SQLite publication as the
 metadata keys `fss_used_bytes`, `fss_observed_at`, `fss_source`, and, when
 the producer has them, `fss_files` and `fss_limit_bytes`. The weekly
